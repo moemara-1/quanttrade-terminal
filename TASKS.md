@@ -83,4 +83,4 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Reproduce truncated native results, symbol-only venue collapse, lost selection venue, compact ticker failure and missing standalone sync.
 - [completed] Implement venue/class filters, reachable result paging and cached ticker aliases; preserve selected venues; add protected preferences/layout/watchlist sync; apply CoinTrade name as requested.
 - [completed] 335 terminal tests / 89 backend tests, TypeScript, changed-file lint and production build pass. Deployed 20261008-2; branding, sync authorization, all market feeds, news/calendars and actual protected frontend assets verified.
-- [in_progress] Reviewed tracked files and ignored credentials/generated outputs; commit verified source on codex/cointrade-integration. Push awaits the GitHub repository URL (no remote configured).
+- [completed] Reviewed tracked files and ignored credentials/generated outputs. Source commit d27feec pushed to https://github.com/moemara-1/quanttrade-terminal on codex/cointrade-integration.
