@@ -1,0 +1,17 @@
+{
+  "pairlens": {
+    "url": "https://github.com/Pairlens/trading-terminal.git",
+    "revision": "5e93f5ae911019d75a6c415216a28f33d857e104",
+    "license": "FSL-1.1-Apache-2.0"
+  },
+  "hummingbot": {
+    "url": "https://github.com/hummingbot/hummingbot.git",
+    "revision": "9af100d6822da7d2d0291a906c730ef172284ee2",
+    "license": "Apache-2.0"
+  },
+  "hummingbot-api": {
+    "url": "https://github.com/hummingbot/hummingbot-api.git",
+    "revision": "d276034aee978d826bf05afcc2197eb1360c4a6a",
+    "license": "MIT"
+  }
+}

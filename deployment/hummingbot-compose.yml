@@ -1,0 +1,70 @@
+name: quanttrade-hbot
+services:
+  api:
+    image: ${HUMMINGBOT_IMAGE:?Resolve and pin the official image digest first}
+    container_name: quanttrade-hummingbot-api
+    restart: unless-stopped
+    ports: ["127.0.0.1:8000:8000"]
+    env_file: /opt/quanttrade/hummingbot/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://qthbot:${POSTGRES_PASSWORD}@postgres:5432/quanttrade_hbot
+      BROKER_HOST: broker
+      BROKER_PORT: 1883
+    volumes:
+      - /opt/quanttrade/hummingbot/bots:/hummingbot-api/bots
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/quanttrade/hummingbot/accounts_service.py:/hummingbot-api/services/accounts_service.py:ro
+      - /opt/quanttrade/current/deployment/hummingbot-credential-validation.py:/hummingbot-api/quanttrade_credential_validation.py:ro
+      - /opt/quanttrade/hummingbot/main.py:/hummingbot-api/main.py:ro
+      - /opt/quanttrade/current/deployment/quanttrade-hummingbot-market.py:/hummingbot-api/quanttrade_hummingbot_market.py:ro
+      - /opt/quanttrade/current/deployment/quanttrade-hummingbot-trading.py:/hummingbot-api/quanttrade_hummingbot_trading.py:ro
+      - /opt/quanttrade/current/deployment/quanttrade-hummingbot-connections.py:/hummingbot-api/quanttrade_hummingbot_connections.py:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      broker: {condition: service_healthy}
+    mem_limit: 1024m
+    memswap_limit: 1536m
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qthbot
+      POSTGRES_DB: quanttrade_hbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate a database password}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qthbot -d quanttrade_hbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 192m
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+  broker:
+    image: emqx:5
+    restart: unless-stopped
+    environment:
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
+      EMQX_AUTHENTICATION__1__BOOTSTRAP_FILE: /opt/emqx/etc/auth-bootstrap.csv
+      EMQX_AUTHENTICATION__1__BOOTSTRAP_TYPE: plain
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${BROKER_DASHBOARD_PASSWORD:?Generate a dashboard password}
+      EMQX_AUTHORIZATION__NO_MATCH: deny
+    ports: ["127.0.0.1:1883:1883"]
+    volumes:
+      - broker-data:/opt/emqx/data
+      - broker-log:/opt/emqx/log
+      - /opt/quanttrade/hummingbot/auth-bootstrap.csv:/opt/emqx/etc/auth-bootstrap.csv:ro
+      - /opt/quanttrade/current/upstream/hummingbot-api/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx_ctl", "status"]
+      interval: 10s
+      timeout: 25s
+      retries: 10
+    mem_limit: 512m
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+volumes:
+  postgres-data: {}
+  broker-data: {}
+  broker-log: {}
