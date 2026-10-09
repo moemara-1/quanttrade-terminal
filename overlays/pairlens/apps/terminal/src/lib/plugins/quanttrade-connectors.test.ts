@@ -1,10 +1,47 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import {
   createQuantTradeConnector,
   quantTradeManifest,
 } from './quanttrade-connectors'
 import type { PluginExecuteParams } from '@pairlens/plugin-system/types'
 import type { InstrumentPage } from '@pairlens/shared/instrument-types'
+import { useCredentialsStore } from '@/stores/credentials-store'
+
+const originalCredentials = useCredentialsStore.getState().credentials
+afterEach(() => useCredentialsStore.setState({ credentials: originalCredentials }))
+
+test('saved Lighter account reads restore its exact slot before parent provisioning', async () => {
+  useCredentialsStore.setState({ credentials: [{
+    id: 'server:lighter:desk', market: 'lighter', mode: 'live', label: 'Lighter live',
+    serverManaged: true, apiKey: '', apiSecret: '', createdAt: 1,
+  }] })
+  const paths: Array<string> = []
+  const plugin = createQuantTradeConnector(quantTradeManifest('lighter'), async (url) => {
+    paths.push(url)
+    if (url.endsWith('/account')) return Response.json({ positions: { data: [] } })
+    return Response.json([{ currency: 'USDC', available: '512', frozen: '0', total: '512' }])
+  })
+  expect(await plugin.execute(request('trading:positions', { credentialId: 'server:lighter:desk' }))).toEqual([])
+  expect(await plugin.execute(request('trading:balances', { credentialId: 'server:lighter:desk' }))).toEqual([
+    { currency: 'USDC', available: '512', frozen: '0', total: '512' },
+  ])
+  expect(paths).toEqual(['/_quanttrade/api/account', '/_quanttrade/api/connections/lighter/balances?marketType=perpetual'])
+  await plugin.destroy?.()
+  await expect(plugin.execute(request('trading:balances', { credentialId: 'server:lighter:desk' }))).rejects.toThrow('disabled')
+  expect(paths).toHaveLength(2)
+})
+
+test('restoration never substitutes another venue, unknown account or missing ID', async () => {
+  useCredentialsStore.setState({ credentials: [{
+    id: 'server:hyperliquid:desk', market: 'hyperliquid', mode: 'live', label: 'HL live',
+    serverManaged: true, apiKey: '', apiSecret: '', createdAt: 1,
+  }] })
+  let calls = 0
+  const plugin = createQuantTradeConnector(quantTradeManifest('lighter'), async () => { calls++; throw new Error('No request allowed') })
+  for (const credentialId of ['server:hyperliquid:desk', 'server:lighter:unknown', undefined])
+    await expect(plugin.execute(request('trading:balances', { credentialId }))).rejects.toThrow('Connect this exchange')
+  expect(calls).toBe(0)
+})
 
 const context = {
   pair: 'BTC-USDC-USDC',

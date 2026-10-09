@@ -99,3 +99,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Audit visible product names and logos across terminal, onboarding, browser and installed-app assets.
 - [completed] Apply QuantTrade name and consistent logos while preserving upstream licenses and internal compatibility keys.
 - [completed] 98 backend, 21 terminal and 12 plugin tests pass; native/root TypeScript, 145-file terminal lint plus package lint and production build pass. Visually checked Q icon and wordmark. Deployed 20261009-4 with clean frontend directory after a stale-bundle check correctly rolled back the first attempt. Protected HTTPS branding assets, installed-app manifest, title, compiled names and existing feed/auth/trading guards verified. No orders placed; browser interaction not automated.
+
+## Connected-account loading race
+- [completed] Verified Lighter remains connected live on the server; reproduced exact-slot miss when positions load before parent connector provisioning.
+- [completed] Restore only the exact saved venue/account slot for early private reads; preserve wrong/missing-account refusals and disabled connector guard.
+- [completed] Verified 25 regression/auth/session tests, native TypeScript, targeted ESLint and production build. Deployed 20261009-5 to Hetzner; hosted auth, sync, feeds, markets, controls and asset checks passed. Published repair to GitHub.

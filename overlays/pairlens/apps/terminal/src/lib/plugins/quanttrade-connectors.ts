@@ -8,6 +8,7 @@ import type {
 } from '@pairlens/plugin-system/types'
 import type { Instrument, NormalizedOrderUpdate } from '@pairlens/market-engine'
 import type { NormalizedPosition } from '@pairlens/market-engine/types'
+import { useCredentialsStore } from '@/stores/credentials-store'
 
 type MarketType = 'perpetual' | 'spot'
 type Venue = 'hyperliquid' | 'lighter'
@@ -199,6 +200,7 @@ export function createQuantTradeConnector(
     { token?: string; mode: 'paper' | 'live' }
   >()
   const subscriptions = new Set<() => void>()
+  let destroyed = false
   async function api(
     path: string,
     token?: string,
@@ -237,10 +239,27 @@ export function createQuantTradeConnector(
       )
   }
   function credential(params: Record<string, unknown>) {
-    const slot =
+    if (destroyed) throw new Error('This exchange connector is disabled')
+    let slot =
       typeof params.credentialId === 'string'
         ? credentials.get(params.credentialId)
         : undefined
+    // Account queries can run before the parent's provisioning effect. Restore
+    // only the exact saved account for this connector; never choose a default.
+    if (!slot && typeof params.credentialId === 'string') {
+      const saved = useCredentialsStore.getState().credentials.find(
+        (entry) => entry.id === params.credentialId && entry.market === market,
+      )
+      if (saved) {
+        slot = {
+          ...(saved.serverManaged === true
+            ? {}
+            : { token: z.string().min(1).parse(saved.apiKey) }),
+          mode: modeSchema.parse(saved.mode),
+        }
+        credentials.set(saved.id, slot)
+      }
+    }
     if (!slot)
       throw new Error('Connect this exchange’s credentials in QuantTrade first')
     return slot
@@ -705,6 +724,7 @@ export function createQuantTradeConnector(
     config: {},
     execute,
     async initialize(config) {
+      destroyed = false
       if (config.credentialId !== undefined)
         credentials.set(z.string().parse(config.credentialId), {
           ...(config.serverManaged === true
@@ -754,6 +774,7 @@ export function createQuantTradeConnector(
       return stop
     },
     async destroy() {
+      destroyed = true
       for (const stop of subscriptions) stop()
       credentials.clear()
     },
