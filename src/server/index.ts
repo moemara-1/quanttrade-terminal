@@ -46,7 +46,7 @@ const agent=new ProposalAgent({url:env.AGENT_BASE_URL,key:env.AGENT_API_KEY,mode
 desk.agentConfigured=agent.configured;
 const operations=new VenueOperations(desk,new HummingbotOperations({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT}),markets);
 const app=createApp({liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET}}:{})});
-const server=app.listen(4318,'127.0.0.1',()=>console.log(`CoinTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
+const server=app.listen(4318,'127.0.0.1',()=>console.log(`QuantTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
 server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);liquidations.close();store.close();process.exitCode=1;});
 function shutdown() {liquidations.close();server.close(()=>{store.close();process.exit(0);});setTimeout(()=>process.exit(1),5000).unref();}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);

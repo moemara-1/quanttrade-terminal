@@ -38,7 +38,7 @@ export class NewsService {
   if(this.pending)return this.pending;
   this.pending=(async()=>{
    const results=await Promise.allSettled(this.feeds.map(async source=>{
-    const response=await this.request(source.url,{signal:AbortSignal.timeout(12_000),headers:{'User-Agent':'CoinTrade/1.0 (public RSS reader)','Accept':'application/rss+xml, application/xml, text/xml'},redirect:'error'});
+    const response=await this.request(source.url,{signal:AbortSignal.timeout(12_000),headers:{'User-Agent':'QuantTrade/1.0 (public RSS reader)','Accept':'application/rss+xml, application/xml, text/xml'},redirect:'error'});
     if(!response.ok||!response.body)throw new Error('News upstream unavailable');
     const reader=response.body.getReader();let bytes=0;const chunks:Uint8Array[]=[];
     try{while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>2_000_000)throw new Error('News feed too large');chunks.push(part.value);}}finally{await reader.cancel();}

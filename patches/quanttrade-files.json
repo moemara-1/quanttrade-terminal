@@ -2,6 +2,7 @@
   "apps/terminal/public/posters/hyperliquid-market-connector.png",
   "apps/terminal/public/posters/lighter-market-connector.svg",
   "apps/terminal/public/posters/nanogpt-inference.svg",
+  "apps/terminal/public/quanttrade-mark.svg",
   "apps/terminal/public/quanttrade-wordmark.svg",
   "apps/terminal/src/components/copilot/exchange-operation-card.tsx",
   "apps/terminal/src/components/nanogpt-model-picker-data.test.ts",

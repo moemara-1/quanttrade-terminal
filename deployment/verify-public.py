@@ -18,7 +18,7 @@ def request(path,authorization=None,origin=None,body=None,cookie=None):
     except urllib.error.HTTPError as e: return e.code,e.read(),e.headers
 assert request('/futures')[0]==401
 status,body,headers=request('/futures',basic)
-assert status==200 and b'CoinTrade Terminal' in body
+assert status==200 and b'QuantTrade Terminal' in body
 assert headers.get('Strict-Transport-Security')=='max-age=31536000'
 assert request('/_quanttrade/api/health')[0]==200
 assert request('/_quanttrade/api/status')[0]==401

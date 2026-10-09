@@ -16,7 +16,7 @@ def request(path,token=None,body=None,origin=None):
     except urllib.error.HTTPError as e: return e.code,e.read(),e.headers
 
 status,html,headers=request('/futures')
-assert status==200 and b'CoinTrade' in html and headers.get('X-QuantTrade-Terminal')=='1'
+assert status==200 and b'QuantTrade' in html and headers.get('X-QuantTrade-Terminal')=='1'
 assets=re.findall(r'(?:src|href)="(/assets/[^"\s]+)"',html.decode())
 assert assets
 for asset in assets: assert request(asset)[0]==200,asset

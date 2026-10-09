@@ -95,7 +95,7 @@ export function createApp(services: Services) {
   app.get('/api/public/book',async(req,res)=>res.json(await markets.book(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),marketTypeSchema.parse(req.query.marketType))));
   app.post('/api/session',(req,res)=>{
     const settings=services.webSession;
-    if (!settings || !matches(req.get('X-QuantTrade-Session-Secret')??'',settings.proxySecret)) {res.status(401).json({error:'Sign in to CoinTrade first'});return;}
+    if (!settings || !matches(req.get('X-QuantTrade-Session-Secret')??'',settings.proxySecret)) {res.status(401).json({error:'Sign in to QuantTrade first'});return;}
     if (req.get('Origin')!==settings.origin) {res.status(403).json({error:'Hosted session requires the terminal origin'});return;}
     const now=Date.now();
     for (const [key,expiry] of sessions) if (expiry<=now) sessions.delete(key);
@@ -114,7 +114,7 @@ export function createApp(services: Services) {
     const sessionExpiry=sessions.get(cookie)??0;
     const cookieAuthenticated=!header && sessionExpiry>Date.now();
     const role=matches(token,services.operatorToken)?'operator':matches(token,services.agentToken)?'agent':cookieAuthenticated?'operator':null;
-    if (!role) {res.status(401).json({error:services.webSession&&!header?'Your CoinTrade session has expired. Sign in to reconnect your exchange.':'Enter the operator token from data/operator-token to unlock the desk.'});return;}
+    if (!role) {res.status(401).json({error:services.webSession&&!header?'Your QuantTrade session has expired. Sign in to reconnect your exchange.':'Enter the operator token from data/operator-token to unlock the desk.'});return;}
     if (cookieAuthenticated && !['GET','HEAD'].includes(req.method) && req.get('Origin')!==services.webSession?.origin) {res.status(403).json({error:'Operator actions require the terminal origin'});return;}
     res.locals.role=role;
     const now=Date.now(); let window=windows.get(role);

@@ -27,5 +27,5 @@ assert request('/_quanttrade/api/sync-state','PUT',operator,{'entries':{}})[0]==
 assert request('/_quanttrade/api/sync-state','PUT',{'Cookie':cookie},{'entries':{}})[0]==403
 assert request('/_quanttrade/api/sync-state','PUT',operator,{'entries':{'security.lock':{'value':{},'updatedAt':0}}})[0]==400
 status,wordmark,_=request('/quanttrade-wordmark.svg',headers={'Authorization':basic})
-assert status==200 and b'CoinTrade' in wordmark
-print('Hosted settings sync: authenticated reads and empty merge pass; anonymous, agent, missing origin and blocked keys denied. CoinTrade wordmark verified. No user settings changed.')
+assert status==200 and b'QuantTrade' in wordmark
+print('Hosted settings sync: authenticated reads and empty merge pass; anonymous, agent, missing origin and blocked keys denied. QuantTrade wordmark verified. No user settings changed.')

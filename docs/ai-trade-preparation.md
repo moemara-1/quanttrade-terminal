@@ -1,6 +1,6 @@
 # AI trade preparation
 
-Hummingbot is the exchange execution service. CoinTrade's Assistant and your selected AI provider do the research and prepare orders. Hummingbot submits Hyperliquid and Lighter orders after you approve them; other connected exchanges use their standard terminal plugins.
+Hummingbot is the exchange execution service. QuantTrade's Assistant and your selected AI provider do the research and prepare orders. Hummingbot submits Hyperliquid and Lighter orders after you approve them; other connected exchanges use their standard terminal plugins.
 
 1. Connect the exchange in Accounts, selecting Live if you intend to use real funds.
 2. In Plugins, configure and enable NanoGPT (or another AI inference provider) with your own key and a model that supports tool calling. Native Assistant settings do not configure the separate server agent.

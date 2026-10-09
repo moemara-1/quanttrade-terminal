@@ -44,7 +44,7 @@ export class MarketCalendars {
   const promise=this.fetchText(url).catch((error:unknown)=>{this.cache.delete(url);throw error;});this.cache.set(url,{expires:this.clock().getTime()+15*60_000,promise});return promise;
  }
  private async fetchText(url:string):Promise<string> {
-  const response=await this.request(url,{headers:{'User-Agent':'Mozilla/5.0 (compatible; CoinTrade/1.0)','Accept':'application/json,text/calendar,*/*','Origin':'https://www.nasdaq.com'},signal:AbortSignal.timeout(20_000),redirect:'error'});
+  const response=await this.request(url,{headers:{'User-Agent':'Mozilla/5.0 (compatible; QuantTrade/1.0)','Accept':'application/json,text/calendar,*/*','Origin':'https://www.nasdaq.com'},signal:AbortSignal.timeout(20_000),redirect:'error'});
   if(!response.ok)throw new Error(`Calendar provider returned HTTP ${response.status}`);if(!response.body)throw new Error('Calendar provider body is empty');
   const reader=response.body.getReader();const parts:Uint8Array[]=[];let size=0;
   try {while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>2_000_000){await reader.cancel();throw new Error('Calendar provider response too large');}parts.push(part.value);}}finally{reader.releaseLock();}

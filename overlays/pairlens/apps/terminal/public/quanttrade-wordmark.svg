@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="116" viewBox="0 0 600 116" role="img" aria-label="CoinTrade">
-  <title>CoinTrade</title>
-  <text x="12" y="84" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="700" letter-spacing="-4" fill="#f4f2ed" stroke="#171815" stroke-width="2" paint-order="stroke">CoinTrade</text>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="116" viewBox="0 0 600 116" role="img" aria-label="QuantTrade"><title>QuantTrade</title><g transform="translate(8 8)"><circle cx="46" cy="46" r="29" fill="none" stroke="#77e4bd" stroke-width="9"/><path d="M31 52 42 41 51 48 65 32M59 61 80 82" fill="none" stroke="#77e4bd" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g><text x="119" y="82" font-family="Bahnschrift, Helvetica, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#f4f2ed" stroke="#171815" stroke-width="1" paint-order="stroke">QuantTrade</text></svg>

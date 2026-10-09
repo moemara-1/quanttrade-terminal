@@ -24,7 +24,7 @@ try {
     }
     if ($BuildOnly) {
         & $bunPath run build:terminal
-        if ($LASTEXITCODE -ne 0) { throw 'CoinTrade terminal build failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'QuantTrade terminal build failed.' }
         return
     }
 } finally { Pop-Location }

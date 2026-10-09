@@ -316,7 +316,7 @@ describe('QuantTrade native connectors', () => {
           orderId: 'exchange:hb2',
         }),
       ),
-    ).rejects.toThrow('outside CoinTrade')
+    ).rejects.toThrow('outside QuantTrade')
   })
 })
 

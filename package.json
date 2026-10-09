@@ -1,14 +1,14 @@
 {
-  "name": "cointrade",
+  "name": "quanttrade",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-CoinTrade.ps1",
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-QuantTrade.ps1",
     "dev:server": "tsx watch src/server/index.ts",
-    "dev:client": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-CoinTrade.ps1",
-    "build": "npm run typecheck && powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-CoinTrade.ps1 -BuildOnly",
-    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-CoinTrade.ps1",
+    "dev:client": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-QuantTrade.ps1",
+    "build": "npm run typecheck && powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-QuantTrade.ps1 -BuildOnly",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File ./Start-QuantTrade.ps1",
     "start:server": "tsx src/server/index.ts",
     "test": "node --experimental-transform-types --test --test-isolation=none tests/*.test.ts",
     "typecheck": "tsc --noEmit"

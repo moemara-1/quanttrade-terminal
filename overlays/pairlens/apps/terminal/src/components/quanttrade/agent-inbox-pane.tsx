@@ -44,7 +44,7 @@ export default function AgentInboxPane() {
   if (session === 'loading')
     return (
       <p className="p-4 text-xs text-muted-foreground">
-        Connecting your authenticated CoinTrade session…
+        Connecting your authenticated QuantTrade session…
       </p>
     )
   return (
@@ -74,7 +74,7 @@ export default function AgentInboxPane() {
       />
       <p className="text-muted-foreground">
         The token stays in this panel's memory and clears when you close it.
-        Exchange credentials stay encrypted on your CoinTrade server.
+        Exchange credentials stay encrypted on your QuantTrade server.
       </p>
       <Button
         type="submit"

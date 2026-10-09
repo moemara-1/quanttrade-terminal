@@ -6,8 +6,8 @@ import type {
 
 export const quanttradeInboxManifest: PluginManifest = {
   id: 'quanttrade-agent-inbox',
-  name: 'CoinTrade Agent Inbox',
-  icon: '/quanttrade-wordmark.svg',
+  name: 'QuantTrade Agent Inbox',
+  icon: '/quanttrade-mark.svg?v=quanttrade-1',
   version: '0.1.0',
   author: 'QuantTrade',
   description: 'Review agent trade proposals before Hummingbot execution.',

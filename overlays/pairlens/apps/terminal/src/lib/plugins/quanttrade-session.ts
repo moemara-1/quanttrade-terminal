@@ -112,7 +112,7 @@ export async function bridgeRequest(
     throw new Error(
       error.success
         ? error.data.error
-        : `CoinTrade request failed (${response.status})`,
+        : `QuantTrade request failed (${response.status})`,
     )
   }
   return data

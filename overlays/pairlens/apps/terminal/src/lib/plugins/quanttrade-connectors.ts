@@ -90,7 +90,7 @@ export function quantTradeManifest(
     version: '0.1.0',
     author: 'QuantTrade',
     description:
-      'Public perpetual markets and human-approved Hummingbot orders through the local CoinTrade service.',
+      'Public perpetual markets and human-approved Hummingbot orders through the local QuantTrade service.',
     capabilities: [
       ...(
         [
@@ -224,7 +224,7 @@ export function createQuantTradeConnector(
       throw new Error(
         error.success
           ? error.data.error
-          : `CoinTrade service returned ${response.status}`,
+          : `QuantTrade service returned ${response.status}`,
       )
     }
     return data
@@ -242,7 +242,7 @@ export function createQuantTradeConnector(
         ? credentials.get(params.credentialId)
         : undefined
     if (!slot)
-      throw new Error('Connect this exchange’s credentials in CoinTrade first')
+      throw new Error('Connect this exchange’s credentials in QuantTrade first')
     return slot
   }
   async function execute({
@@ -431,7 +431,7 @@ export function createQuantTradeConnector(
               ...(params.reduceOnly !== undefined
                 ? { reduceOnly: z.boolean().parse(params.reduceOnly) }
                 : {}),
-              rationale: 'Confirmed in CoinTrade terminal',
+              rationale: 'Confirmed in QuantTrade terminal',
             },
           }),
         )
@@ -457,7 +457,7 @@ export function createQuantTradeConnector(
         const id = z.string().min(1).parse(params.orderId)
         if (id.startsWith('exchange:'))
           throw new Error(
-            'This order was placed outside CoinTrade. Cancel it through the exchange or Hummingbot.',
+            'This order was placed outside QuantTrade. Cancel it through the exchange or Hummingbot.',
           )
         const proposal = proposalSchema.parse(
           await api(
@@ -625,7 +625,7 @@ export function createQuantTradeConnector(
           history: orders.filter((o) => o.status !== 'live'),
         }
       }
-      throw new Error('Unsupported CoinTrade order action')
+      throw new Error('Unsupported QuantTrade order action')
     }
     const symbol = bridgeSymbol(params.pair ?? context.pair, marketType)
     const query = `venue=${venue}&marketType=${marketType}&symbol=${encodeURIComponent(symbol)}`
@@ -697,7 +697,7 @@ export function createQuantTradeConnector(
         },
       }
     }
-    throw new Error(`Unsupported CoinTrade capability: ${capability}`)
+    throw new Error(`Unsupported QuantTrade capability: ${capability}`)
   }
   return {
     manifest,

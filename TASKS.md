@@ -94,3 +94,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Trace duplicated controls and AI order preparation; define shared venue/account/contract draft.
 - [completed] Integrate one leverage/margin ticket, limit-only post-only, position management, and contextual AI entry point.
 - [completed] 98 backend and 60 focused terminal tests pass; root/native TypeScript, 143-file lint and production build pass. Deployed 20261009-2; active assets, ticket/approval guards, live streams, news/calendars, login, market controls and sync checked. No real orders or paid model calls; browser interaction not automated. Publication follows the authorized GitHub workflow.
+
+## QuantTrade branding correction
+- [completed] Audit visible product names and logos across terminal, onboarding, browser and installed-app assets.
+- [completed] Apply QuantTrade name and consistent logos while preserving upstream licenses and internal compatibility keys.
+- [completed] 98 backend, 21 terminal and 12 plugin tests pass; native/root TypeScript, 145-file terminal lint plus package lint and production build pass. Visually checked Q icon and wordmark. Deployed 20261009-4 with clean frontend directory after a stale-bundle check correctly rolled back the first attempt. Protected HTTPS branding assets, installed-app manifest, title, compiled names and existing feed/auth/trading guards verified. No orders placed; browser interaction not automated.

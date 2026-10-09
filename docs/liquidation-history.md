@@ -1,6 +1,6 @@
 # Recorded liquidation history
 
-CoinTrade's bridge collects public Binance USD-M and Bybit linear USDT perpetual liquidation streams. SQLite history persists in `data/liquidations.sqlite`, in the shared deployment directory. The public `/api/liquidations` route supplies the native panel and research tools without login challenges.
+QuantTrade's bridge collects public Binance USD-M and Bybit linear USDT perpetual liquidation streams. SQLite history persists in `data/liquidations.sqlite`, in the shared deployment directory. The public `/api/liquidations` route supplies the native panel and research tools without login challenges.
 
 Collection begins when the service connects. There is no historical backfill: selecting 72 hours does not imply 72 hours have already been recorded. The panel reports the actual coverage start, interruptions and bounded-response truncation. Retention is 72 hours, subject to a 500,000-print safety limit per venue. Unsupported contracts receive an explicit `not_tracked` response.
 
