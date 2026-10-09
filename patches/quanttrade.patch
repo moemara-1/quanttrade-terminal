@@ -8543,64 +8543,68 @@ index 553652d..ed08af2 100644
  
              {error && <p className="text-destructive text-xs">{error}</p>}
 diff --git a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-index d295e08..ee164ba 100644
+index d295e08..3c63574 100644
 --- a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 +++ b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-@@ -61,11 +61,14 @@ import type {
-   CopilotOrderActions,
-   CopilotOrderRequest,
- } from '@/components/copilot/copilot-order-card'
-+import type { ExchangeCredential } from '@/stores/credentials-store'
- import i18n from '@/lib/i18n'
- import { track } from '@/lib/analytics-events'
+@@ -66,6 +66,7 @@ import { track } from '@/lib/analytics-events'
  import { useCapabilityAccess } from '@/hooks/use-capability-access'
  import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
  import { useMarketData } from '@/lib/market-data-provider'
-+import { confirmedOrderFields } from '@/lib/copilot/trading-tools'
-+import { assistantOrderAccount } from '@/lib/copilot/order-account'
++import { submitReviewedOrder } from '@/lib/copilot/submit-reviewed-order'
  import { useMarketRefWithPreferred } from '@/lib/market-ref/use-market-ref'
  import { credentialMarketFor } from '@/lib/venues/credential-alias'
  import { useCredentialsStore } from '@/stores/credentials-store'
-@@ -590,9 +593,19 @@ function AssistantConversationInner({
+@@ -590,37 +591,20 @@ function AssistantConversationInner({
              error: i18n.t('security.vault.orderBlocked'),
            }
          }
 -        const cred = useCredentialsStore
 -          .getState()
 -          .getCredentialForMarket(credentialMarketFor(req.market))
-+        let cred: ExchangeCredential | undefined
-+        try {
-+          cred = assistantOrderAccount(
-+            useCredentialsStore.getState().credentials,
-+            req.market,
-+            mode,
-+          )
-+        } catch (cause) {
-+          return {
-+            success: false,
-+            error: cause instanceof Error ? cause.message : 'Select an exchange account.',
-+          }
-+        }
-         if (mode === 'live' && !cred) {
-           return {
-             success: false,
-@@ -606,14 +619,12 @@ function AssistantConversationInner({
-           pair: req.pair,
-           side: req.side,
-           type: req.type,
+-        if (mode === 'live' && !cred) {
+-          return {
+-            success: false,
+-            error: i18n.t('copilot.noCredentialsForMarket', {
+-              market: req.market,
+-            }),
+-          }
+-        }
+-        const params: Record<string, unknown> = {
+-          market: req.market,
+-          pair: req.pair,
+-          side: req.side,
+-          type: req.type,
 -          size: String(req.size),
-+          ...confirmedOrderFields(req),
-           mode,
-           analyticsSource: 'copilot',
-+          ...(req.clientOrderId ? { clientOrderId: req.clientOrderId } : {}),
-         }
-         if (cred) params.credentialId = cred.id
+-          mode,
+-          analyticsSource: 'copilot',
+-        }
+-        if (cred) params.credentialId = cred.id
 -        if (req.type === 'limit' && req.price != null) {
 -          params.price = String(req.price)
 -        }
          try {
-           const result = await md.placeOrder(params)
+-          const result = await md.placeOrder(params)
+-          return {
+-            success: result.success,
+-            orderId: result.orderId,
+-            error: result.error,
+-          }
++          return await submitReviewedOrder(
++            req,
++            mode,
++            useCredentialsStore.getState().credentials,
++            async (params) => {
++              const result = await md.placeOrder(params)
++              return {
++                success: result.success,
++                orderId: result.orderId,
++                error: result.error,
++              }
++            },
++          )
+         } catch (err) {
            return {
+             success: false,
 diff --git a/apps/terminal/src/components/copilot/copilot-chat-message.tsx b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 index 8feeacd..862c161 100644
 --- a/apps/terminal/src/components/copilot/copilot-chat-message.tsx
@@ -8630,7 +8634,7 @@ index 8feeacd..862c161 100644
      // status chip — the order only executes when the user confirms.
      if (toolName === 'place_order' && output?.order) {
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-index 219799a..34be7c3 100644
+index 219799a..23ae25a 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-order-card.tsx
 @@ -1,18 +1,17 @@
@@ -8674,15 +8678,23 @@ index 219799a..34be7c3 100644
    market: string
    pair: string
    side: 'buy' | 'sell'
-@@ -40,6 +36,7 @@ export type CopilotOrderRequest = {
+@@ -40,6 +36,10 @@ export type CopilotOrderRequest = {
    size: number
    price?: number | null
    reason?: string | null
 +  clientOrderId?: string
++  mode?: 'paper' | 'live'
++  credentialId?: string
++  accountLabel?: string
  }
  
  export type CopilotCancelRequest = {
-@@ -97,36 +94,35 @@ export function CopilotPlaceOrderCard({
+@@ -93,40 +93,39 @@ export function CopilotPlaceOrderCard({
+   const { t } = useTranslation()
+   const actions = useCopilotOrderActions()
+   const [mode, setMode] = useState<'paper' | 'live'>(
+-    actions?.tradingMode === 'live' ? 'live' : 'paper',
++    order.mode ?? (actions?.tradingMode === 'live' ? 'live' : 'paper'),
    )
    const [state, setState] = useState<'idle' | 'placing' | 'done'>('idle')
    const [outcome, setOutcome] = useState<OrderOutcome | null>(null)
@@ -8738,7 +8750,7 @@ index 219799a..34be7c3 100644
        setOutcome(result)
      } catch (err) {
        setOutcome({
-@@ -148,28 +144,9 @@ export function CopilotPlaceOrderCard({
+@@ -148,28 +147,9 @@ export function CopilotPlaceOrderCard({
      holdMs: tradeHoldMs(mode === 'live'),
      disabled: !actions || state !== 'idle',
      busy: state === 'placing',
@@ -8768,7 +8780,16 @@ index 219799a..34be7c3 100644
    return (
      <div className="border-border/60 bg-muted/40 elevated-panel rounded-lg border p-3 text-xs">
        <div className="mb-2 flex items-center gap-2">
-@@ -196,18 +173,38 @@ export function CopilotPlaceOrderCard({
+@@ -193,21 +173,47 @@ export function CopilotPlaceOrderCard({
+       </div>
+ 
+       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
++        {order.accountLabel && (
++          <div className="flex justify-between">
++            <dt>Account</dt>
++            <dd>{order.accountLabel}</dd>
++          </div>
++        )}
          <div className="flex justify-between">
            <dt>{t('copilot.fieldSize')}</dt>
            <dd className="text-foreground font-mono font-medium tabular-nums">
@@ -8816,7 +8837,7 @@ index 219799a..34be7c3 100644
  
        {order.reason && (
          <p className="mt-2 text-[11px] italic text-muted-foreground">
-@@ -240,36 +237,7 @@ export function CopilotPlaceOrderCard({
+@@ -240,43 +246,23 @@ export function CopilotPlaceOrderCard({
                </>
              )}
            </div>
@@ -8852,8 +8873,31 @@ index 219799a..34be7c3 100644
 -        </div>
        ) : (
          <div className="mt-2.5 space-y-2">
++          {order.mode !== undefined ? (
++            <p className="rounded-md bg-background/60 px-2 py-1 text-[11px] text-muted-foreground">
++              Reviewed mode:{' '}
++              <span className={mode === 'live' ? 'text-down' : 'text-primary'}>
++                {mode === 'live' ? t('accounts.live') : t('accounts.paper')}
++              </span>
++            </p>
++          ) : (
            <div className="flex items-center gap-1 rounded-md bg-background/60 p-0.5">
-@@ -297,16 +265,6 @@ export function CopilotPlaceOrderCard({
+             {(['paper', 'live'] as const).map((m) => (
+               <button
+                 key={m}
+                 type="button"
++                disabled={state !== 'idle'}
+                 onClick={() => setMode(m)}
+                 className={cn(
+                   'flex-1 rounded px-2 py-1 text-[11px] font-medium capitalize transition-colors',
+@@ -291,22 +277,13 @@ export function CopilotPlaceOrderCard({
+               </button>
+             ))}
+           </div>
++          )}
+           {mode === 'live' && (
+             <p className="flex items-center gap-1 text-[10px] text-amber-500">
+               <AlertTriangle className="size-3" />
                {t('copilot.liveOrderWarning')}
              </p>
            )}
@@ -10231,7 +10275,7 @@ index 0bcabb1..6329d9b 100644
    )
  }
 diff --git a/apps/terminal/src/components/terminal/trade-entry-panel.tsx b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-index 0d3b2e9..db42de1 100644
+index 0d3b2e9..1dedccb 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 +++ b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 @@ -48,6 +48,8 @@ import type { RefObject } from 'react'
@@ -10280,7 +10324,15 @@ index 0d3b2e9..db42de1 100644
  }
  
  function computeSellSize(available: string, pct: number): string {
-@@ -484,7 +490,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -470,6 +476,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+   // the swap paths (slippage, input-leg sizing, on-chain journaling). Reading
+   // one for the other is what would have sent a contract order down a swap.
+   const isPrediction = marketInfo?.assetClasses.includes('prediction') ?? false
++  const supportsWorkflow = !isPrediction && !isQuantTradeVenue(market)
+   const usesWallet = marketInfo?.walletChain != null
+   const isDex = usesWallet && !isPrediction
+   // Resting limit orders (Jupiter Trigger / KyberSwap LO) where supported
+@@ -484,7 +491,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // What it adds is leverage, a reduce-only intent, and a size denominated in
    // contracts rather than in the base asset.
    const isPerp = marketInfo?.assetClasses.includes('crypto-perp') ?? false
@@ -10295,7 +10347,7 @@ index 0d3b2e9..db42de1 100644
  
    // Derived here rather than beside the other pair state above, because a
    // stock's key is the bare ticker and its quote can only come from the venue.
-@@ -604,12 +616,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -604,12 +617,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and a futures margin balance, and they are not the same number.
    const balanceMap = useBalanceMap(
      usesWallet
@@ -10313,7 +10365,7 @@ index 0d3b2e9..db42de1 100644
    )
  
    // Slippage, priority fee, tip and lane come from the execution preset in
-@@ -682,7 +695,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -682,7 +696,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and would do it on orders that are only closing a position. So it rides
    // only on a deliberate choice, and never on a reduce-only order.
    const [leverageDirty, setLeverageDirty] = useState(false)
@@ -10324,7 +10376,7 @@ index 0d3b2e9..db42de1 100644
    useEffect(() => {
      // Both reset on every venue or contract change. The clamp is separate
      // from the reset because a venue switch can also LOWER the ceiling, and
-@@ -692,8 +708,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -692,8 +709,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    useEffect(() => {
      setLeverage(1)
      setLeverageDirty(false)
@@ -10340,7 +10392,23 @@ index 0d3b2e9..db42de1 100644
  
    // A price is denominated in the instrument that is on screen. Moving to a
    // prediction outcome must therefore drop whatever the previous pair left in
-@@ -865,18 +887,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -711,8 +734,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+     setLimitPrice('')
+   }, [isPrediction, pairKey])
+ 
+-  // Prediction venues never run workflows (the step catalogue is spot-shaped),
+-  // and a limit-only venue is coerced the same way the DEX branch below does.
++  // Native exchange workflows use unattended execution, which these connectors
++  // do not support. AI proposals execute directly from their approval cards.
++  useEffect(() => {
++    if (!supportsWorkflow && orderType === 'workflow') setOrderType('market')
++  }, [supportsWorkflow, orderType])
++
++  // A prediction limit-only venue is coerced the same way the DEX branch below does.
+   useEffect(() => {
+     if (!isPrediction) return
+     if (limitOnly && orderType !== 'limit') setOrderType('limit')
+@@ -865,18 +893,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          price: perpReferencePrice,
        })
      : null
@@ -10359,7 +10427,7 @@ index 0d3b2e9..db42de1 100644
 +          side,
 +        })
 +      : null
-+
+ 
 +  const nativeDraftError =
 +    isQuantTradeVenue(market) && orderType !== 'workflow'
 +      ? validateNativeOrder(contractLimits, {
@@ -10369,7 +10437,7 @@ index 0d3b2e9..db42de1 100644
 +          quoteSized: !isPerp && sizeCcy === 'quote',
 +        })
 +      : null
- 
++
 +  const marginDraftError =
 +    isPerp &&
 +    isQuantTradeVenue(market) &&
@@ -10391,7 +10459,15 @@ index 0d3b2e9..db42de1 100644
      Number(size) > 0 &&
      // A prediction amount that buys less than one whole contract is not an
      // order the venue can take, however valid the dollar figure looks.
-@@ -899,6 +946,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -887,6 +940,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+           ? predictionLimitPrice !== null
+           : Number(limitPrice) > 0)) ||
+       (orderType === 'workflow' &&
++        supportsWorkflow &&
+         selectedWorkflowId !== null &&
+         workflowCompatIssues.length === 0))
+ 
+@@ -899,6 +953,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // or a click-mode user is told to hold a button that fires on release.
    const [confirmMode] = useTradeConfirmMode()
    const submitHint = useMemo(() => {
@@ -10400,7 +10476,7 @@ index 0d3b2e9..db42de1 100644
      const hold = confirmMode === 'hold'
      if (orderType === 'workflow') {
        return hold
-@@ -913,7 +962,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -913,7 +969,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      return hold
        ? t('terminal.trade.holdToPlace')
        : t('terminal.trade.clickToPlace')
@@ -10416,7 +10492,7 @@ index 0d3b2e9..db42de1 100644
  
    const handleSideChange = (newSide: 'buy' | 'sell') => {
      setSide(newSide)
-@@ -1422,7 +1478,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1422,7 +1485,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
        let tgtCcy: string | undefined =
          sizeCcy === 'base' ? 'base_ccy' : 'quote_ccy'
  
@@ -10428,7 +10504,7 @@ index 0d3b2e9..db42de1 100644
          tgtCcy = undefined
          if (sizeCcy === 'quote' && Number(limitPrice) > 0) {
            orderSize = (Number(size) / Number(limitPrice)).toFixed(8)
-@@ -1446,6 +1505,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1446,6 +1512,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          credentialId: selectedCred.id,
          ...(tgtCcy ? { tgtCcy } : {}),
          ...(orderType === 'limit' ? { price: String(limitPrice) } : {}),
@@ -10442,7 +10518,7 @@ index 0d3b2e9..db42de1 100644
          ...(extendedHours && extendedHoursEligible
            ? { extendedHours: true }
            : {}),
-@@ -1455,6 +1521,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1455,6 +1528,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          // state at the venue, and a close should not rewrite it. Matches the
          // positions pane, which closes without leverage for the same reason.
          ...(isPerp && leverageDirty && !reduceOnly ? { leverage } : {}),
@@ -10456,7 +10532,7 @@ index 0d3b2e9..db42de1 100644
          ...(isPerp && contractSizeKnown ? { contractSize } : {}),
          ...(isPerp && reduceOnly ? { reduceOnly: true } : {}),
        })
-@@ -1504,6 +1577,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1504,6 +1584,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    const body = (
      <div className="flex shrink-0 flex-col">
        <div className="flex flex-col gap-2.5 py-2.5">
@@ -10467,7 +10543,34 @@ index 0d3b2e9..db42de1 100644
          {/* Wallet status. The "nothing connected here" case belongs to the
              connect gate below — what's left is a vault that can't be read, and
              an account that exists but hasn't been picked for this pane. */}
-@@ -1781,9 +1858,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1663,7 +1747,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+ 
+         {/* Order type tabs — Market + Limit + Workflow. A DEX venue gets the
+             row only when it rests orders, which is also what a workflow's
+-            take-profit leg needs; a prediction venue gets no workflow at all. */}
++            take-profit leg needs; native and prediction venues omit workflows. */}
+         {(!isDex || dexSupportsLimit) && !limitOnly && (
+           <Tabs
+             value={orderType}
+@@ -1688,7 +1772,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+               >
+                 {t('terminal.trade.orderTypeLimit')}
+               </TabsTrigger>
+-              {!isPrediction && (
++              {supportsWorkflow && (
+                 <TabsTrigger
+                   value="workflow"
+                   disabled={outsideRegularHours}
+@@ -1713,7 +1797,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+         )}
+ 
+         {/* Workflow selector */}
+-        {orderType === 'workflow' && (
++        {supportsWorkflow && orderType === 'workflow' && (
+           <div className="space-y-1">
+             <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
+               {t('terminal.trade.workflow')}
+@@ -1781,9 +1865,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -10479,7 +10582,7 @@ index 0d3b2e9..db42de1 100644
              Never persisted — see the state declaration. */}
          {isPerp && maxLeverage > 1 && (
            <div className="space-y-1">
-@@ -1791,15 +1867,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1791,15 +1874,37 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                  {t('terminal.trade.leverage')}
                </span>
@@ -10495,10 +10598,7 @@ index 0d3b2e9..db42de1 100644
 +                  max={maxLeverage}
 +                  step={1}
 +                  value={leverage}
-+                  disabled={
-+                    reduceOnly ||
-+                    (isQuantTradeVenue(market) && orderType === 'workflow')
-+                  }
++                  disabled={reduceOnly}
 +                  onChange={(event) => {
 +                    const value = Number(event.target.value)
 +                    if (
@@ -10519,14 +10619,11 @@ index 0d3b2e9..db42de1 100644
                  <button
                    key={lev}
                    type="button"
-+                  disabled={
-+                    reduceOnly ||
-+                    (isQuantTradeVenue(market) && orderType === 'workflow')
-+                  }
++                  disabled={reduceOnly}
                    className={cn(
                      'flex-1 rounded-md border px-1 py-0.5 font-mono text-[11.5px] tabular-nums transition-colors',
                      leverage === lev
-@@ -1826,6 +1930,42 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1826,6 +1931,38 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -10538,11 +10635,7 @@ index 0d3b2e9..db42de1 100644
 +                aria-label="Order margin mode"
 +                className="min-w-0 rounded-md border border-border bg-background px-2 py-1 text-xs"
 +                value={marginModeDirty ? marginMode : 'unchanged'}
-+                disabled={
-+                  reduceOnly ||
-+                  contractLimit === null ||
-+                  orderType === 'workflow'
-+                }
++                disabled={reduceOnly || contractLimit === null}
 +                onChange={(event) => {
 +                  const value = event.target.value
 +                  setMarginModeDirty(value !== 'unchanged')
@@ -10569,7 +10662,7 @@ index 0d3b2e9..db42de1 100644
          {/* Amount input. A prediction ticket takes DOLLARS and shows what they
              buy: traders decide in money, both venues settle in contracts, and
              the count under the field is the conversion stated rather than left
-@@ -1835,7 +1975,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1835,7 +1972,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            <div className="flex items-center justify-between">
              <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                {isPerp
@@ -10580,7 +10673,7 @@ index 0d3b2e9..db42de1 100644
                  : t('terminal.trade.amount')}
              </span>
              {/* No base/quote switch on a contract ticket: there is no second
-@@ -2174,6 +2316,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2174,6 +2313,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            />
          )}
  
@@ -10598,7 +10691,7 @@ index 0d3b2e9..db42de1 100644
          {/* Submit — press & hold to commit (single click if the user set that
              in settings). Conveys the criticality of the moment (a fuller hold
              for live funds); the toast is the confirmation. */}
-@@ -2204,6 +2357,54 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2204,6 +2354,57 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
              </span>
            }
          />
@@ -10613,6 +10706,9 @@ index 0d3b2e9..db42de1 100644
 +                askAssistant(
 +                  [
 +                    `Prepare a trade proposal for human review on exactly ${market}, ${pairKey}.`,
++                    selectedCred
++                      ? `Selected account: mode: ${selectedCred.mode}; credentialId: ${selectedCred.id}. Use these exact fields in the trading order tool proposal.`
++                      : 'Ask me which account and execution mode to use before preparing an order.',
 +                    `Draft intent: ${side}, ${orderType === 'workflow' ? 'choose a supported order type' : orderType}.`,
 +                    Number(size) > 0
 +                      ? `User-entered size: ${size} ${isPerp ? (isQuantTradeVenue(market) ? baseLabel : 'contracts') : sizeAsset}.`
@@ -10629,7 +10725,7 @@ index 0d3b2e9..db42de1 100644
 +                    reduceOnly
 +                      ? 'Reduce-only: close an existing position; do not open or reverse.'
 +                      : '',
-+                    'Research current conditions; read the selected account snapshot and verify exact instrument, available balance, position, precision, minimums and leverage cap. Do not invent missing account data. Explain risks and prepare exact orders for my approval. Do not execute or assume protective exits exist.',
++                    'Research current conditions; read the selected account snapshot and verify exact instrument, available balance, position, precision, minimums and leverage cap. Do not invent missing account data. Explain risks and prepare exact orders using the trading order tool for my approval. My approval card must submit the order directly; do not send me to the Workflow builder or ask me to re-enter the trade. Do not execute or assume protective exits exist.',
 +                  ]
 +                    .filter(Boolean)
 +                    .join('\n'),
@@ -11581,21 +11677,24 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..5d4986c 100644
+index ce0d317..8ea17f7 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -73,8 +73,8 @@ const WORKING_RULES = [
+@@ -73,8 +73,11 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'When the user asks to set up, prepare or submit a trade, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
++  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
++  'A place_order proposal submits one order. Separate protective exits are not an attached bracket or OCO: do not claim entry plus stop-loss/take-profit are atomically submitted or protected before confirmed exchange evidence. Prepare separate explicit approval cards for supported exit orders after verifying the position.',
 +  'Orders are PREPARED, never executed by you. place_order returns a proposal the user explicitly confirms on a card for every order on every exchange; paper is the default and live is their explicit choice. Standing consent never approves AI trade proposals.',
 +  'Never claim an order was placed, filled or cancelled without evidence from the user-confirmed execution result and exchange state.',
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +94,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +97,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -11722,6 +11821,19 @@ index 28659bf..7d7d530 100644
      ...buildContextTools(copilotDeps),
      ...buildPortfolioTools(copilotDeps),
      ...buildChartTools(copilotDeps),
+diff --git a/apps/terminal/src/lib/assistant/automation-tools.ts b/apps/terminal/src/lib/assistant/automation-tools.ts
+index 8167a56..e36b2b4 100644
+--- a/apps/terminal/src/lib/assistant/automation-tools.ts
++++ b/apps/terminal/src/lib/assistant/automation-tools.ts
+@@ -319,7 +319,7 @@ export function buildWorkflowTools() {
+ 
+     create_workflow: tool({
+       description:
+-        'Create a workflow and lay out its steps. It opens as an UNCOMMITTED draft: the user reviews the diff and presses Commit, which is the only way it becomes real. Every workflow starts from the seeded step with id "trigger" (the order the user places from the trade panel) — include it in your steps and hang everything else off it.',
++        'Only use when the user explicitly requests a reusable workflow or automation. For setting up a trade to confirm and submit directly, use place_order instead; do not create a workflow. Create a workflow and lay out its steps. It opens as an UNCOMMITTED draft: the user reviews the diff and presses Commit, which is the only way it becomes real. Every workflow starts from the seeded step with id "trigger" (the order the user places from the trade panel) — include it in your steps and hang everything else off it.',
+       inputSchema: z.object({
+         name: z.string().min(1).max(80),
+         steps: z.array(stepSchema).min(1).max(30),
 diff --git a/apps/terminal/src/lib/assistant/sdk-guide.ts b/apps/terminal/src/lib/assistant/sdk-guide.ts
 index 842e10e..201e32a 100644
 --- a/apps/terminal/src/lib/assistant/sdk-guide.ts
@@ -11846,23 +11958,26 @@ index fc621a5..5db9d78 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..1d2621a 100644
+index 2f8e01a..628a921 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,83 @@
+@@ -2,9 +2,86 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
  import { resolveTarget } from './tool-deps'
++import { assistantOrderAccount, requiresExchangeAccount } from './order-account'
 +import {
 +  exchangeOperationInputSchema,
 +  validateExchangeOperation,
 +} from './exchange-operation'
  import type { CopilotToolDeps } from './tool-deps'
++import { credentialMarketFor } from '@/lib/venues/credential-alias'
 +import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
 +import { parseNativeSnapshot } from '@/components/quanttrade/exchange-tools-api'
++import { useCredentialsStore } from '@/stores/credentials-store'
 +
 +const decimal = z
 +  .string()
@@ -11934,7 +12049,7 @@ index 2f8e01a..1d2621a 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -15,20 +89,38 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -15,22 +92,53 @@ import type { CopilotToolDeps } from './tool-deps'
  // cancelOrder when the user explicitly confirms. Paper is the default; live
  // requires an explicit choice on the card. The AI proposes; the human commits.
  //
@@ -11977,8 +12092,23 @@ index 2f8e01a..1d2621a 100644
 +        ...venueOrderControlsSchema.shape,
          pair: z.string().optional(),
          market: z.string().optional(),
++        mode: z
++          .enum(['paper', 'live'])
++          .optional()
++          .describe(
++            'Use live only when the user requested a live trade; otherwise paper.',
++          ),
++        credentialId: z
++          .string()
++          .min(1)
++          .optional()
++          .describe(
++            'Exact connected account ID; ask which account when multiple live accounts exist.',
++          ),
          side: z.enum(['buy', 'sell']),
-@@ -69,22 +161,55 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+         type: z.enum(['market', 'limit']).default('market'),
+         size: z
+@@ -69,39 +177,168 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -12032,6 +12162,47 @@ index 2f8e01a..1d2621a 100644
 -        const consent = useTradeConsentStore.getState()
 -        const paperAuto = consent.isAutoApproved('paper', target.market)
 -        const liveAuto = consent.isAutoApproved('live', target.market)
++        const mode = args.mode ?? 'paper'
++        let account
++        try {
++          account = assistantOrderAccount(
++            useCredentialsStore.getState().credentials,
++            target.market,
++            mode,
++            args.credentialId,
++          )
++          if (
++            mode === 'live' &&
++            !account &&
++            requiresExchangeAccount(target.market)
++          )
++            return {
++              status: 'invalid',
++              error:
++                'No live account is connected for this exchange. Connect it before preparing a live trade.',
++            }
++        } catch (cause) {
++          return {
++            status: 'invalid',
++            error:
++              cause instanceof Error
++                ? cause.message
++                : 'Choose the exchange account.',
++            accounts: useCredentialsStore
++              .getState()
++              .credentials.filter(
++                (entry) =>
++                  entry.market === credentialMarketFor(target.market) &&
++                  entry.mode === mode,
++              )
++              .map((entry) => ({
++                credentialId: entry.id,
++                label: entry.label,
++                market: entry.market,
++                mode: entry.mode,
++              })),
++          }
++        }
          return {
            status: 'awaiting_confirmation',
            proposalId: crypto.randomUUID(),
@@ -12040,8 +12211,13 @@ index 2f8e01a..1d2621a 100644
 +          autoApproval: { paper: false, live: false },
            order: {
              market: target.market,
++            mode,
++            ...(account
++              ? { credentialId: account.id, accountLabel: account.label }
++              : {}),
              pair: target.pair,
-@@ -93,15 +218,66 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+             side: args.side,
+             type: args.type,
              size: args.size,
              price: args.price ?? null,
              reason: args.reason ?? null,

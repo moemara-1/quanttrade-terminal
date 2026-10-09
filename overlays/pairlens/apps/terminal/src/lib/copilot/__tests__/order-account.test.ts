@@ -16,5 +16,31 @@ test('AI execution refuses ambiguous live accounts instead of picking the first'
     { id: 'one', market: 'binance', mode: 'live' },
     { id: 'two', market: 'binance', mode: 'live' },
   ]
-  expect(() => assistantOrderAccount(credentials, 'binance', 'live')).toThrow('Multiple live accounts')
+  expect(() => assistantOrderAccount(credentials, 'binance', 'live')).toThrow(
+    'Multiple live accounts',
+  )
+})
+
+test('reviewed account cannot be replaced after removal or mode change', () => {
+  const credentials = [
+    { id: 'one', market: 'lighter', mode: 'live' },
+    { id: 'two', market: 'lighter', mode: 'live' },
+  ]
+  expect(assistantOrderAccount(credentials, 'lighter', 'live', 'two')?.id).toBe(
+    'two',
+  )
+  expect(() =>
+    assistantOrderAccount(credentials.slice(0, 1), 'lighter', 'live', 'two'),
+  ).toThrow('reviewed exchange account')
+  expect(() =>
+    assistantOrderAccount(
+      [{ id: 'two', market: 'lighter', mode: 'paper' }],
+      'lighter',
+      'live',
+      'two',
+    ),
+  ).toThrow('reviewed exchange account')
+  expect(() =>
+    assistantOrderAccount(credentials, 'hyperliquid', 'live', 'two'),
+  ).toThrow('reviewed exchange account')
 })

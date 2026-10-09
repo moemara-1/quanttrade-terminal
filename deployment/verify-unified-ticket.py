@@ -7,6 +7,8 @@ for marker in (
     'Prepare with AI',
     'Manage position and orders',
     'Trade ticket and position management',
+    'The reviewed trading mode changed. Prepare a fresh proposal.',
+    'When the user asks to set up, prepare or submit a trade',
     'Choose Cross or Isolated when changing leverage',
     'Multiple live accounts are connected for this exchange',
     'This proposal expired',

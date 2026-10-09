@@ -108,3 +108,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Position management scrolling repair
 - [completed] Traced nonshrinking ticket inside clipping pane/tab shells; added one keyboard-accessible vertical scroll region around the full ticket.
 - [completed] Native TypeScript, ESLint and production build passed. Deployed release20261009-6; hosted authentication, markets, controls and frontend asset checks passed. Committed and pushed. No interactive browser verification performed.
+
+## Direct AI trade approval and leverage repair
+- [completed] Identified intentionally disabled HL/Lighter Workflow controls and competing workflow authoring tool routing.
+- [completed] Removed unsupported native Workflow, restored opening-order controls, routed trade setup to direct proposal cards with exact account/mode binding and preserved size/leverage/margin.
+- [completed] Passed 37 targeted tests (195 assertions), native lint/typecheck and production build. Deployed release20261009-7; hosted auth, feeds, markets, exact assets and new approval guards passed. Committed and pushed. No real order or paid model request made.

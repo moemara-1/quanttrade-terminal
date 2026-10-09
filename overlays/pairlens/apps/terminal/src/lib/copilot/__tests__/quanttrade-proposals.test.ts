@@ -3,6 +3,7 @@ import { buildTradingTools, confirmedOrderFields } from '../trading-tools'
 import { proposalApprovalError } from '../ai-proposal-approval'
 import type { CopilotToolDeps } from '../tool-deps'
 import { useTradeConsentStore } from '@/stores/trade-consent-store'
+import { useCredentialsStore } from '@/stores/credentials-store'
 
 const deps: CopilotToolDeps = {
   getCtx: () => null,
@@ -20,9 +21,121 @@ const call = (input: Record<string, unknown>) =>
     }
   ).execute(input, { toolCallId: 'test', messages: [] })
 const originalFetch = globalThis.fetch
+const originalCredentials = useCredentialsStore.getState().credentials
 afterEach(() => {
+  useCredentialsStore.setState({ credentials: originalCredentials })
   globalThis.fetch = originalFetch
   useTradeConsentStore.setState({ paper: false, liveMarkets: [] })
+})
+
+test('live preparation binds reviewed account and all order terms without execution', async () => {
+  const account = {
+    id: 'hl-main',
+    market: 'hyperliquid',
+    label: 'Main account',
+    mode: 'live' as const,
+    apiKey: 'never expose',
+    apiSecret: 'never expose',
+    createdAt: 0,
+  }
+  useCredentialsStore.setState({ credentials: [account] })
+  const result = await call({
+    side: 'buy',
+    size: 1,
+    exactSize: '0.125',
+    leverage: 3,
+    marginMode: 'isolated',
+    mode: 'live',
+  })
+  expect(result.status).toBe('awaiting_confirmation')
+  expect(result.order).toMatchObject({
+    mode: 'live',
+    credentialId: 'hl-main',
+    accountLabel: 'Main account',
+    exactSize: '0.125',
+    leverage: 3,
+    marginMode: 'isolated',
+  })
+  expect(JSON.stringify(result)).not.toContain('never expose')
+  useCredentialsStore.setState({
+    credentials: [account, { ...account, id: 'hl-other' }],
+  })
+  expect(await call({ side: 'buy', size: 1, mode: 'live' })).toMatchObject({
+    status: 'invalid',
+    error: expect.stringContaining('Multiple live accounts'),
+  })
+  expect(
+    await call({
+      side: 'buy',
+      size: 1,
+      mode: 'live',
+      credentialId: 'hl-other',
+    }),
+  ).toMatchObject({ order: { credentialId: 'hl-other' } })
+  expect(
+    await call({ side: 'buy', size: 1, mode: 'live', credentialId: 'missing' }),
+  ).toMatchObject({ status: 'invalid' })
+})
+
+test('Lighter live preparation resolves an explicit account without network or secret exposure', async () => {
+  let requests = 0
+  globalThis.fetch = (() => {
+    requests += 1
+    throw new Error('Preparation must not fetch or submit')
+  }) as typeof fetch
+  const first = {
+    id: 'lt-one',
+    market: 'lighter',
+    label: 'First',
+    mode: 'live' as const,
+    apiKey: 'private-key-placeholder',
+    apiSecret: 'secret-placeholder',
+    createdAt: 0,
+  }
+  const second = { ...first, id: 'lt-two', label: 'Second' }
+  useCredentialsStore.setState({ credentials: [first, second] })
+  const input = {
+    market: 'lighter',
+    pair: 'PRL-USDC-USDC',
+    mode: 'live',
+    side: 'buy',
+    size: 1,
+  }
+  const ambiguous = await call(input)
+  expect(ambiguous).toMatchObject({
+    status: 'invalid',
+    accounts: [
+      {
+        credentialId: 'lt-one',
+        label: 'First',
+        market: 'lighter',
+        mode: 'live',
+      },
+      {
+        credentialId: 'lt-two',
+        label: 'Second',
+        market: 'lighter',
+        mode: 'live',
+      },
+    ],
+  })
+  expect(JSON.stringify(ambiguous)).not.toContain('placeholder')
+  expect(await call({ ...input, credentialId: 'lt-two' })).toMatchObject({
+    status: 'awaiting_confirmation',
+    order: {
+      market: 'lighter',
+      pair: 'PRL-USDC-USDC',
+      mode: 'live',
+      credentialId: 'lt-two',
+      accountLabel: 'Second',
+    },
+  })
+  useCredentialsStore.setState({ credentials: [] })
+  expect(await call(input)).toMatchObject({
+    status: 'invalid',
+    error: expect.stringContaining('No live account'),
+  })
+  expect(requests).toBe(0)
 })
 test('preparation preserves exact venue controls without execution', async () => {
   const result = await call({
