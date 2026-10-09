@@ -83,6 +83,34 @@ class CancelRequest(Scope):
     exchange_order_id: str = Field(max_length=30, pattern=r'^[0-9]+$')
 
 
+class BracketLeg(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    trigger_price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    execution_price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    is_market: StrictBool = True
+
+
+class BracketRequest(Scope):
+    connector_name: Literal['hyperliquid_perpetual', 'lighter_perpetual']
+    side: Literal['buy', 'sell']
+    amount: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    take_profit: BracketLeg
+    stop_loss: BracketLeg
+
+
+class EntryBracketRequest(BracketRequest):
+    connector_name: Literal['hyperliquid_perpetual'] = 'hyperliquid_perpetual'
+    entry_price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    entry_tif: Literal['Ioc', 'Gtc', 'Alo']
+    leverage: StrictInt | None = Field(default=None, ge=1, le=125)
+    margin_mode: Literal['cross', 'isolated'] | None = None
+
+
+class OrderEvidenceRequest(Scope):
+    connector_name: Literal['hyperliquid_perpetual'] = 'hyperliquid_perpetual'
+    exchange_order_id: str = Field(max_length=40, pattern=r'^(?:[0-9]+|0x[0-9a-f]{32})$')
+
+
 class AmendRequest(CancelRequest):
     amount: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
     price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
@@ -224,6 +252,170 @@ async def trigger(connector, name, pair, side, amount, trigger_price, execution_
             base_amount=size, price=price, is_ask=side == 'sell', order_type=(2 if is_market else 3) if kind == 'sl' else (4 if is_market else 5),
             time_in_force=0 if is_market else 1, reduce_only=reduce_only, trigger_price=trigger_units, order_expiry=-1))
     return {**result, 'client_order_id': str(client_id)}
+
+
+async def verify_exit_position(connector, name, pair, side, amount):
+    """Fresh native position proof; never rely on cached frontend balances."""
+    if name == 'hyperliquid_perpetual':
+        symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=pair)
+        state = await connector._api_post(path_url='/info', data={'type': 'clearinghouseState',
+            'user': connector._auth._api_address, 'dex': symbol.split(':', 1)[0] if ':' in symbol else ''}, is_auth_required=False)
+        if not isinstance(state, dict) or not isinstance(state.get('assetPositions'), list):
+            raise ActionRejected('Cannot verify existing position for OCO exits')
+        matches = [row.get('position', {}) for row in state['assetPositions'] if row.get('position', {}).get('coin') == symbol]
+        signed = Decimal(matches[0]['szi']) if len(matches) == 1 else Decimal(0)
+    else:
+        await connector._ensure_account_ready()
+        market = connector.market_info_for_trading_pair(pair)
+        state = await connector._api_get(path_url='/api/v1/account', params={'by': 'index', 'value': connector._account_index}, is_auth_required=True)
+        accounts = state.get('accounts') if isinstance(state, dict) and state.get('code') == 200 else None
+        if not isinstance(accounts, list):
+            raise ActionRejected('Cannot verify existing position for OCO exits')
+        account = [row for row in accounts if str(row.get('index')) == str(connector._account_index)]
+        if len(account) != 1 or not isinstance(account[0].get('positions'), list):
+            raise ActionRejected('Cannot verify account-scoped position for OCO exits')
+        matches = [row for row in account[0]['positions'] if row.get('market_id') == market.market_id]
+        signed = Decimal(matches[0]['position']) * Decimal(matches[0]['sign']) if len(matches) == 1 else Decimal(0)
+    if not signed.is_finite() or signed == 0 or (side == 'sell' and signed < 0) or (side == 'buy' and signed > 0) or Decimal(amount) > abs(signed):
+        raise ActionRejected('OCO exits must reduce an existing same-market position within its current size')
+
+
+async def bracket(connector, name, pair, side, amount, take_profit, stop_loss, request_id, order_factory=None):
+    """Exchange-native OCO exits, never two independent trigger submissions.
+
+    Protects an existing position. Does not create an entry or emulate OCO in
+    the application. Partial/unrecognized acknowledgments remain uncertain.
+    """
+    if name == 'hyperliquid_perpetual':
+        raise ActionRejected('Hyperliquid native OCO requires entry-attached TP/SL in a normalTpsl bracket')
+    positive_decimal(amount)
+    for leg in [take_profit, stop_loss]:
+        positive_decimal(leg['trigger_price'])
+        positive_decimal(leg['execution_price'])
+    tp, sl = Decimal(take_profit['trigger_price']), Decimal(stop_loss['trigger_price'])
+    if (side == 'sell' and tp <= sl) or (side == 'buy' and tp >= sl):
+        raise ValueError('Take-profit and stop-loss thresholds contradict position side')
+    await verify_exit_position(connector, name, pair, side, amount)
+    if name != 'lighter_perpetual':
+        raise ValueError('Native OCO is only verified for perpetual connectors')
+    await connector._ensure_account_ready()
+    market = connector.market_info_for_trading_pair(pair)
+    if order_factory is None:
+        from lighter.signer_client import CreateOrderTxReq
+        order_factory = CreateOrderTxReq
+    orders, ids = [], []
+    for kind, leg in [('tp', take_profit), ('sl', stop_loss)]:
+        # A deterministic 48-bit client ID remains stable under reconciliation.
+        client_id = int(hashlib.sha256((request_id + '-' + kind).encode()).hexdigest()[:12], 16)
+        ids.append(str(client_id))
+        orders.append(order_factory(MarketIndex=market.market_id, ClientOrderIndex=client_id,
+            BaseAmount=units(amount, market.size_decimals), Price=units(leg['execution_price'], market.price_decimals),
+            IsAsk=int(side == 'sell'), Type=(4 if leg['is_market'] else 5) if kind == 'tp' else (2 if leg['is_market'] else 3),
+            TimeInForce=0 if leg['is_market'] else 1, ReduceOnly=1,
+            TriggerPrice=units(leg['trigger_price'], market.price_decimals), OrderExpiry=-1))
+    async with connector._tx_lock:
+        result = lighter_ack(await connector._signer_client.create_grouped_orders(grouping_type=2, orders=orders))
+    return {**result, 'grouping': 'oco', 'client_order_ids': ids}
+
+
+async def entry_bracket(connector, dto):
+    """Official normalTpsl: entry plus two fixed-size reduce-only children."""
+    amount, reference = positive_decimal(dto.amount), positive_decimal(dto.entry_price)
+    tp, sl = dto.take_profit.model_dump(), dto.stop_loss.model_dump()
+    for leg in [tp, sl]:
+        positive_decimal(leg['trigger_price'])
+        positive_decimal(leg['execution_price'])
+    tp_price, sl_price = Decimal(tp['trigger_price']), Decimal(sl['trigger_price'])
+    if not (sl_price < reference < tp_price if dto.side == 'buy' else tp_price < reference < sl_price):
+        raise ValueError('Entry bracket thresholds must protect the reviewed entry side')
+    if (dto.leverage is None) != (dto.margin_mode is None):
+        raise ValueError('Leverage and margin mode must be reviewed together')
+    asset = await hl_asset(connector, dto.trading_pair)
+    client_ids = ['0x' + hashlib.sha256((dto.request_id + '-' + kind).encode()).hexdigest()[:32] for kind in ['entry', 'tp', 'sl']]
+    orders = [{'a': asset, 'b': dto.side == 'buy', 'p': dto.entry_price, 's': dto.amount,
+        'r': False, 't': {'limit': {'tif': dto.entry_tif}}, 'c': client_ids[0]}]
+    for index, (kind, leg) in enumerate([('tp', tp), ('sl', sl)], 1):
+        orders.append({'a': asset, 'b': dto.side != 'buy', 'p': leg['execution_price'], 's': dto.amount,
+            'r': True, 't': {'trigger': {'isMarket': leg['is_market'], 'triggerPx': leg['trigger_price'], 'tpsl': kind}}, 'c': client_ids[index]})
+    if dto.leverage is not None:
+        await leverage(connector, dto.connector_name, dto.trading_pair, dto.leverage, dto.margin_mode)
+    response = await hl_action(connector, {'type': 'order', 'grouping': 'normalTpsl', 'orders': orders})
+    statuses = response.get('response', {}).get('data', {}).get('statuses', [])
+    if len(statuses) != 3:
+        raise ActionUncertain('Entry bracket acknowledgment is incomplete; inspect entry and both exits')
+    identities, fill = [], {}
+    for index, status in enumerate(statuses):
+        if index > 0 and status in ['waitingForFill', 'waitingForTrigger']:
+            identities.append(client_ids[index])
+            continue
+        order = (status.get('resting') or status.get('filled')) if isinstance(status, dict) else None
+        if not isinstance(order, dict) or not isinstance(order.get('oid'), int) or isinstance(order.get('oid'), bool) or order['oid'] <= 0:
+            raise ActionUncertain('Entry bracket leg was not confirmed; inspect exchange state before any new action')
+        identities.append(str(order['oid']))
+        if index == 0 and isinstance(status.get('filled'), dict):
+            size, price = str(order.get('totalSz', '')), str(order.get('avgPx', ''))
+            try:
+                if positive_decimal(size) > amount:
+                    raise ValueError('Oversized fill')
+                positive_decimal(price)
+            except (ValueError, ArithmeticError):
+                raise ActionUncertain('Entry bracket fill acknowledgment is invalid; inspect exchange fills') from None
+            fill = {'fill_size': size, 'fill_price': price}
+    if len(set(identities)) != 3:
+        raise ActionUncertain('Entry bracket identities are inconsistent; inspect exchange state')
+    return {'status': 'accepted', 'grouping': 'normalTpsl', 'order_ids': identities,
+        'client_order_ids': client_ids, 'entry_order_id': identities[0], **fill}
+
+
+async def order_evidence(connector, pair, order_id):
+    symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=pair)
+    owner = connector._auth._api_address
+    identity = order_id if order_id.startswith('0x') else int(order_id)
+    result = await connector._api_post(path_url='/info', data={'type': 'orderStatus', 'user': owner, 'oid': identity}, is_auth_required=False)
+    if not isinstance(result, dict) or result.get('status') != 'order':
+        return {'status': 'failed', 'error': 'Native entry acknowledgment cannot be reconciled; inspect exchange state'}
+    record = result.get('order', {})
+    order = record.get('order', {})
+    if order.get('coin') != symbol or str(order.get('oid', '')).isdigit() is False:
+        raise ActionRejected('Native order does not match the reviewed instrument')
+    if record.get('status') in ['open', 'triggered']:
+        return {'status': 'pending'}
+    if record.get('status') != 'filled':
+        return {'status': 'failed', 'error': 'Native entry is ' + str(record.get('status', 'unverified'))}
+    timestamp, expected = order.get('timestamp'), positive_decimal(order.get('origSz', '0'))
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        return {'status': 'failed', 'error': 'Filled entry has no reliable timestamp; inspect exchange fills'}
+    size, notional, seen = Decimal(0), Decimal(0), set()
+    for _ in range(10):
+        rows = await connector._api_post(path_url='/info', data={'type': 'userFillsByTime', 'user': owner, 'startTime': timestamp, 'aggregateByTime': False}, is_auth_required=False)
+        if not isinstance(rows, list):
+            return {'status': 'failed', 'error': 'Native entry fills are unavailable'}
+        for row in rows:
+            if str(row.get('oid')) != str(order['oid']) or row.get('coin') != symbol:
+                continue
+            tid = row.get('tid')
+            if not isinstance(tid, (int, str)) or isinstance(tid, bool):
+                return {'status': 'failed', 'error': 'Native entry fills lack stable identities'}
+            if str(tid) in seen:
+                continue
+            seen.add(str(tid))
+            filled_size, price = positive_decimal(row.get('sz', '0')), positive_decimal(row.get('px', '0'))
+            size += filled_size
+            notional += filled_size * price
+        if size == expected:
+            return {'status': 'filled', 'fillSize': str(size), 'fillPrice': str(notional / size)}
+        if size > expected or len(rows) < 2000:
+            break
+        times = [row.get('time') for row in rows]
+        if not all(isinstance(value, int) and not isinstance(value, bool) and value >= timestamp for value in times):
+            break
+        # Retain boundary timestamp; deduplicate fill IDs rather than skip fills
+        # sharing the last millisecond. If a page cannot advance, fail closed.
+        next_timestamp = max(times)
+        if next_timestamp == timestamp:
+            break
+        timestamp = next_timestamp
+    return {'status': 'failed', 'error': 'Native fill history does not prove the complete reviewed entry; inspect exchange fills'}
 
 
 async def cancel(connector, name, pair, exchange_order_id):
@@ -399,6 +591,26 @@ async def margin_route(dto: MarginRequest, request: Request):
 async def trigger_route(dto: TriggerRequest, request: Request):
     return await perform(request, dto, lambda c: trigger(c, dto.connector_name, dto.trading_pair, dto.side, dto.amount,
         dto.trigger_price, dto.execution_price, dto.trigger_kind, dto.is_market, dto.reduce_only, dto.request_id))
+
+
+@router.post('/order-evidence')
+async def order_evidence_route(dto: OrderEvidenceRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
+        return await order_evidence(connector, dto.trading_pair, dto.exchange_order_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Native order evidence is unavailable or does not match the reviewed instrument') from None
+
+
+@router.post('/entry-bracket-orders')
+async def entry_bracket_route(dto: EntryBracketRequest, request: Request):
+    return await perform(request, dto, lambda c: entry_bracket(c, dto))
+
+
+@router.post('/bracket-orders')
+async def bracket_route(dto: BracketRequest, request: Request):
+    return await perform(request, dto, lambda c: bracket(c, dto.connector_name, dto.trading_pair, dto.side,
+        dto.amount, dto.take_profit.model_dump(), dto.stop_loss.model_dump(), dto.request_id))
 
 
 @router.post('/cancel-order')

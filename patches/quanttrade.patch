@@ -8642,10 +8642,10 @@ index 8feeacd..cd57740 100644
        flush(index)
        blocks.push({
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-index 219799a..3a52614 100644
+index 219799a..949e5c0 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-@@ -1,18 +1,18 @@
+@@ -1,18 +1,19 @@
  // Copyright (c) 2026 Juan Ignacio Molina Estrada
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 -import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -8661,6 +8661,7 @@ index 219799a..3a52614 100644
  import { useHoldConfirm } from '@/hooks/use-trade-confirm'
  import { tradeHoldMs } from '@/lib/settings/trade-confirm'
 +import { proposalApprovalError } from '@/lib/copilot/ai-proposal-approval'
++import { workflowOcoReview } from '@/lib/copilot/workflow-review'
 +import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
  import {
 -  PROPOSAL_FRESHNESS_MS,
@@ -8669,7 +8670,7 @@ index 219799a..3a52614 100644
    wasProposalExecuted,
  } from '@/stores/trade-consent-store'
  
-@@ -25,14 +25,11 @@ import {
+@@ -25,14 +26,11 @@ import {
  // cancelOrder when the user explicitly confirms. Paper is preselected; live is
  // an explicit second choice.
  //
@@ -8687,7 +8688,7 @@ index 219799a..3a52614 100644
    market: string
    pair: string
    side: 'buy' | 'sell'
-@@ -40,6 +37,12 @@ export type CopilotOrderRequest = {
+@@ -40,6 +38,12 @@ export type CopilotOrderRequest = {
    size: number
    price?: number | null
    reason?: string | null
@@ -8700,7 +8701,7 @@ index 219799a..3a52614 100644
  }
  
  export type CopilotCancelRequest = {
-@@ -93,40 +96,45 @@ export function CopilotPlaceOrderCard({
+@@ -93,40 +97,45 @@ export function CopilotPlaceOrderCard({
    const { t } = useTranslation()
    const actions = useCopilotOrderActions()
    const [mode, setMode] = useState<'paper' | 'live'>(
@@ -8767,7 +8768,7 @@ index 219799a..3a52614 100644
        setOutcome(result)
      } catch (err) {
        setOutcome({
-@@ -148,28 +156,9 @@ export function CopilotPlaceOrderCard({
+@@ -148,28 +157,9 @@ export function CopilotPlaceOrderCard({
      holdMs: tradeHoldMs(mode === 'live'),
      disabled: !actions || state !== 'idle',
      busy: state === 'placing',
@@ -8797,7 +8798,7 @@ index 219799a..3a52614 100644
    return (
      <div className="border-border/60 bg-muted/40 elevated-panel rounded-lg border p-3 text-xs">
        <div className="mb-2 flex items-center gap-2">
-@@ -194,27 +183,85 @@ export function CopilotPlaceOrderCard({
+@@ -194,27 +184,87 @@ export function CopilotPlaceOrderCard({
  
        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
          <div className="flex justify-between">
@@ -8864,15 +8865,17 @@ index 219799a..3a52614 100644
        )}
 +      {order.workflow && (
 +        <div>
-+          <p>{order.workflow.name} · {order.workflow.steps.length} scheduled orders · maximum total notional {order.workflow.maxTotalNotional} quote</p>
++          <p>{order.workflow.name} · {'graph' in order.workflow ? `${order.workflow.graph.steps.length} graph nodes` : `${order.workflow.steps.length} scheduled orders`} · maximum total notional {order.workflow.maxTotalNotional} quote</p>
 +          <ol>
-+            {order.workflow.steps.map((step, index) => (
++            {'graph' in order.workflow ? order.workflow.graph.steps.map((step) => (<li key={step.id}>{step.id} · {step.type} · {JSON.stringify(step.data)}</li>)) : order.workflow.steps.map((step, index) => (
 +              <li key={index}>
 +                {index + 1}. After {step.delaySeconds}s: {step.side} {step.exactSize} {order.pair} · {step.type}{step.exactPrice ? ` at ${step.exactPrice}` : ''}{step.leverage ? ` · ${step.leverage}× ${step.marginMode}` : ''}{step.reduceOnly ? ' · reduce only' : ''}{step.postOnly ? ' · post only' : ''}{step.trigger ? ` · ${step.trigger.triggerType} at ${step.trigger.triggerPrice}` : ''}
 +              </li>
 +            ))}
 +          </ol>
-+          <p>Confirmation starts this entire server schedule. Scheduled does not mean filled. Ask to check workflow runs or stop future steps.</p>
++          {'graph' in order.workflow && <p>Connections: {order.workflow.graph.edges.map((edge) => `${edge.source}${edge.sourceHandle ? ` (${edge.sourceHandle})` : ''} to ${edge.target}`).join('; ')}</p>}
++          {'graph' in order.workflow && order.workflow.graph.oco && <p>{workflowOcoReview(order.market)}</p>}
++          <p>Confirmation starts this entire server workflow. Scheduled does not mean filled. Ask to check workflow runs or stop future steps.</p>
 +        </div>
 +      )}
  
@@ -8891,7 +8894,7 @@ index 219799a..3a52614 100644
        {state === 'done' && outcome ? (
          <>
            <div
-@@ -227,9 +274,11 @@ export function CopilotPlaceOrderCard({
+@@ -227,9 +277,11 @@ export function CopilotPlaceOrderCard({
                <>
                  <CheckCircle2 className="size-3.5" />
                  <span>
@@ -8906,7 +8909,7 @@ index 219799a..3a52614 100644
                    {outcome.orderId ? ` · ${outcome.orderId}` : ''}
                  </span>
                </>
-@@ -240,43 +289,22 @@ export function CopilotPlaceOrderCard({
+@@ -240,43 +292,22 @@ export function CopilotPlaceOrderCard({
                </>
              )}
            </div>
@@ -8957,7 +8960,7 @@ index 219799a..3a52614 100644
                  onClick={() => setMode(m)}
                  className={cn(
                    'flex-1 rounded px-2 py-1 text-[11px] font-medium capitalize transition-colors',
-@@ -291,22 +319,19 @@ export function CopilotPlaceOrderCard({
+@@ -291,22 +322,19 @@ export function CopilotPlaceOrderCard({
                </button>
              ))}
            </div>
@@ -10348,19 +10351,21 @@ index 0bcabb1..6329d9b 100644
    )
  }
 diff --git a/apps/terminal/src/components/terminal/trade-entry-panel.tsx b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-index 0d3b2e9..7864bc1 100644
+index 0d3b2e9..a696daf 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 +++ b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-@@ -48,6 +48,8 @@ import type { RefObject } from 'react'
+@@ -48,6 +48,10 @@ import type { RefObject } from 'react'
  
  import type { OrderExecutor } from '@pairlens/workflow-engine/types'
  import type { BalanceRecord } from '@/stores/balances-store'
++import { workflowOcoReview } from '@/lib/copilot/workflow-review'
++import { submitReviewedWorkflow } from '@/lib/copilot/submit-reviewed-workflow'
 +import { ExchangeTools } from '@/components/quanttrade/exchange-tools'
 +import { askAssistant } from '@/stores/assistant-store'
  import { OutcomeSwitch } from '@/components/predictions/outcome-switch'
  import { track } from '@/lib/analytics-events'
  import { useSwapPresets } from '@/hooks/use-swap-presets'
-@@ -62,6 +64,12 @@ import {
+@@ -62,6 +66,12 @@ import {
    formatPrice,
  } from '@/lib/format-price'
  import { useContractSize } from '@/lib/futures/contract-size'
@@ -10373,7 +10378,7 @@ index 0d3b2e9..7864bc1 100644
  import {
    balanceScopeFor,
    credentialsForMarket,
-@@ -269,18 +277,16 @@ function showTradeToast(opts: TradeToastProps) {
+@@ -269,18 +279,16 @@ function showTradeToast(opts: TradeToastProps) {
  
  // ── Helpers ───────────────────────────────────────────────────────────
  
@@ -10397,7 +10402,16 @@ index 0d3b2e9..7864bc1 100644
  }
  
  function computeSellSize(available: string, pct: number): string {
-@@ -470,6 +476,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -416,6 +424,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+   const { t } = useTranslation()
+   const navigate = useNavigate()
+   const [side, setSide] = useState<'buy' | 'sell'>('buy')
++  const [workflowBudget, setWorkflowBudget] = useState('')
++  const [workflowOco, setWorkflowOco] = useState(false)
+   const [orderType, setOrderType] = useState<'market' | 'limit' | 'workflow'>(
+     'market',
+   )
+@@ -470,6 +480,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // the swap paths (slippage, input-leg sizing, on-chain journaling). Reading
    // one for the other is what would have sent a contract order down a swap.
    const isPrediction = marketInfo?.assetClasses.includes('prediction') ?? false
@@ -10405,7 +10419,7 @@ index 0d3b2e9..7864bc1 100644
    const usesWallet = marketInfo?.walletChain != null
    const isDex = usesWallet && !isPrediction
    // Resting limit orders (Jupiter Trigger / KyberSwap LO) where supported
-@@ -484,7 +491,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -484,7 +495,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // What it adds is leverage, a reduce-only intent, and a size denominated in
    // contracts rather than in the base asset.
    const isPerp = marketInfo?.assetClasses.includes('crypto-perp') ?? false
@@ -10420,7 +10434,7 @@ index 0d3b2e9..7864bc1 100644
  
    // Derived here rather than beside the other pair state above, because a
    // stock's key is the bare ticker and its quote can only come from the venue.
-@@ -604,12 +617,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -604,12 +621,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and a futures margin balance, and they are not the same number.
    const balanceMap = useBalanceMap(
      usesWallet
@@ -10438,7 +10452,7 @@ index 0d3b2e9..7864bc1 100644
    )
  
    // Slippage, priority fee, tip and lane come from the execution preset in
-@@ -682,7 +696,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -682,7 +700,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and would do it on orders that are only closing a position. So it rides
    // only on a deliberate choice, and never on a reduce-only order.
    const [leverageDirty, setLeverageDirty] = useState(false)
@@ -10449,7 +10463,7 @@ index 0d3b2e9..7864bc1 100644
    useEffect(() => {
      // Both reset on every venue or contract change. The clamp is separate
      // from the reset because a venue switch can also LOWER the ceiling, and
-@@ -692,8 +709,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -692,8 +713,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    useEffect(() => {
      setLeverage(1)
      setLeverageDirty(false)
@@ -10465,7 +10479,7 @@ index 0d3b2e9..7864bc1 100644
  
    // A price is denominated in the instrument that is on screen. Moving to a
    // prediction outcome must therefore drop whatever the previous pair left in
-@@ -711,8 +734,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -711,8 +738,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      setLimitPrice('')
    }, [isPrediction, pairKey])
  
@@ -10481,7 +10495,7 @@ index 0d3b2e9..7864bc1 100644
    useEffect(() => {
      if (!isPrediction) return
      if (limitOnly && orderType !== 'limit') setOrderType('limit')
-@@ -865,18 +893,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -865,18 +897,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          price: perpReferencePrice,
        })
      : null
@@ -10500,9 +10514,9 @@ index 0d3b2e9..7864bc1 100644
 +          side,
 +        })
 +      : null
- 
++
 +  const nativeDraftError =
-+    isQuantTradeVenue(market) && orderType !== 'workflow'
++    isQuantTradeVenue(market)
 +      ? validateNativeOrder(contractLimits, {
 +          size,
 +          price: orderType === 'limit' ? limitPrice : undefined,
@@ -10510,7 +10524,7 @@ index 0d3b2e9..7864bc1 100644
 +          quoteSized: !isPerp && sizeCcy === 'quote',
 +        })
 +      : null
-+
+ 
 +  const marginDraftError =
 +    isPerp &&
 +    isQuantTradeVenue(market) &&
@@ -10532,15 +10546,17 @@ index 0d3b2e9..7864bc1 100644
      Number(size) > 0 &&
      // A prediction amount that buys less than one whole contract is not an
      // order the venue can take, however valid the dollar figure looks.
-@@ -887,6 +940,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -887,7 +944,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            ? predictionLimitPrice !== null
            : Number(limitPrice) > 0)) ||
        (orderType === 'workflow' &&
 +        supportsWorkflow &&
          selectedWorkflowId !== null &&
++        (!isQuantTradeVenue(market) || (Number(workflowBudget) > 0 && (isPerp || sizeCcy === 'base'))) &&
          workflowCompatIssues.length === 0))
  
-@@ -899,6 +953,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+   // Live funds (DEX swaps are always on-chain; CEX honors the credential mode)
+@@ -899,6 +958,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // or a click-mode user is told to hold a button that fires on release.
    const [confirmMode] = useTradeConfirmMode()
    const submitHint = useMemo(() => {
@@ -10549,7 +10565,7 @@ index 0d3b2e9..7864bc1 100644
      const hold = confirmMode === 'hold'
      if (orderType === 'workflow') {
        return hold
-@@ -913,7 +969,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -913,7 +974,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      return hold
        ? t('terminal.trade.holdToPlace')
        : t('terminal.trade.clickToPlace')
@@ -10565,25 +10581,33 @@ index 0d3b2e9..7864bc1 100644
  
    const handleSideChange = (newSide: 'buy' | 'sell') => {
      setSide(newSide)
-@@ -950,6 +1013,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -950,6 +1018,25 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  
    const handleSubmit = async () => {
      if (!canSubmit) return
 +    if (orderType === 'workflow' && isQuantTradeVenue(market)) {
 +      const workflow = wfWorkflows.find((entry) => entry.id === selectedWorkflowId)
 +      if (!workflow || !selectedCred) return
-+      askAssistant([
-+        `Prepare the complete finite workflow for ${market}, ${pairKey}, account credentialId ${selectedCred.id}, mode ${selectedCred.mode}.`,
-+        `Ticket intent: ${side}, size ${size} ${baseLabel}${leverageDirty && !reduceOnly ? `, leverage ${leverage}× ${marginModeDirty ? marginMode : '(ask for margin mode)'}` : ''}.`,
-+        `Saved workflow definition: ${JSON.stringify(workflow)}`,
-+        'Use place_order with its workflow field to list EVERY exact order and delay, plus an explicit user-approved maximum total quote notional. Ask for missing size, budget or leverage. Refuse dynamic conditions, cycles, unbounded repeats or OCO; never silently drop unsupported steps. One confirmation must register the full server plan; saving a definition or confirming a single entry does not start it.',
-+      ].join('\n'), { send: false })
++      setSubmitting(true)
++      try {
++        const outcome = await submitReviewedWorkflow({
++          market, pair: pairKey, side, type: 'market', size: Number(size), exactSize: size,
++          mode: selectedCred.mode, credentialId: selectedCred.id, accountLabel: selectedCred.label,
++          clientOrderId: crypto.randomUUID(), proposedAt: Date.now(),
++          ...(leverageDirty && !reduceOnly ? { leverage, marginMode } : {}),
++          reduceOnly,
++          workflow: { name: workflow.name, maxTotalNotional: workflowBudget, graph: { steps: workflow.steps, edges: workflow.edges, ...(isPerp && workflowOco ? { oco: true } : {}) } },
++        }, selectedCred.mode)
++        if (!outcome.success) throw new Error(outcome.error || 'Workflow registration failed')
++        toast.success('Workflow registered', { description: `${workflow.name} · ${selectedCred.mode} · ${outcome.orderId}. Scheduled does not mean filled.` })
++      } catch (cause) { toast.error('Workflow registration failed', { description: cause instanceof Error ? cause.message : String(cause) }) }
++      finally { setSubmitting(false) }
 +      return
 +    }
  
      // ── Prediction path: contracts at a probability price ──
      //
-@@ -1422,7 +1496,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1422,7 +1509,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
        let tgtCcy: string | undefined =
          sizeCcy === 'base' ? 'base_ccy' : 'quote_ccy'
  
@@ -10595,7 +10619,7 @@ index 0d3b2e9..7864bc1 100644
          tgtCcy = undefined
          if (sizeCcy === 'quote' && Number(limitPrice) > 0) {
            orderSize = (Number(size) / Number(limitPrice)).toFixed(8)
-@@ -1446,6 +1523,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1446,6 +1536,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          credentialId: selectedCred.id,
          ...(tgtCcy ? { tgtCcy } : {}),
          ...(orderType === 'limit' ? { price: String(limitPrice) } : {}),
@@ -10609,7 +10633,7 @@ index 0d3b2e9..7864bc1 100644
          ...(extendedHours && extendedHoursEligible
            ? { extendedHours: true }
            : {}),
-@@ -1455,6 +1539,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1455,6 +1552,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          // state at the venue, and a close should not rewrite it. Matches the
          // positions pane, which closes without leverage for the same reason.
          ...(isPerp && leverageDirty && !reduceOnly ? { leverage } : {}),
@@ -10623,7 +10647,7 @@ index 0d3b2e9..7864bc1 100644
          ...(isPerp && contractSizeKnown ? { contractSize } : {}),
          ...(isPerp && reduceOnly ? { reduceOnly: true } : {}),
        })
-@@ -1504,6 +1595,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1504,6 +1608,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    const body = (
      <div className="flex shrink-0 flex-col">
        <div className="flex flex-col gap-2.5 py-2.5">
@@ -10634,7 +10658,7 @@ index 0d3b2e9..7864bc1 100644
          {/* Wallet status. The "nothing connected here" case belongs to the
              connect gate below — what's left is a vault that can't be read, and
              an account that exists but hasn't been picked for this pane. */}
-@@ -1663,7 +1758,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1663,7 +1771,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  
          {/* Order type tabs — Market + Limit + Workflow. A DEX venue gets the
              row only when it rests orders, which is also what a workflow's
@@ -10643,7 +10667,7 @@ index 0d3b2e9..7864bc1 100644
          {(!isDex || dexSupportsLimit) && !limitOnly && (
            <Tabs
              value={orderType}
-@@ -1688,7 +1783,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1688,7 +1796,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                >
                  {t('terminal.trade.orderTypeLimit')}
                </TabsTrigger>
@@ -10652,16 +10676,27 @@ index 0d3b2e9..7864bc1 100644
                  <TabsTrigger
                    value="workflow"
                    disabled={outsideRegularHours}
-@@ -1713,7 +1808,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1713,8 +1821,18 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          )}
  
          {/* Workflow selector */}
 -        {orderType === 'workflow' && (
 +        {supportsWorkflow && orderType === 'workflow' && (
            <div className="space-y-1">
++            {isQuantTradeVenue(market) && <div className="block text-xs">Maximum total quote notional
++              <input className="h-6 w-full rounded-lg border border-transparent bg-muted/40 px-2 text-[11px]" aria-label="Maximum workflow total quote notional" inputMode="decimal" value={workflowBudget} onChange={(event) => setWorkflowBudget(event.target.value)} placeholder="Budget for this entire workflow" />
++              <span>Run confirms the complete selected graph, ticket size, account and mode. Future orders remain subject to this budget and exchange risk checks. Use base units for workflow input.</span>
++              {isPerp && <label className="block"><input type="checkbox" checked={workflowOco} onChange={(event) => setWorkflowOco(event.target.checked)} /> {market === 'hyperliquid' ? 'Attach entry and paired TP/SL as exchange-native OCO' : 'Pair sibling TP/SL exits as exchange-native OCO'}</label>}
++              {isPerp && workflowOco && <p>{workflowOcoReview(market)}</p>}
++              <details><summary>Review all workflow nodes and connections</summary>
++                <ol>{wfWorkflows.find((workflow) => workflow.id === selectedWorkflowId)?.steps.map((step) => <li key={step.id}>{step.id} · {step.type} · {JSON.stringify(step.data)}</li>)}</ol>
++                <p>{wfWorkflows.find((workflow) => workflow.id === selectedWorkflowId)?.edges.map((edge) => `${edge.source}${edge.sourceHandle ? ` (${edge.sourceHandle})` : ''} to ${edge.target}`).join('; ')}</p>
++              </details>
++            </div>}
              <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                {t('terminal.trade.workflow')}
-@@ -1781,9 +1876,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+             </span>
+@@ -1781,9 +1899,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -10673,7 +10708,7 @@ index 0d3b2e9..7864bc1 100644
              Never persisted — see the state declaration. */}
          {isPerp && maxLeverage > 1 && (
            <div className="space-y-1">
-@@ -1791,15 +1885,37 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1791,15 +1908,37 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                  {t('terminal.trade.leverage')}
                </span>
@@ -10714,7 +10749,7 @@ index 0d3b2e9..7864bc1 100644
                    className={cn(
                      'flex-1 rounded-md border px-1 py-0.5 font-mono text-[11.5px] tabular-nums transition-colors',
                      leverage === lev
-@@ -1826,6 +1942,38 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1826,6 +1965,38 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -10753,7 +10788,7 @@ index 0d3b2e9..7864bc1 100644
          {/* Amount input. A prediction ticket takes DOLLARS and shows what they
              buy: traders decide in money, both venues settle in contracts, and
              the count under the field is the conversion stated rather than left
-@@ -1835,7 +1983,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1835,7 +2006,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            <div className="flex items-center justify-between">
              <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                {isPerp
@@ -10764,7 +10799,7 @@ index 0d3b2e9..7864bc1 100644
                  : t('terminal.trade.amount')}
              </span>
              {/* No base/quote switch on a contract ticket: there is no second
-@@ -2174,6 +2324,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2174,6 +2347,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            />
          )}
  
@@ -10782,16 +10817,7 @@ index 0d3b2e9..7864bc1 100644
          {/* Submit — press & hold to commit (single click if the user set that
              in settings). Conveys the criticality of the moment (a fuller hold
              for live funds); the toast is the confirmation. */}
-@@ -2188,7 +2349,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
-           label={
-             <span className="flex items-center gap-1.5">
-               {orderType === 'workflow'
--                ? t('terminal.trade.runWorkflow')
-+                ? isQuantTradeVenue(market) ? 'Prepare workflow with AI' : t('terminal.trade.runWorkflow')
-                 : side === 'buy'
-                   ? t('terminal.trade.buyAsset', {
-                       asset: isPrediction
-@@ -2204,6 +2365,58 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2204,6 +2388,58 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
              </span>
            }
          />
@@ -10806,7 +10832,7 @@ index 0d3b2e9..7864bc1 100644
 +                askAssistant(
 +                  [
 +                    `Prepare a trade proposal for human review on exactly ${market}, ${pairKey}.`,
-+                    orderType === 'workflow' ? `Prepare the complete finite server workflow using place_order.workflow. Saved definition: ${JSON.stringify(wfWorkflows.find((entry) => entry.id === selectedWorkflowId))}. Ask for an explicit maximum total budget and any missing terms; do not silently drop unsupported dynamic steps.` : '',
++                    orderType === 'workflow' ? `Prepare the complete server workflow using place_order.workflow. Saved definition: ${JSON.stringify(wfWorkflows.find((entry) => entry.id === selectedWorkflowId))}. Ask for an explicit maximum total budget and any missing terms; preserve the original graph, all dynamic node data and every edge verbatim.` : '',
 +                    selectedCred
 +                      ? `Selected account: mode: ${selectedCred.mode}; credentialId: ${selectedCred.id}. Use these exact fields in the trading order tool proposal.`
 +                      : 'Ask me which account and execution mode to use before preparing an order.',
@@ -11778,7 +11804,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..5cf8902 100644
+index ce0d317..74eb309 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -73,8 +73,14 @@ const WORKING_RULES = [
@@ -11789,10 +11815,10 @@ index ce0d317..5cf8902 100644
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
 +  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
-+  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For an explicitly requested finite Hyperliquid/Lighter schedule, use place_order with workflow containing ALL exact orders, chronological delaySeconds, and a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Maximum 20 orders over 48 hours; no dynamic conditions, unbounded repeats or OCO. Never silently drop unsupported steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
++  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
 +  'When the user asks to set up, prepare or submit a trade, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
 +  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
-+  'A place_order proposal submits one order. Separate protective exits are not an attached bracket or OCO: do not claim entry plus stop-loss/take-profit are atomically submitted or protected before confirmed exchange evidence. Prepare separate explicit approval cards for supported exit orders after verifying the position.',
++  'A place_order proposal without workflow submits one order. Independently submitted protective exits are not a bracket or OCO. Only an explicitly reviewed workflow.graph.oco plan authorizes its native grouping: Hyperliquid entry plus paired exits together, Lighter paired exits after confirmed fill. Do not claim filled or protected before exchange evidence. Independent non-OCO workflow TP/SL percentage targets use actual parent fill.',
 +  'Orders are PREPARED, never executed by you. place_order returns an exact account/mode proposal the user confirms on a card, either one order or ALL explicitly listed finite workflow steps. Resolve mode from the requested or exact connected account; never silently switch live to paper. Standing consent never approves AI proposals.',
 +  'Never claim an order was placed, filled or cancelled without evidence from the user-confirmed execution result and exchange state.',
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
@@ -12272,10 +12298,10 @@ index fc621a5..5db9d78 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..fa1c0e4 100644
+index 2f8e01a..1feab2c 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,109 @@
+@@ -2,9 +2,115 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
@@ -12330,16 +12356,16 @@ index 2f8e01a..fa1c0e4 100644
 +  })
 +  .strict()
 +export type VenueOrderControls = z.infer<typeof venueOrderControlsSchema>
-+export const approvedWorkflowSchema = z.object({
++const scheduledWorkflowSchema = z.object({
 +  name: z.string().min(1).max(100),
 +  maxTotalNotional: decimal,
 +  steps: z.array(z.object({
 +    ...venueOrderControlsSchema.shape,
-+    delaySeconds: z.number().int().min(0).max(172800),
++    delaySeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 +    side: z.enum(['buy', 'sell']),
 +    type: z.enum(['market', 'limit']),
 +    exactSize: decimal,
-+  }).strict()).min(1).max(20),
++  }).strict()).min(1),
 +}).strict().superRefine((plan, ctx) => {
 +  let previous = -1
 +  for (const step of plan.steps) {
@@ -12348,6 +12374,12 @@ index 2f8e01a..fa1c0e4 100644
 +    previous = step.delaySeconds
 +  }
 +})
++export const workflowGraphSchema = z.object({
++  oco: z.boolean().optional(),
++  steps: z.array(z.object({ id: z.string().min(1), type: z.string().min(1), position: z.object({ x: z.number(), y: z.number() }).optional(), data: z.record(z.string(), z.unknown()) }).strict()).min(1),
++  edges: z.array(z.object({ id: z.string().min(1), source: z.string().min(1), sourceHandle: z.string().optional(), target: z.string().min(1) }).strict()),
++}).strict()
++export const approvedWorkflowSchema = z.union([scheduledWorkflowSchema, z.object({ name: z.string().min(1).max(100), maxTotalNotional: decimal, graph: workflowGraphSchema }).strict()])
 +export type ApprovedWorkflow = z.infer<typeof approvedWorkflowSchema>
 +export function venueOrderControls(
 +  input: VenueOrderControls,
@@ -12386,7 +12418,7 @@ index 2f8e01a..fa1c0e4 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +112,57 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +118,57 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -12432,7 +12464,7 @@ index 2f8e01a..fa1c0e4 100644
 -        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order — it returns a proposal that the user must explicitly approve (paper or live) in the chat. Every order is enforced against the user’s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
 +        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order. It returns an exact account and mode proposal for human approval in the chat. Omit mode to use the exact connected account or the venue\'s only connected account; ask when ambiguous. Use paper only for requested simulation, never as a fallback for unavailable live execution. Every order is enforced against the user\'s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
        inputSchema: z.object({
-+        workflow: approvedWorkflowSchema.optional().describe('For an explicitly requested finite scheduled workflow on Hyperliquid/Lighter: ALL exact orders and offsets from confirmation, plus user-reviewed maximum total quote notional. One card approves the entire plan; 20 steps maximum over 48 hours. Never omit follow-up legs or invent budget, size or leverage. Dynamic conditions and OCO are not supported.'),
++        workflow: approvedWorkflowSchema.optional().describe('For a requested workflow on Hyperliquid/Lighter: pass the complete original graph with every node data and edge, or ALL exact scheduled orders and offsets. Include user-reviewed maximum total quote notional. One card approves the entire plan. Preserve dynamic conditions, branching, percentage sizes, relative prices and protective orders verbatim. Never omit branches, invent budget or leverage, or imply saving a definition starts execution.'),
 +        ...venueOrderControlsSchema.shape,
          pair: z.string().optional(),
          market: z.string().optional(),
@@ -12452,7 +12484,7 @@ index 2f8e01a..fa1c0e4 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +186,10 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +192,10 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -12463,7 +12495,7 @@ index 2f8e01a..fa1c0e4 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +205,200 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +211,200 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }

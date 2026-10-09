@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { approvedWorkflowSchema } from './trading-tools'
+import { approvedWorkflowSchema, confirmedOrderFields } from './trading-tools'
 import type { CopilotOrderRequest, OrderOutcome } from '@/components/copilot/copilot-order-card'
 import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
 
@@ -22,10 +22,10 @@ export async function submitReviewedWorkflow(request: CopilotOrderRequest, mode:
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientOrderId: request.clientOrderId, proposedAt: request.proposedAt,
       plan: { name: workflow.name, mode, accountName: status.accountName, maxTotalNotional: workflow.maxTotalNotional,
-        steps: workflow.steps.map(({ delaySeconds, exactSize, exactPrice, ...controls }) => ({ delaySeconds, order: {
+        ...('graph' in workflow ? { graph: workflow.graph, input: { ...confirmedOrderFields(request), venue, marketType, symbol, side: request.side, type: request.type, rationale: request.reason || workflow.name } } : { steps: workflow.steps.map(({ delaySeconds, exactSize, exactPrice, ...controls }) => ({ delaySeconds, order: {
           ...controls, venue, marketType, symbol, size: exactSize,
           ...(exactPrice ? { price: exactPrice } : {}), rationale: request.reason || workflow.name,
-        } })),
+        } })) }),
       },
     }), signal: AbortSignal.timeout(35000),
   })

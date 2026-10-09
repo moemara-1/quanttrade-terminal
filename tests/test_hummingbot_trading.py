@@ -13,6 +13,118 @@ spec.loader.exec_module(module)
 
 
 class TradingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hl_two_exit_only_oco_is_rejected_before_exchange_calls(self):
+        c = self.hl({'status': 'ok', 'response': {'data': {'statuses': [{'resting': {'oid': 11}}, {'resting': {'oid': 12}}]}}})
+        c._auth._api_address = 'account'
+        c._api_post.side_effect = lambda **kwargs: {'assetPositions': [{'position': {'coin': 'BTC', 'szi': '2'}}]} if kwargs['path_url'] == '/info' else c._api_post.return_value
+        tp = {'trigger_price': '110', 'execution_price': '109', 'is_market': True}
+        sl = {'trigger_price': '90', 'execution_price': '89', 'is_market': True}
+        with self.assertRaisesRegex(module.ActionRejected, 'entry-attached'):
+            await module.bracket(c, 'hyperliquid_perpetual', 'BTC-USD', 'sell', '1.001', tp, sl, 'approved-bracket-id')
+        c._api_post.assert_not_called()
+
+    def entry_dto(self, **overrides):
+        return module.EntryBracketRequest(request_id='approved-entry-bracket', trading_pair='BTC-USD', side='buy', amount='1.001',
+            entry_price='100', entry_tif='Ioc', take_profit={'trigger_price': '110', 'execution_price': '109.01'},
+            stop_loss={'trigger_price': '90', 'execution_price': '89.01'}, **overrides)
+
+    async def test_hl_entry_bracket_sends_atomic_parent_children_preserves_pending_ids(self):
+        c = self.hl({'status': 'ok', 'response': {'data': {'statuses': [{'resting': {'oid': 11}}, 'waitingForFill', 'waitingForFill']}}})
+        result = await module.entry_bracket(c, self.entry_dto())
+        action = c._api_post.call_args.kwargs['data']['action']
+        self.assertEqual(action['grouping'], 'normalTpsl')
+        self.assertEqual([order['r'] for order in action['orders']], [False, True, True])
+        self.assertEqual([order['b'] for order in action['orders']], [True, False, False])
+        self.assertEqual(action['orders'][0]['t'], {'limit': {'tif': 'Ioc'}})
+        self.assertEqual([order['s'] for order in action['orders']], ['1.001'] * 3)
+        self.assertEqual(result['entry_order_id'], '11')
+        self.assertEqual(result['order_ids'][1:], result['client_order_ids'][1:])
+        self.assertEqual(len(set(result['client_order_ids'])), 3)
+        self.assertNotIn('fill_price', result)
+        c._api_post.assert_awaited_once()
+
+    async def test_hl_entry_bracket_fill_metadata_and_partial_ack_uncertainty(self):
+        c = self.hl({'status': 'ok', 'response': {'data': {'statuses': [{'filled': {'oid': 11, 'totalSz': '1.001', 'avgPx': '99.97'}}, {'resting': {'oid': 12}}, {'resting': {'oid': 13}}]}}})
+        result = await module.entry_bracket(c, self.entry_dto())
+        self.assertEqual(result['fill_size'], '1.001')
+        self.assertEqual(result['fill_price'], '99.97')
+        c._api_post.return_value['response']['data']['statuses'][2] = {'error': 'bad trigger'}
+        with self.assertRaises(module.ActionUncertain):
+            await module.entry_bracket(c, self.entry_dto())
+
+    async def test_hl_entry_bracket_leverage_ack_precedes_group(self):
+        c = self.hl()
+        c._api_post.side_effect = [{'status': 'ok', 'response': {'type': 'default'}}, {'status': 'ok', 'response': {'data': {'statuses': [{'resting': {'oid': 11}}, 'waitingForFill', 'waitingForFill']}}}]
+        await module.entry_bracket(c, self.entry_dto(leverage=3, margin_mode='isolated'))
+        self.assertEqual(c._api_post.call_args_list[0].kwargs['data']['action']['type'], 'updateLeverage')
+        self.assertEqual(c._api_post.call_args_list[1].kwargs['data']['action']['grouping'], 'normalTpsl')
+
+    async def test_hl_native_entry_evidence_aggregates_actual_fills_and_rejects_other_pair(self):
+        c = self.hl()
+        c._auth._api_address = 'account'
+        status = {'status': 'order', 'order': {'status': 'filled', 'order': {'coin': 'BTC', 'oid': 11, 'timestamp': 1000, 'origSz': '1.001', 'limitPx': '999'}}}
+        c._api_post.side_effect = [status, [{'oid': 11, 'coin': 'BTC', 'tid': 1, 'sz': '1', 'px': '100', 'time': 1001}, {'oid': 11, 'coin': 'BTC', 'tid': 2, 'sz': '0.001', 'px': '100', 'time': 1002}]]
+        result = await module.order_evidence(c, 'BTC-USD', '11')
+        self.assertEqual(result, {'status': 'filled', 'fillSize': '1.001', 'fillPrice': '100'})
+        status['order']['order']['coin'] = 'ETH'
+        c._api_post.side_effect = [status]
+        with self.assertRaises(module.ActionRejected):
+            await module.order_evidence(c, 'BTC-USD', '11')
+
+    async def test_hl_native_entry_evidence_never_uses_limit_price_as_fill(self):
+        c = self.hl()
+        c._auth._api_address = 'account'
+        status = {'status': 'order', 'order': {'status': 'filled', 'order': {'coin': 'BTC', 'oid': 11, 'timestamp': 1000, 'origSz': '1.001', 'limitPx': '999'}}}
+        c._api_post.side_effect = [status, [{'oid': 11, 'coin': 'BTC', 'tid': 1, 'sz': '1', 'px': '100', 'time': 1001}]]
+        self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'failed')
+
+    async def test_lighter_oco_uses_grouped_sdk_call_exact_units_and_stable_ids(self):
+        c = self.lighter()
+        c._account_index = 1
+        c._api_get = AsyncMock(return_value={'code': 200, 'accounts': [{'index': 1, 'positions': [{'market_id': 4097, 'position': '50', 'sign': 1}]}]})
+        c.market_info_for_trading_pair.return_value.market_id = 4097
+        c._signer_client.create_grouped_orders = AsyncMock(return_value=(None, SimpleNamespace(code=200, tx_hash='hash'), None))
+        tp = {'trigger_price': '1.80', 'execution_price': '1.79', 'is_market': True}
+        sl = {'trigger_price': '1.20', 'execution_price': '1.19', 'is_market': False}
+        result = await module.bracket(c, 'lighter_perpetual', 'PRL-USDC', 'sell', '48.001', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        call = c._signer_client.create_grouped_orders.call_args.kwargs
+        self.assertEqual(call['grouping_type'], 2)
+        self.assertEqual([order.MarketIndex for order in call['orders']], [4097, 4097])
+        self.assertEqual([order.BaseAmount for order in call['orders']], [48001, 48001])
+        self.assertEqual([order.TriggerPrice for order in call['orders']], [180, 120])
+        self.assertEqual([order.Type for order in call['orders']], [4, 3])
+        self.assertTrue(all(order.ReduceOnly == 1 for order in call['orders']))
+        again = await module.bracket(c, 'lighter_perpetual', 'PRL-USDC', 'sell', '48.001', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        self.assertEqual(result['client_order_ids'], again['client_order_ids'])
+        c._signer_client.create_order.assert_not_called()
+
+    async def test_oco_invalid_threshold_and_precision_never_sends(self):
+        c = self.lighter()
+        c._account_index = 1
+        c._api_get = AsyncMock(return_value={'code': 200, 'accounts': [{'index': 1, 'positions': [{'market_id': 0, 'position': '2', 'sign': -1}]}]})
+        c._signer_client.create_grouped_orders = AsyncMock()
+        tp = {'trigger_price': '90', 'execution_price': '89', 'is_market': True}
+        sl = {'trigger_price': '110', 'execution_price': '109', 'is_market': True}
+        with self.assertRaises(ValueError):
+            await module.bracket(c, 'lighter_perpetual', 'BTC-USDC', 'sell', '1', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        with self.assertRaises(ValueError):
+            await module.bracket(c, 'lighter_perpetual', 'BTC-USDC', 'buy', '1.0001', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        c._signer_client.create_grouped_orders.assert_not_called()
+
+    async def test_oco_requires_fresh_matching_position_and_does_not_oversize(self):
+        c = self.lighter()
+        c._account_index = 1
+        c._api_get = AsyncMock(return_value={'code': 200, 'accounts': [{'index': 1, 'positions': [{'market_id': 0, 'position': '1', 'sign': 1}]}]})
+        c._signer_client.create_grouped_orders = AsyncMock()
+        tp = {'trigger_price': '110', 'execution_price': '109', 'is_market': True}
+        sl = {'trigger_price': '90', 'execution_price': '89', 'is_market': True}
+        with self.assertRaises(module.ActionRejected):
+            await module.bracket(c, 'lighter_perpetual', 'BTC-USDC', 'sell', '2', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        c._api_get.return_value['accounts'][0]['positions'] = []
+        with self.assertRaises(module.ActionRejected):
+            await module.bracket(c, 'lighter_perpetual', 'BTC-USDC', 'sell', '1', tp, sl, 'approved-bracket-id', SimpleNamespace)
+        c._signer_client.create_grouped_orders.assert_not_called()
+
     def hl(self, response=None):
         return SimpleNamespace(
             coin_to_asset={'BTC': 0}, exchange_symbol_associated_to_pair=AsyncMock(return_value='BTC'),

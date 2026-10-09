@@ -9,6 +9,8 @@ for attempt in range(60):
         with urllib.request.urlopen(request,timeout=5) as response: document=json.load(response)
         assert '/quanttrade/trading/orders' in document['paths']
         assert '/quanttrade/trading/market-orders' in document['paths']
+        for path in ('bracket-orders','entry-bracket-orders','order-evidence'):
+            assert '/quanttrade/trading/'+path in document['paths']
         print('Acknowledged market/limit routes loaded; no orders sent.')
         break
     except Exception:

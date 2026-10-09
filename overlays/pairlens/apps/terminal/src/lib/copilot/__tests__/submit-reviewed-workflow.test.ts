@@ -27,6 +27,22 @@ test('expired and changed-mode plans fail before any registration', async () => 
 })
 test('workflow schema refuses unordered, missing-price and incompatible margin steps', () => {
   const workflow = request().workflow!
+  if (!('steps' in workflow)) throw new Error('Expected schedule')
   for (const steps of [[{ ...workflow.steps[0], type: 'limit' }], [{ ...workflow.steps[0], marginMode: undefined }], [{ ...workflow.steps[0], delaySeconds: 10 }, workflow.steps[0]]])
     expect(approvedWorkflowSchema.safeParse({ ...workflow, steps }).success).toBe(false)
+})
+
+test('graph approval preserves dynamic branches and exact input without flattening', async () => {
+  const graph = { oco: true, steps: [{ id: 'start', type: 'trigger', data: {} }, { id: 'condition', type: 'condition', data: { conditionType: 'price-above', value: 2 } }], edges: [{ id: 'edge', source: 'start', target: 'condition' }] }
+  let sent: unknown
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).endsWith('/status')) return Response.json({ accountName: 'desk' })
+    sent = JSON.parse(String(init?.body)); return Response.json({ id: 'reviewed-plan', status: 'active' })
+  }) as typeof fetch
+  await submitReviewedWorkflow({ ...request(), exactSize: '48.00', workflow: { name: 'Dynamic', maxTotalNotional: '600', graph } }, 'live')
+  expect(sent).toMatchObject({ plan: { graph, input: { venue: 'lighter', symbol: 'PRL-USDC', size: '48.00', side: 'buy', type: 'market' } } })
+  expect((sent as { plan: Record<string, unknown> }).plan.steps).toBeUndefined()
+})
+test('schedules are not restricted to twenty orders or forty-eight hours', () => {
+  expect(approvedWorkflowSchema.safeParse({ name: 'Long schedule', maxTotalNotional: '1000', steps: Array.from({ length: 21 }, (_, index) => ({ delaySeconds: index * 86400, side: 'buy', type: 'market', exactSize: '1' })) }).success).toBe(true)
 })

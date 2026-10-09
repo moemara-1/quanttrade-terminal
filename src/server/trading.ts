@@ -32,6 +32,9 @@ export interface ExecutionClient {
   configured: boolean;
   place(order: OrderDraft, protectionPrice?: string, requestId?:string): Promise<string>;
   cancel(order: Proposal): Promise<void>;
+  placeBracket?(orders:[OrderDraft,OrderDraft],protectionPrices:[string|undefined,string|undefined],requestId:string):Promise<string>;
+  placeEntryBracket?(orders:[OrderDraft,OrderDraft,OrderDraft],protectionPrices:[string|undefined,string|undefined,string|undefined],requestId:string):Promise<{orderId:string;entryOrderId:string;fillPrice?:string;fillSize?:string}>;
+  orderEvidence?(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}>;
 }
 export interface DeskConfig {
   mode: TradingMode;
@@ -77,6 +80,50 @@ export class TradingDesk {
     if (order.sizeUnit==='quote') throw new Error('Workflow orders must specify the exact base amount');
     const market=await this.quote(order);
     return {order,notional:this.validate(order,market,'manual')};
+  }
+  async currentMarket(input:unknown):Promise<Market>{return this.quote(orderSchema.parse(input));}
+  async confirmBracket(requestId:string,mode:TradingMode,raw:[OrderDraft,OrderDraft]):Promise<{status:'submitted'|'paper-open'|'unknown';estimatedNotional:string;orderId?:string;error?:string}> {
+    const orders=raw.map(order=>orderSchema.parse(order)) as [OrderDraft,OrderDraft];
+    if(this.store.halted||orders.some(order=>this.modeFor(order.venue)!==mode))throw new Error('Execution halted or reviewed OCO mode changed');
+    if(orders.some(order=>order.venue!==orders[0].venue||order.symbol!==orders[0].symbol||order.marketType==='spot'||!order.reduceOnly||!order.trigger)||new Set(orders.map(order=>order.trigger?.triggerType)).size!==2)throw new Error('OCO requires matching reduce-only perpetual TP and SL exits');
+    const quotes=await Promise.all(orders.map(order=>this.quote(order)));
+    const amount=orders.reduce((sum,order,index)=>sum.plus(this.validate(order,quotes[index],'manual')),new Decimal(0)).toFixed();
+    const fingerprint=createHash('sha256').update(JSON.stringify({mode,account:this.config.accountName,orders})).digest('hex');
+    const previous=this.store.claimOperation(requestId,fingerprint);
+    if(previous){if(previous.state==='completed')return previous.result as {status:'submitted'|'paper-open';estimatedNotional:string;orderId:string};return {status:'unknown',estimatedNotional:amount,error:'Grouped order outcome uncertain; inspect exchange before another proposal'};}
+    try{
+      this.store.reserveOperation(requestId,mode,this.day(),amount,this.config.dailyNotionalLimit);
+      if(this.store.halted||this.modeFor(orders[0].venue)!==mode)throw new Error('Execution authorization changed');
+      if(mode==='live'&&(!this.execution.configured||!this.execution.placeBracket))throw new Error('Native OCO execution is unavailable');
+      const orderId=mode==='paper'?`paper-oco-${requestId}`:await this.execution.placeBracket!(orders,orders.map((order,index)=>order.type==='market'?this.marketProtection(order,quotes[index]):undefined) as [string|undefined,string|undefined],requestId);
+      const result={status:mode==='paper'?'paper-open' as const:'submitted' as const,estimatedNotional:amount,orderId};
+      this.store.finishOperation(requestId,'completed',result);return result;
+    }catch{
+      const result={status:'unknown' as const,estimatedNotional:amount,error:'Native OCO outcome uncertain; reconcile exchange orders. This request will not be retried.'};this.store.finishOperation(requestId,'unknown',result);return result;
+    }
+  }
+  async orderEvidence(order:OrderDraft,orderId:string,mode:TradingMode):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
+    if(mode==='live'){if(!this.execution.orderEvidence)throw new Error('Live fill reconciliation is unavailable');return this.execution.orderEvidence(order,orderId);}
+    const market=await this.quote(order),price=new Decimal(market.price);
+    const crossed=order.trigger?((order.side==='sell')===(order.trigger.triggerType==='tp')?price.gte(order.trigger.triggerPrice):price.lte(order.trigger.triggerPrice)):order.type==='market'||(order.side==='buy'?price.lte(order.price!):price.gte(order.price!));
+    return crossed?{status:'filled',fillPrice:market.price,fillSize:order.size}:{status:'pending'};
+  }
+  async confirmEntryBracket(requestId:string,mode:TradingMode,raw:[OrderDraft,OrderDraft,OrderDraft]):Promise<{status:'submitted'|'paper-open'|'unknown';estimatedNotional:string;orderId?:string;entryOrderId?:string;fillPrice?:string;fillSize?:string;error?:string}> {
+    const orders=raw.map(order=>orderSchema.parse(order)) as [OrderDraft,OrderDraft,OrderDraft];
+    if(this.store.halted||orders.some(order=>this.modeFor(order.venue)!==mode))throw new Error('Execution halted or reviewed bracket mode changed');
+    if(orders.some(order=>order.venue!=='hyperliquid'||order.symbol!==orders[0].symbol||order.marketType==='spot')||orders[0].reduceOnly||orders[0].trigger||orders.slice(1).some(order=>!order.reduceOnly||!order.trigger||order.side===orders[0].side||order.size!==orders[0].size)||new Set(orders.slice(1).map(order=>order.trigger?.triggerType)).size!==2)throw new Error('Native entry OCO requires one exact Hyperliquid entry and matching opposite reduce-only TP/SL exits');
+    const quotes=await Promise.all(orders.map(order=>this.quote(order)));
+    const amount=orders.reduce((sum,order,index)=>sum.plus(this.validate(order,quotes[index],'manual')),new Decimal(0)).toFixed();
+    const fingerprint=createHash('sha256').update(JSON.stringify({mode,account:this.config.accountName,orders})).digest('hex');
+    const previous=this.store.claimOperation(requestId,fingerprint);
+    if(previous){if(previous.state==='completed')return previous.result as {status:'submitted'|'paper-open';estimatedNotional:string;orderId:string;entryOrderId:string};return {status:'unknown',estimatedNotional:amount,error:'Bracket outcome uncertain; inspect exchange before another proposal'};}
+    try{
+      this.store.reserveOperation(requestId,mode,this.day(),amount,this.config.dailyNotionalLimit);
+      if(this.store.halted||this.modeFor(orders[0].venue)!==mode)throw new Error('Execution authorization changed');
+      if(mode==='live'&&(!this.execution.configured||!this.execution.placeEntryBracket))throw new Error('Native entry OCO execution is unavailable');
+      const native=mode==='paper'?{orderId:`paper-oco-${requestId}`,entryOrderId:`paper-entry-${requestId}`}:await this.execution.placeEntryBracket!(orders,orders.map((order,index)=>order.type==='market'?this.marketProtection(order,quotes[index]):undefined) as [string|undefined,string|undefined,string|undefined],requestId);
+      const result={status:mode==='paper'?'paper-open' as const:'submitted' as const,estimatedNotional:amount,...native};this.store.finishOperation(requestId,'completed',result);return result;
+    }catch{const result={status:'unknown' as const,estimatedNotional:amount,error:'Native entry bracket outcome uncertain; reconcile exchange orders. This request will not be retried.'};this.store.finishOperation(requestId,'unknown',result);return result;}
   }
 
   private async quote(order: OrderDraft): Promise<Market> {

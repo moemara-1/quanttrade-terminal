@@ -123,3 +123,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Implement bounded, persistent approved workflow runs for HL/Lighter, with direct chat confirmation and truthful run state. Exact steps, reviewed cap, per-leg risk checks, kill/mode/credential/late-step pauses, and interrupted-submission refusal.
 - [completed] Restore native ticket workflow preparation, complete-plan review and persisted run/cancellation cards. 105 backend tests,61 focused native tests/278 assertions,51 Python tests and root/native TypeScript plus targeted ESLint passed. No orders or paid model calls.
 - [completed] Production build passed; deployed Hetzner release20261009-9. Authenticated runtime schema, persisted run reads, private workflow writes, approval/run assets, login, feeds, account controls, catalogs, sync and branding guards passed. No real orders, workflow registration, paid models or browser automation used. Committing/pushing authorized repair.
+
+## Restore original workflow parity
+- [completed] Audit original core workflow engine, venue execution and OCO semantics; define server persistence and approval integration.
+- [completed] Implement original graph nodes, branch/join behavior, dynamic terms, fill-aware exits and OCO coordination; remove artificial schedule limits.
+- [completed] Verified 123 backend tests, 66 native tests/290 assertions, 60 Python tests, TypeScript, lint and production build. Deployed Hetzner release20261009-10; all hosted guards and offline container SDK OCO signing passed. An outdated verifier label caused a successful automatic rollback before correction and verified redeployment. No trades, workflows, browser automation or paid model calls used. Committing/pushing authorized changes.

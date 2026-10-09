@@ -1,7 +1,7 @@
 """Read-only production checks; never submit exchange credentials or orders."""
 from pathlib import Path
 import urllib.request, urllib.error, urllib.parse, json
-private_paths=['/quanttrade/trading/market-orders','/quanttrade/trading/leverage','/quanttrade/trading/margin','/quanttrade/trading/trigger-orders','/quanttrade/trading/cancel-order','/quanttrade/trading/amend-order','/quanttrade/trading/snapshot','/quanttrade/connections/desk/lighter']
+private_paths=['/quanttrade/trading/bracket-orders','/quanttrade/trading/entry-bracket-orders','/quanttrade/trading/order-evidence','/quanttrade/trading/market-orders','/quanttrade/trading/leverage','/quanttrade/trading/margin','/quanttrade/trading/trigger-orders','/quanttrade/trading/cancel-order','/quanttrade/trading/amend-order','/quanttrade/trading/snapshot','/quanttrade/connections/desk/lighter']
 for path in private_paths:
     req=urllib.request.Request('http://127.0.0.1:8000'+path,data=b'{}',headers={'Content-Type':'application/json'})
     try:
@@ -9,7 +9,7 @@ for path in private_paths:
         raise AssertionError('Unauthenticated extension accepted a request: '+path)
     except urllib.error.HTTPError as error:
         assert error.code==401,(path,error.code)
-print('All eight private extension routes require authentication.')
+print(f'All {len(private_paths)} private extension routes require authentication.')
 base='http://127.0.0.1:4318/api/public'
 for venue in ['hyperliquid','lighter']:
     for market_type in ['perpetual','spot']:
