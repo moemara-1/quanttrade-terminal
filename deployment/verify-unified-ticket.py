@@ -6,6 +6,7 @@ scripts = [path.read_text(errors='replace') for path in (root / 'frontend/assets
 for marker in (
     'Prepare with AI',
     'Manage position and orders',
+    'Trade ticket and position management',
     'Choose Cross or Isolated when changing leverage',
     'Multiple live accounts are connected for this exchange',
     'This proposal expired',

@@ -104,3 +104,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Verified Lighter remains connected live on the server; reproduced exact-slot miss when positions load before parent connector provisioning.
 - [completed] Restore only the exact saved venue/account slot for early private reads; preserve wrong/missing-account refusals and disabled connector guard.
 - [completed] Verified 25 regression/auth/session tests, native TypeScript, targeted ESLint and production build. Deployed 20261009-5 to Hetzner; hosted auth, sync, feeds, markets, controls and asset checks passed. Published repair to GitHub.
+
+## Position management scrolling repair
+- [completed] Traced nonshrinking ticket inside clipping pane/tab shells; added one keyboard-accessible vertical scroll region around the full ticket.
+- [completed] Native TypeScript, ESLint and production build passed. Deployed release20261009-6; hosted authentication, markets, controls and frontend asset checks passed. Committed and pushed. No interactive browser verification performed.

@@ -10184,7 +10184,7 @@ index 5940dd1..123c8cf 100644
          )}
        </Empty>
 diff --git a/apps/terminal/src/components/terminal/trade-entry-pane.tsx b/apps/terminal/src/components/terminal/trade-entry-pane.tsx
-index 0bcabb1..afd7b75 100644
+index 0bcabb1..6329d9b 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-pane.tsx
 +++ b/apps/terminal/src/components/terminal/trade-entry-pane.tsx
 @@ -4,6 +4,7 @@ import { useRef } from 'react'
@@ -10203,14 +10203,33 @@ index 0bcabb1..afd7b75 100644
    const tickerData = useOptionalTickerData()
    const candleData = useOptionalCandleData()
    const unavailable = usePairUnavailable(
-@@ -53,6 +55,7 @@ export function TradeEntryPane() {
+@@ -52,10 +54,21 @@ export function TradeEntryPane() {
+   }
  
    return (
-     <TradeEntryPanel
-+      key={`${activePair.market}:${activePair.pairKey}:${wallet?.walletId ?? ''}`}
-       market={activePair.market}
-       pairKey={activePair.pairKey}
-       pricesRef={pricesRef}
+-    <TradeEntryPanel
+-      market={activePair.market}
+-      pairKey={activePair.pairKey}
+-      pricesRef={pricesRef}
+-    />
++    // The pane shell clips overflow. Own scrolling here so the entire ticket,
++    // including expanded position management, stays reachable in resized panes
++    // and tab groups. Fit-content cells can still grow to their natural height.
++    <div
++      role="region"
++      aria-label="Trade ticket and position management"
++      tabIndex={0}
++      className="min-h-0 min-w-0 flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
++    >
++      <TradeEntryPanel
++        key={`${activePair.market}:${activePair.pairKey}:${wallet?.walletId ?? ''}`}
++        market={activePair.market}
++        pairKey={activePair.pairKey}
++        pricesRef={pricesRef}
++      />
++    </div>
+   )
+ }
 diff --git a/apps/terminal/src/components/terminal/trade-entry-panel.tsx b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 index 0d3b2e9..db42de1 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-panel.tsx
