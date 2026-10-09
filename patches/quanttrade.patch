@@ -599,6 +599,109 @@ index 219799a..b47231c 100644
            <div className="flex gap-2">
              <Button
                size="sm"
+diff --git a/apps/terminal/src/components/futures/liquidation-map-pane.tsx b/apps/terminal/src/components/futures/liquidation-map-pane.tsx
+index 945608c..f50e363 100644
+--- a/apps/terminal/src/components/futures/liquidation-map-pane.tsx
++++ b/apps/terminal/src/components/futures/liquidation-map-pane.tsx
+@@ -80,6 +80,7 @@ import {
+   clusterIntensity,
+   collectedLiquidationVenues,
+   dominantSide,
++  liquidationCoverageStart,
+   liquidationTotals,
+ } from '@/lib/futures/liquidation-clusters'
+ import {
+@@ -423,7 +424,7 @@ function LiquidationMapBody({
+   // No collector for this venue, and none picked. The alternates are offered
+   // explicitly rather than substituted: another exchange's liquidations on this
+   // contract are useful context and a different claim, and the user makes it.
+-  if (sourceVenue === null) {
++  if (sourceVenue === null || clusters.unavailable === 'not_tracked') {
+     return empty(
+       t('liquidationMap.noFeedTitle'),
+       t('liquidationMap.notTrackedCaption'),
+@@ -451,6 +452,13 @@ function LiquidationMapBody({
+     )
+   }
+ 
++  if (clusters.unavailable === 'collecting' && clusters.connected === false) {
++    return empty(
++      t('liquidationMap.disconnectedTitle'),
++      t('liquidationMap.disconnectedUnavailableCaption'),
++    )
++  }
++
+   if (clusters.unavailable === 'collecting') {
+     return empty(
+       t('liquidationMap.collectingTitle'),
+@@ -746,6 +754,16 @@ function LiquidationMapChart({
+   // Distinguishing "the collector answered and the window was quiet" from "the
+   // answer has not arrived": only the first is a fact about the market.
+   const emptyWindow = grid.cellCount === 0 && !clusters.isLoading
++  const coverageStart = liquidationCoverageStart(clusters.data, windowHours)
++  const coverageLabel =
++    coverageStart === null
++      ? t('liquidationMap.coverageUnknown')
++      : new Date(coverageStart).toLocaleString()
++  const coverageEnd = clusters.data ? Date.parse(clusters.data.fetchedAt) : 0
++  const coverageGaps =
++    clusters.data?.coverageGaps?.filter(
++      (gap) => gap.to > (coverageStart ?? 0) && gap.from < coverageEnd,
++    ).length ?? 0
+ 
+   return (
+     <>
+@@ -766,7 +784,7 @@ function LiquidationMapChart({
+           // z-10 because the chart stacks its own canvases inside this box; a
+           // badge in normal flow lands under the price grid.
+           <p className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-md bg-card/85 px-2 py-1 text-[11px] text-muted-foreground">
+-            {t('liquidationMap.noneInWindow', { window: windowLabel })}
++            {t('liquidationMap.noneInWindow', { since: coverageLabel })}
+           </p>
+         )}
+       </div>
+@@ -814,16 +832,39 @@ function LiquidationMapChart({
+           {clusters.isLoading
+             ? t('liquidationMap.clustersLoadingCaption')
+             : emptyWindow
+-              ? t('liquidationMap.noClustersCaption', { window: windowLabel })
++              ? t('liquidationMap.noClustersCaption', { since: coverageLabel })
+               : t('liquidationMap.mapCaption', {
+                   venue: venueLabel(sourceVenue),
+                   window: windowLabel,
++                  since: coverageLabel,
+                 })}{' '}
++          {sourceVenue === 'bybit-futures' && (
++            <> {t('liquidationMap.bybitPriceNote')}</>
++          )}
++          {sourceVenue === 'binance-futures' && (
++            <> {t('liquidationMap.binancePriceNote')}</>
++          )}
++          {clusters.data?.truncated && (
++            <> {t('liquidationMap.truncatedCaption')}</>
++          )}
++          {clusters.data?.connected === false && (
++            <> {t('liquidationMap.disconnectedCaption')}</>
++          )}
++          {coverageGaps > 0 && (
++            <> {t('liquidationMap.gapsCaption', { count: coverageGaps })}</>
++          )}
+           {bands.length === 0
+             ? t('liquidationMap.noPositionsCaption')
+             : t('liquidationMap.positionsCaption')}
+           {completeness === 'sampled' && (
+-            <> {t('liquidationMap.sampledNote')}</>
++            <>
++              {' '}
++              {t(
++                sourceVenue === 'binance-futures'
++                  ? 'liquidationMap.sampledNote'
++                  : 'liquidationMap.sampledSourceNote',
++              )}
++            </>
+           )}
+         </p>
+       </footer>
 diff --git a/apps/terminal/src/components/futures/margin-health-pane.tsx b/apps/terminal/src/components/futures/margin-health-pane.tsx
 index bb006f4..c2e2723 100644
 --- a/apps/terminal/src/components/futures/margin-health-pane.tsx
@@ -2347,6 +2450,26 @@ index 8dc49f9..d792a1b 100644
        if (seen.has(identity)) continue
        seen.add(identity)
        // Appended rows get an identity-derived id so a token sharing its
+diff --git a/apps/terminal/src/hooks/use-liquidation-clusters.ts b/apps/terminal/src/hooks/use-liquidation-clusters.ts
+index aabb2c7..817fc96 100644
+--- a/apps/terminal/src/hooks/use-liquidation-clusters.ts
++++ b/apps/terminal/src/hooks/use-liquidation-clusters.ts
+@@ -44,6 +44,7 @@ export type LiquidationClustersResult = {
+   unavailable: LiquidationsUnavailableReason | 'standalone' | null
+   /** For `collecting`: when the collector started watching the venue. */
+   trackedSince: number | null
++  connected?: boolean
+   error: string | null
+ }
+ 
+@@ -147,6 +148,7 @@ export function useLiquidationClusters(
+         isLoading: false,
+         unavailable: answer.reason,
+         trackedSince: answer.trackedSince ?? null,
++        connected: answer.connected,
+         error: null,
+       }
+     }
 diff --git a/apps/terminal/src/hooks/use-market-instruments.ts b/apps/terminal/src/hooks/use-market-instruments.ts
 index 14a75d5..2e213e8 100644
 --- a/apps/terminal/src/hooks/use-market-instruments.ts
@@ -2787,6 +2910,82 @@ index 5484a85..4f17ead 100644
 +    }).kind,
 +  ).toBe('unavailable')
 +})
+diff --git a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
+index b93724f..7196259 100644
+--- a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
++++ b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
+@@ -72,13 +72,25 @@ describe('a build with no App Server', () => {
+     },
+   )
+ 
+-  test('liquidations refuse before any plugin is addressed', async () => {
++  test('liquidations use the named installed collector in standalone mode', async () => {
+     const collector = fakePlugin({
+       id: 'pairlens-intelligence',
+       capabilities: [
+         { id: 'market-data:liquidations', markets: ['binance-futures'] },
+       ],
+-      execute: () => unreachable(),
++      execute: () => ({
++        venue: 'binance-futures',
++        pairKey: 'BTC-USDT-USDT',
++        trackedSince: 100,
++        bucketWidth: 10,
++        resolutionMs: 60000,
++        retentionMs: 259200000,
++        completeness: 'sampled',
++        buckets: [],
++        fetchedAt: '2026-10-09T00:00:00Z',
++        connected: false,
++        coverageGaps: [{ from: 100, to: 200 }],
++      }),
+     })
+     const { deps } = stubDeps({ plugins: [collector.instance] })
+     const tools = buildDataTools(deps)
+@@ -87,9 +99,12 @@ describe('a build with no App Server', () => {
+       TOOL_OPTIONS,
+     )) as ToolResult
+ 
+-    expect(result.unavailable).toBe('standalone')
++    expect(result.unavailable).toBeUndefined()
+     expect(result.venue).toBe('binance-futures')
+-    expect(collector.calls.length).toBe(0)
++    expect(result.interpretation).toContain('does not establish')
++    expect(result.connected).toBe(false)
++    expect(result.coverageGaps).toEqual([{ from: 100, to: 200 }])
++    expect(collector.calls.length).toBe(1)
+   })
+ 
+   test('new listings still serve the on-chain half, and say why the other is missing', async () => {
+@@ -209,3 +224,28 @@ describe('a build with no App Server', () => {
+     expect(result.unavailable).toBeUndefined()
+   })
+ })
++
++test('a disconnected collector never becomes an empty market answer', async () => {
++  const collector = fakePlugin({
++    id: 'pairlens-intelligence',
++    capabilities: [
++      { id: 'market-data:liquidations', markets: ['bybit-futures'] },
++    ],
++    execute: () => ({
++      error: 'liquidations_unavailable',
++      reason: 'collecting',
++      connected: false,
++      trackedSince: 100,
++      fetchedAt: '2026-10-09T00:00:00Z',
++    }),
++  })
++  const { deps } = stubDeps({ plugins: [collector.instance] })
++  const result = (await buildDataTools(deps).get_liquidation_clusters.execute!(
++    { venue: 'bybit-futures', pair: 'BTC-USDT-USDT' } as never,
++    TOOL_OPTIONS,
++  )) as ToolResult
++  expect(result.unavailable).toBe('collecting')
++  expect(result.connected).toBe(false)
++  expect(result.hint).toContain('not evidence of zero')
++  expect(result.totals).toBeUndefined()
++})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 index ce0d317..f8d28bf 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
@@ -2801,10 +3000,18 @@ index ce0d317..f8d28bf 100644
      `Today's date: ${today} (UTC).`,
      '',
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
-index 74cf26a..1439cc0 100644
+index 74cf26a..46b5fc9 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/data-tools.ts
-@@ -465,7 +465,7 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -61,6 +61,7 @@ import { mergeNewListings } from '@/lib/new-listings'
+ import {
+   aggregateByPrice,
+   dominantSide,
++  liquidationCoverageStart,
+   liquidationTotals,
+ } from '@/lib/futures/liquidation-clusters'
+ import {
+@@ -465,7 +466,7 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
            .max(8)
            .optional()
            .describe(
@@ -2813,6 +3020,71 @@ index 74cf26a..1439cc0 100644
            ),
          limit: z.number().int().min(1).max(MAX_ROWS).optional(),
        }),
+@@ -610,8 +611,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+             trackedVenues: tracked,
+           }
+         }
+-        if (!hasAppServer)
+-          return { ...STANDALONE, venue: market, pair: pairKey }
+ 
+         // Resolved by name, never through the manager: its fallback chain
+         // would hand this to a plugin that does not collect the venue and
+@@ -656,11 +655,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+             venue: market,
+             pair: pairKey,
+             unavailable: answer.reason,
++            connected: answer.connected,
+             trackedSince: isoOf(answer.trackedSince ?? null),
+             hint:
+-              answer.reason === 'collecting'
+-                ? 'The collector watches this contract but has not held it long enough to draw a window yet.'
+-                : 'The collector does not watch this contract.',
++              answer.reason === 'collecting' && answer.connected === false
++                ? 'The collector stream is disconnected or awaiting its subscription; missing prints are not evidence of zero liquidations.'
++                : answer.reason === 'collecting'
++                  ? 'The collector watches this contract but has not held it long enough to draw a window yet.'
++                  : 'The collector does not watch this contract.',
+             trackedVenues: tracked,
+           }
+         }
+@@ -691,6 +693,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+           // 'sampled' means the venue stream drops prints during cascades, so
+           // the magnitudes undercount exactly when they matter. Say so.
+           completeness: response.completeness,
++          connected: response.connected,
++          coverageStart: isoOf(liquidationCoverageStart(response, window)),
++          coverageThrough: isoOf(response.coverageThrough ?? null),
++          coverageGaps: response.coverageGaps,
++          interpretation:
++            buckets.length === 0
++              ? 'No recorded prints in available history; this does not establish that no liquidations occurred.'
++              : 'Recorded venue prints only; coverage begins at trackedSince and may contain gaps.',
+           totals: {
+             longNotionalUsd: totals.long,
+             shortNotionalUsd: totals.short,
+@@ -698,7 +708,8 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+             events: totals.count,
+           },
+           total: clusters.length,
+-          truncated: clusters.length > MAX_BUCKETS,
++          truncated:
++            response.truncated === true || clusters.length > MAX_BUCKETS,
+           clusters: kept.map((cluster) => ({
+             price: cluster.price,
+             longNotionalUsd: cluster.longNotional,
+@@ -707,6 +718,12 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+             events: cluster.count,
+             dominantSide: dominantSide(cluster),
+           })),
++          priceMeaning:
++            response.venue === 'bybit-futures'
++              ? 'Reported bankruptcy prices, not execution prices.'
++              : response.venue === 'binance-futures'
++                ? 'Reported average fill prices from a sampled feed.'
++                : 'Provider-reported price.',
+           note: "'long' means longs were liquidated, which is forced selling. The two sides are never summed.",
+         }
+       },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
 index bf4d768..6c9eb17 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
@@ -3295,6 +3567,36 @@ index 5cc12eb..eec276a 100644
  
    useEffect(() => {
      if (!perp || known) return
+diff --git a/apps/terminal/src/lib/futures/liquidation-clusters.ts b/apps/terminal/src/lib/futures/liquidation-clusters.ts
+index e0e6623..2ea6cf1 100644
+--- a/apps/terminal/src/lib/futures/liquidation-clusters.ts
++++ b/apps/terminal/src/lib/futures/liquidation-clusters.ts
+@@ -27,6 +27,7 @@
+ import type { Timeframe } from '@pairlens/shared/types'
+ import type {
+   LiquidationBucket,
++  LiquidationClustersResponse,
+   LiquidationSide,
+ } from '@pairlens/shared/instrument-types'
+ 
+@@ -339,3 +340,17 @@ export function buildHeatmapGrid(
+ 
+   return { columns, peak, cellCount: byCell.size, barMs }
+ }
++
++/** Recorded coverage starts at the later of the requested window and collector startup. */
++export function liquidationCoverageStart(
++  data:
++    | Pick<LiquidationClustersResponse, 'trackedSince' | 'fetchedAt'>
++    | null
++    | undefined,
++  hours: number,
++): number | null {
++  if (!data || !Number.isFinite(data.trackedSince)) return null
++  const fetchedAt = Date.parse(data.fetchedAt)
++  if (!Number.isFinite(fetchedAt)) return null
++  return Math.max(fetchedAt - hours * 3_600_000, data.trackedSince)
++}
 diff --git a/apps/terminal/src/lib/instruments/__tests__/local-index.test.ts b/apps/terminal/src/lib/instruments/__tests__/local-index.test.ts
 index d6239a3..af38cb1 100644
 --- a/apps/terminal/src/lib/instruments/__tests__/local-index.test.ts
@@ -4808,7 +5110,7 @@ index 59e82f9..510ab19 100644
    },
    "nftChains": {
 diff --git a/apps/terminal/src/locales/en/translation.json b/apps/terminal/src/locales/en/translation.json
-index c6d9f6b..d78a4ae 100644
+index c6d9f6b..278ef96 100644
 --- a/apps/terminal/src/locales/en/translation.json
 +++ b/apps/terminal/src/locales/en/translation.json
 @@ -8,17 +8,17 @@
@@ -5638,16 +5940,48 @@ index c6d9f6b..d78a4ae 100644
        "widerWindow": "In a wider window",
        "desktopApp": "In the desktop app",
        "workspaces": {
-@@ -6354,7 +6354,7 @@
+@@ -6339,25 +6339,34 @@
+     "legendLong": "{{value}} longs",
+     "legendShort": "{{value}} shorts",
+     "legendPrints": "{{count}} prints",
+-    "mapCaption": "Shaded cells are what {{venue}} actually liquidated in the last {{window}}, placed at the time and the price it happened. The heavier the notional, the darker the cell.",
++    "mapCaption": "Recorded {{venue}} liquidation prints for the requested {{window}} window. Coverage begins {{since}}; earlier history is unavailable. Darker cells show larger recorded notional.",
+     "positionsCaption": "The dashed lines are your own liquidation prices, reported by each venue and thickened by the notional at risk.",
+     "noPositionsCaption": "Your own liquidation prices join the chart as dashed lines once a position is open on this contract.",
++    "sampledSourceNote": "Returned prints are a sample; totals do not represent every liquidation.",
+     "sampledNote": "This venue publishes at most one liquidation per symbol per second, so the magnitudes are a sample and undercount cascades.",
+-    "noneInWindow": "Nothing liquidated in the last {{window}}",
+-    "noClustersCaption": "Nothing was liquidated on this contract in the last {{window}}.",
++    "noneInWindow": "No recorded liquidation prints since {{since}}",
++    "noClustersCaption": "No liquidation prints were recorded on this contract since {{since}}. This does not establish that no liquidations occurred.",
+     "clustersLoadingCaption": "Loading the venue's liquidation history.",
+     "clustersErrorCaption": "The venue's liquidation history could not be loaded. The collector answers once a minute, so this may clear on its own.",
+     "errorTitle": "The liquidation history did not load",
+     "noFeedTitle": "No measured liquidations here",
+-    "notTrackedCaption": "This venue publishes no aggregate liquidation feed, so no market clusters are drawn.",
++    "notTrackedCaption": "No installed collector tracks this venue or contract. Choose a listed source to view its recorded prints.",
+     "planRequiredTitle": "A vendor key is needed here",
      "planRequiredCaption": "This venue's clusters come from a Coinglass key. Add one, or move to a Coinglass plan that covers liquidation orders, and the map fills in.",
      "planRequiredAction": "Manage the Coinglass plugin",
      "alternateSourcePrompt": "Pick {{venue}} above to read another exchange’s prints against this chart. Sources are never merged: they differ in what their feeds carry.",
 -    "standaloneCaption": "Market clusters come from the Pairlens cloud, which this build does not use, or from a data vendor key you have not added.",
-+    "standaloneCaption": "Market clusters come from the CoinTrade cloud, which this build does not use, or from a data vendor key you have not added.",
++    "standaloneCaption": "No liquidation provider is installed for this source. Enable a supported collector or connect a data vendor.",
      "collectingTitle": "Still filling in",
-     "collectingCaption": "Market clusters are still filling in. Collecting since {{since}}.",
+-    "collectingCaption": "Market clusters are still filling in. Collecting since {{since}}.",
++    "collectingCaption": "The collector began tracking this contract {{since}}. Recorded history starts there; earlier history is unavailable.",
      "collectingJustStarted": "just now",
-@@ -6673,7 +6673,7 @@
++    "disconnectedTitle": "Liquidation stream unavailable",
++    "disconnectedUnavailableCaption": "The collector is disconnected or waiting for the venue subscription. New prints may be missing; this does not mean no liquidations occurred.",
++    "bybitPriceNote": "Bybit prices are reported bankruptcy prices, not execution prices.",
++    "binancePriceNote": "Binance prices are reported average fills from its sampled stream.",
++    "truncatedCaption": "The response reached its size limit; totals represent the returned sample.",
++    "coverageUnknown": "an unknown time",
++    "disconnectedCaption": "The live stream is disconnected; recorded history remains visible and new prints may be missing.",
++    "gapsCaption": "Recorded coverage contains {{count}} stream gaps; missing periods do not imply zero liquidations.",
+     "noCandlesTitle": "No candles to map against",
+     "noCandlesBody": "This venue served no price history for the contract, so there is nothing to hang the liquidations on."
+   },
+@@ -6673,7 +6682,7 @@
        "unknown": "Other"
      },
      "needsKeyTitle": "Add an OpenSea key",
@@ -19138,6 +19472,120 @@ index bc8ee65..a746a6a 100644
        return fetch(`${appServerUrl}${path}`, { ...init, headers })
      },
      [appServerUrl],
+diff --git a/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts b/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
+index c943331..a744df7 100644
+--- a/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
++++ b/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
+@@ -8,9 +8,8 @@ import {
+ import type { PluginContext } from '@pairlens/plugin-system/types'
+ 
+ // Standalone mode: VITE_APP_SERVER_URL explicitly empty means appServerUrl is
+-// '' — nullish coalescing must NOT swallow it into the cloud default, and no
+-// execute path may fetch (a relative URL would hit the hosting origin and
+-// leak search queries into its access logs).
++// '' — nullish coalescing must NOT swallow it into the cloud default.
++// Discovery and inference stay local; public feed endpoints may use the hosting origin.
+ 
+ const context: PluginContext = {
+   pair: 'BTC-USDT',
+@@ -145,3 +144,97 @@ describe('pairlens-intelligence with a configured App Server', () => {
+     ])
+   })
+ })
++
++describe('standalone liquidation collector contract', () => {
++  test('uses the same-origin endpoint with bounded windows and no credentials', async () => {
++    const answer = {
++      venue: 'binance-futures',
++      pairKey: 'BTC-USDT-USDT',
++      trackedSince: 100,
++      completeness: 'sampled',
++      bucketWidth: 10,
++      resolutionMs: 60000,
++      retentionMs: 259200000,
++      buckets: [],
++      fetchedAt: '2026-10-09T00:00:00Z',
++    }
++    let init: RequestInit | undefined
++    globalThis.fetch = ((input: RequestInfo | URL, options?: RequestInit) => {
++      fetchCalls.push(String(input))
++      init = options
++      return Promise.resolve(
++        new Response(JSON.stringify(answer), { status: 200 }),
++      )
++    }) as typeof fetch
++    const plugin = await standalonePlugin()
++    for (const hours of [1, 6, 24, 72]) {
++      expect(
++        await plugin.execute({
++          capability: 'market-data:liquidations',
++          params: { venue: 'binance-futures', pair: 'BTC-USDT-USDT', hours },
++          context,
++        }),
++      ).toEqual(answer)
++    }
++    expect(fetchCalls).toEqual(
++      [1, 6, 24, 72].map(
++        (hours) =>
++          `/api/liquidations?venue=binance-futures&pair=BTC-USDT-USDT&hours=${hours}`,
++      ),
++    )
++    expect(init).toBeUndefined()
++  })
++  test('returns a collecting refusal without converting it into a network error', async () => {
++    const answer = {
++      error: 'liquidations_unavailable',
++      reason: 'collecting',
++      trackedSince: 100,
++      fetchedAt: '2026-10-09T00:00:00Z',
++    }
++    globalThis.fetch = (() =>
++      Promise.resolve(
++        new Response(JSON.stringify(answer), { status: 503 }),
++      )) as typeof fetch
++    const plugin = await standalonePlugin()
++    expect(
++      await plugin.execute({
++        capability: 'market-data:liquidations',
++        params: { venue: 'bybit-futures', pair: 'BTC-USDT-USDT' },
++        context,
++      }),
++    ).toEqual(answer)
++  })
++  test('unsupported windows fail before any network request', async () => {
++    const plugin = await standalonePlugin()
++    for (const hours of [0, 2, Infinity, '24']) {
++      await expect(
++        plugin.execute({
++          capability: 'market-data:liquidations',
++          params: { venue: 'bybit-futures', pair: 'BTC-USDT-USDT', hours },
++          context,
++        }),
++      ).rejects.toThrow('hours')
++    }
++    expect(fetchCalls).toEqual([])
++  })
++})
++
++test('a typed unsupported-contract refusal survives the plugin boundary', async () => {
++  const answer = {
++    error: 'liquidations_unavailable',
++    reason: 'not_tracked',
++    fetchedAt: '2026-10-09T00:00:00Z',
++  }
++  globalThis.fetch = (() =>
++    Promise.resolve(
++      new Response(JSON.stringify(answer), { status: 404 }),
++    )) as typeof fetch
++  const plugin = await standalonePlugin()
++  expect(
++    await plugin.execute({
++      capability: 'market-data:liquidations',
++      params: { venue: 'bybit-futures', pair: 'BTC-USDC-USDC', hours: 24 },
++      context,
++    }),
++  ).toEqual(answer)
++})
 diff --git a/packages/plugins/src/index.ts b/packages/plugins/src/index.ts
 index 0db30c8..39d39d3 100644
 --- a/packages/plugins/src/index.ts
@@ -19178,3 +19626,60 @@ index 3a36fe1..da3ea23 100644
              { id: 'pane-trades', type: 'trades' },
              { id: 'pane-futures-positions', type: 'futures-positions' },
              { id: 'pane-data-log', type: 'data-log' },
+diff --git a/packages/plugins/src/pairlens-intelligence/index.ts b/packages/plugins/src/pairlens-intelligence/index.ts
+index 484ae1c..8fb0982 100644
+--- a/packages/plugins/src/pairlens-intelligence/index.ts
++++ b/packages/plugins/src/pairlens-intelligence/index.ts
+@@ -498,11 +498,6 @@ export function createPairlensIntelligencePlugin(
+     }
+ 
+     if (capability === 'market-data:liquidations') {
+-      if (!appUrl) {
+-        throw new Error(
+-          'pairlens-intelligence: liquidation clusters require an App Server (standalone mode)',
+-        )
+-      }
+       const venue = String(p['venue'] ?? p['market'] ?? '')
+       const pair = String(p['pair'] ?? '')
+       if (!venue || !pair) {
+@@ -510,8 +505,13 @@ export function createPairlensIntelligencePlugin(
+           'pairlens-intelligence: liquidations requires venue and pair params',
+         )
+       }
+-      const qs = new URLSearchParams({ venue, pair })
+-      if (typeof p['hours'] === 'number') qs.set('hours', String(p['hours']))
++      const hours = p['hours'] ?? 24
++      if (typeof hours !== 'number' || ![1, 6, 24, 72].includes(hours)) {
++        throw new Error(
++          'pairlens-intelligence: liquidation hours must be 1, 6, 24 or 72',
++        )
++      }
++      const qs = new URLSearchParams({ venue, pair, hours: String(hours) })
+       // No auth headers: the endpoint is public and reads none. Sending a
+       // bearer token to a route that ignores it is how a "public" endpoint
+       // quietly becomes one that cannot be called signed out.
+diff --git a/packages/shared/src/instrument-types.ts b/packages/shared/src/instrument-types.ts
+index 025957c..8daac15 100644
+--- a/packages/shared/src/instrument-types.ts
++++ b/packages/shared/src/instrument-types.ts
+@@ -1393,6 +1393,12 @@ export type LiquidationClustersResponse = {
+   trackedSince: number
+   /** Whether the underlying venue stream is a full feed or a sample. */
+   completeness: LiquidationCompleteness
++  /** Gaps in recorded coverage, epoch milliseconds. Absence means unknown. */
++  coverageGaps?: Array<{ from: number; to: number }>
++  coverageThrough?: number
++  truncated?: boolean
++  /** Whether this collector is currently receiving its venue stream. */
++  connected?: boolean
+   buckets: Array<LiquidationBucket>
+   fetchedAt: string
+ }
+@@ -1408,6 +1414,7 @@ export type LiquidationsUnavailableReason =
+ export type LiquidationsUnavailableResponse = {
+   error: 'liquidations_unavailable'
+   reason: LiquidationsUnavailableReason
++  connected?: boolean
+   /** For 'collecting': when tracking began. */
+   trackedSince?: number
+   fetchedAt: string

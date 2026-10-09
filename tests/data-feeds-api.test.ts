@@ -22,4 +22,4 @@ test('news and schedules are routed before private auth; invalid input and sourc
   assert.equal((await fetch(base+'/api/news',{headers:{Origin:'https://evil.example'}})).status,403);
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));store.close();}
 });
-test('Nginx does not shadow supplied public feeds with unavailable cloud prefix',()=>{const config=readFileSync('deployment/nginx-public.conf','utf8');assert.match(config,/location ~ \^\/api\/\(news\|earnings-calendar\|ipo-calendar\|economic-calendar\)\$/);assert.doesNotMatch(config,/location \^~ \/api\/ \{/);});
+test('Nginx does not shadow supplied public feeds with unavailable cloud prefix',()=>{const config=readFileSync('deployment/nginx-public.conf','utf8');assert.match(config,/location ~ \^\/api\/\(news\|earnings-calendar\|ipo-calendar\|economic-calendar\|liquidations\)\$/);assert.doesNotMatch(config,/location \^~ \/api\/ \{/);});

@@ -31,6 +31,7 @@
   "apps/terminal/src/lib/copilot/__tests__/quanttrade-proposals.test.ts",
   "apps/terminal/src/lib/copilot/exchange-operation.ts",
   "apps/terminal/src/lib/copilot/provider-tools.ts",
+  "apps/terminal/src/lib/futures/__tests__/liquidation-coverage.test.ts",
   "apps/terminal/src/lib/pane-venue-target.ts",
   "apps/terminal/src/lib/plugins/quanttrade-connection.test.ts",
   "apps/terminal/src/lib/plugins/quanttrade-connections.test.ts",

@@ -84,3 +84,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Implement venue/class filters, reachable result paging and cached ticker aliases; preserve selected venues; add protected preferences/layout/watchlist sync; apply CoinTrade name as requested.
 - [completed] 335 terminal tests / 89 backend tests, TypeScript, changed-file lint and production build pass. Deployed 20261008-2; branding, sync authorization, all market feeds, news/calendars and actual protected frontend assets verified.
 - [completed] Reviewed tracked files and ignored credentials/generated outputs. Source commit d27feec pushed to https://github.com/moemara-1/quanttrade-terminal on codex/cointrade-integration.
+
+## Liquidation feed repair
+- [completed] Trace native provider and reproduce hosted liquidation route failure; verify official feed protocols and data coverage.
+- [completed] Implement persistent Binance/Bybit collection, native public route and truthful collection/coverage states.
+- [completed] 97 backend tests and 102 focused frontend/provider tests pass; root/native TypeScript, 140-file lint and production build pass. Deployed 20261009-1; both live streams connected across all four history windows, existing feed/login/trading/sync guards and protected assets verified. Commit and publication recorded below. No orders placed.

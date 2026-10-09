@@ -13,6 +13,7 @@ import { NewsService } from './news.ts';
 import { MarketCalendars } from './calendars.ts';
 import { VenueResearch } from './research.ts';
 import { HummingbotOperations, VenueOperations } from './operations.ts';
+import { LiquidationCollector } from './liquidations.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const positiveDecimal=z.string().regex(/^[1-9]\d*(?:\.\d+)?$/);
@@ -36,14 +37,16 @@ function token(name:string):string {
 }
 const store=new DeskStore(resolve('data','desk.sqlite'));
 const markets=new PublicMarkets();
+const liquidations=new LiquidationCollector(resolve('data','liquidations.sqlite'));
+liquidations.start();
 const execution=new HummingbotExecution({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT});
 const desk=new TradingDesk(store,markets,execution,{mode:env.DESK_MODE,accountName:env.HUMMINGBOT_ACCOUNT,maxOrderNotional:env.MAX_ORDER_NOTIONAL,
   dailyNotionalLimit:env.DAILY_NOTIONAL_LIMIT,maxPriceDeviationBps:env.MAX_PRICE_DEVIATION_BPS,proposalTtlSeconds:env.PROPOSAL_TTL_SECONDS,pairlensUrl:env.PAIRLENS_URL});
 const agent=new ProposalAgent({url:env.AGENT_BASE_URL,key:env.AGENT_API_KEY,model:env.AGENT_MODEL},markets,desk);
 desk.agentConfigured=agent.configured;
 const operations=new VenueOperations(desk,new HummingbotOperations({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT}),markets);
-const app=createApp({news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET}}:{})});
+const app=createApp({liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET}}:{})});
 const server=app.listen(4318,'127.0.0.1',()=>console.log(`CoinTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
-server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);store.close();process.exitCode=1;});
-function shutdown() {server.close(()=>{store.close();process.exit(0);});setTimeout(()=>process.exit(1),5000).unref();}
+server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);liquidations.close();store.close();process.exitCode=1;});
+function shutdown() {liquidations.close();server.close(()=>{store.close();process.exit(0);});setTimeout(()=>process.exit(1),5000).unref();}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);

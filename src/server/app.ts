@@ -10,8 +10,10 @@ import type { MarketCalendars } from './calendars.ts';
 import type { VenueResearch } from './research.ts';
 import type { VenueOperations } from './operations.ts';
 import { validateSyncEntries } from './sync-state.ts';
+import type { LiquidationCollector } from './liquidations.ts';
 
 interface Services {
+  liquidations?: Pick<LiquidationCollector,'get'>;
   news?: Pick<NewsService,'get'>;
   calendars?: Pick<MarketCalendars,'earnings'|'ipos'|'economic'>;
   research?: Pick<VenueResearch,'execute'>;
@@ -72,6 +74,13 @@ export function createApp(services: Services) {
       }
     });
   }
+
+  app.get('/api/liquidations',publicData,async(req,res)=>{
+    if(!services.liquidations){res.status(503).json({error:'liquidations_unavailable',reason:'collecting',fetchedAt:new Date().toISOString()});return;}
+    const result=await services.liquidations.get(req.query);
+    if('error' in result)res.status(result.reason==='not_tracked'?404:503);
+    res.json(result);
+  });
 
   let researchWindow=Date.now(),researchBudget=0,researchInFlight=0;
   app.get('/api/public/research',async(req,res)=>{
