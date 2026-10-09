@@ -7,8 +7,24 @@ from contextvars import ContextVar
 from decimal import Decimal
 from functools import wraps
 import inspect
+import asyncio
 
 _protection = ContextVar("quanttrade_market_protection", default=None)
+
+
+async def wait_for_submission(connector, order_id, timeout=20):
+    """A connector buy/sell ID only means queued, not exchange acknowledgement."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        order = connector._order_tracker.all_orders.get(order_id)
+        state = getattr(getattr(order, 'current_state', None), 'name', '')
+        if state == 'FAILED':
+            raise RuntimeError('Order failed before exchange acknowledgement. Inspect connector order history for the rejection; no order was retried.')
+        if state in ('OPEN', 'PARTIALLY_FILLED', 'FILLED') and order.exchange_order_id:
+            return order_id
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError('Exchange acknowledgement is unverified. Check order history before further action; this order is not retried.')
+        await asyncio.sleep(0.1)
 
 
 def bounded_place(original):
@@ -100,6 +116,12 @@ def install(app, auth_user):
                           quanttrade_protection_price=price)
         if not order_id:
             raise HTTPException(500, "Exchange submission did not return an order ID")
+        try:
+            await wait_for_submission(connector, order_id)
+        except RuntimeError as error:
+            raise HTTPException(502, str(error)) from error
+        except TimeoutError as error:
+            raise HTTPException(504, str(error)) from error
         return {"order_id": order_id, "status": "submitted"}
 
     app.include_router(router, dependencies=[Depends(auth_user)])

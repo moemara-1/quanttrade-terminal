@@ -1,5 +1,6 @@
 import { assistantOrderAccount, requiresExchangeAccount } from './order-account'
 import { confirmedOrderFields } from './trading-tools'
+import { recordTradeSubmission } from './trade-submissions'
 import type {
   CopilotOrderRequest,
   OrderOutcome,
@@ -33,7 +34,7 @@ export async function submitReviewedOrder(
   )
   if (mode === 'live' && !account && requiresExchangeAccount(request.market))
     throw new Error('No live account is connected for this exchange.')
-  return placeOrder({
+  const params = {
     market: request.market,
     pair: request.pair,
     side: request.side,
@@ -43,5 +44,35 @@ export async function submitReviewedOrder(
     analyticsSource: 'copilot',
     ...(request.clientOrderId ? { clientOrderId: request.clientOrderId } : {}),
     ...(account ? { credentialId: account.id } : {}),
-  })
+  }
+  const evidence = {
+    clientOrderId: request.clientOrderId ?? crypto.randomUUID(),
+    market: request.market,
+    pair: request.pair,
+    mode,
+    ...(account ? { credentialId: account.id } : {}),
+    recordedAt: Date.now(),
+  }
+  recordTradeSubmission({ ...evidence, status: 'submitting' })
+  try {
+    const outcome = await placeOrder(params)
+    recordTradeSubmission({
+      ...evidence,
+      recordedAt: Date.now(),
+      status: outcome.success
+        ? mode === 'paper' ? 'simulated' : 'submitted'
+        : 'unverified',
+      ...(outcome.orderId ? { orderId: outcome.orderId } : {}),
+      ...(outcome.error ? { error: outcome.error } : {}),
+    })
+    return outcome
+  } catch (cause) {
+    recordTradeSubmission({
+      ...evidence,
+      recordedAt: Date.now(),
+      status: 'unverified',
+      error: cause instanceof Error ? cause.message : 'Submission result unavailable',
+    })
+    throw cause
+  }
 }

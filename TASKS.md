@@ -113,3 +113,13 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Identified intentionally disabled HL/Lighter Workflow controls and competing workflow authoring tool routing.
 - [completed] Removed unsupported native Workflow, restored opening-order controls, routed trade setup to direct proposal cards with exact account/mode binding and preserved size/leverage/margin.
 - [completed] Passed 37 targeted tests (195 assertions), native lint/typecheck and production build. Deployed release20261009-7; hosted auth, feeds, markets, exact assets and new approval guards passed. Committed and pushed. No real order or paid model request made.
+
+## Hosted live session and paper misreporting repair
+- [completed] Verified Lighter live/authenticated and actual order FAILED with zero fill: older signer rejected PRL market4097; upstream profile failure falsely said signed-out/paper.
+- [completed] Corrected hosted account mode/session reporting, exact mode inference, observed submission evidence, truthful paper/live card status and market acknowledgement waiting. Pinned Lighter SDK1.1.4 supports4097.
+- [completed] Passed58native tests/267assertions,32Python tests, native lint/typecheck/build and offline signer red/green. Deployed20261009-8, all hosted checks passed; committed/pushed. No user trade replayed.
+
+## Restore approved native workflows
+- [in_progress] Implement bounded, persistent approved workflow runs for HL/Lighter, with direct chat confirmation and truthful run state.
+- [pending] Restore native ticket workflow preparation and test scheduling, failure, cancellation, restart and account/mode boundaries.
+- [pending] Build, deploy, verify and push workflow support.

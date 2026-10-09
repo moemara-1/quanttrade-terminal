@@ -12,6 +12,24 @@ MARKET=SimpleNamespace(name='MARKET')
 LIMIT=SimpleNamespace(name='LIMIT')
 
 class MarketProtectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_submission_waits_for_connector_ack_and_never_calls_another_order(self):
+        order = SimpleNamespace(current_state=SimpleNamespace(name='PENDING_CREATE'), exchange_order_id=None)
+        connector = SimpleNamespace(_order_tracker=SimpleNamespace(all_orders={'reviewed': order}))
+        task = asyncio.create_task(module.wait_for_submission(connector, 'reviewed', timeout=1))
+        await asyncio.sleep(0)
+        self.assertFalse(task.done())
+        order.current_state = SimpleNamespace(name='OPEN')
+        order.exchange_order_id = 'exchange-ack'
+        self.assertEqual(await task, 'reviewed')
+
+    async def test_failed_or_uncertain_submission_is_not_success(self):
+        failed = SimpleNamespace(current_state=SimpleNamespace(name='FAILED'), exchange_order_id=None)
+        connector = SimpleNamespace(_order_tracker=SimpleNamespace(all_orders={'failed': failed}))
+        with self.assertRaisesRegex(RuntimeError, 'failed before exchange acknowledgement'):
+            await module.wait_for_submission(connector, 'failed', timeout=0)
+        with self.assertRaisesRegex(TimeoutError, 'not retried'):
+            await module.wait_for_submission(connector, 'missing', timeout=0)
+
     async def test_protection_survives_default_slippage_and_is_task_scoped(self):
         class Connector:
             def effective(self,trading_pair,trade_type,order_type,price):

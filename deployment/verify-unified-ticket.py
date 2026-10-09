@@ -9,6 +9,8 @@ for marker in (
     'Trade ticket and position management',
     'The reviewed trading mode changed. Prepare a fresh proposal.',
     'When the user asks to set up, prepare or submit a trade',
+    'Paper simulation recorded',
+    'Observed approval results from this browser session',
     'Choose Cross or Isolated when changing leverage',
     'Multiple live accounts are connected for this exchange',
     'This proposal expired',

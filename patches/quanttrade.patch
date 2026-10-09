@@ -8634,7 +8634,7 @@ index 8feeacd..862c161 100644
      // status chip — the order only executes when the user confirms.
      if (toolName === 'place_order' && output?.order) {
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-index 219799a..23ae25a 100644
+index 219799a..6573aed 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-order-card.tsx
 @@ -1,18 +1,17 @@
@@ -8689,7 +8689,7 @@ index 219799a..23ae25a 100644
  }
  
  export type CopilotCancelRequest = {
-@@ -93,40 +93,39 @@ export function CopilotPlaceOrderCard({
+@@ -93,40 +93,44 @@ export function CopilotPlaceOrderCard({
    const { t } = useTranslation()
    const actions = useCopilotOrderActions()
    const [mode, setMode] = useState<'paper' | 'live'>(
@@ -8711,6 +8711,11 @@ index 219799a..23ae25a 100644
 +  const clientOrderId = useRef(proposalId ?? crypto.randomUUID()).current
  
    const isBuy = order.side === 'buy'
++  const venueLabel = ['lighter', 'lighter-spot'].includes(order.market)
++    ? 'Lighter'
++    : ['hyperliquid', 'hyperliquid-spot'].includes(order.market)
++      ? 'Hyperliquid'
++      : order.market
  
 -  const confirm = async (
 -    execMode: 'paper' | 'live',
@@ -8750,7 +8755,7 @@ index 219799a..23ae25a 100644
        setOutcome(result)
      } catch (err) {
        setOutcome({
-@@ -148,28 +147,9 @@ export function CopilotPlaceOrderCard({
+@@ -148,28 +152,9 @@ export function CopilotPlaceOrderCard({
      holdMs: tradeHoldMs(mode === 'live'),
      disabled: !actions || state !== 'idle',
      busy: state === 'placing',
@@ -8780,31 +8785,35 @@ index 219799a..23ae25a 100644
    return (
      <div className="border-border/60 bg-muted/40 elevated-panel rounded-lg border p-3 text-xs">
        <div className="mb-2 flex items-center gap-2">
-@@ -193,21 +173,47 @@ export function CopilotPlaceOrderCard({
-       </div>
+@@ -194,20 +179,52 @@ export function CopilotPlaceOrderCard({
  
        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
-+        {order.accountLabel && (
-+          <div className="flex justify-between">
-+            <dt>Account</dt>
-+            <dd>{order.accountLabel}</dd>
-+          </div>
-+        )}
          <div className="flex justify-between">
-           <dt>{t('copilot.fieldSize')}</dt>
-           <dd className="text-foreground font-mono font-medium tabular-nums">
+-          <dt>{t('copilot.fieldSize')}</dt>
+-          <dd className="text-foreground font-mono font-medium tabular-nums">
 -            {fmt(order.size)}
-+            {order.exactSize ?? fmt(order.size)}
++          <dt>Reviewed mode</dt>
++          <dd className={mode === 'live' ? 'text-down' : 'text-primary'}>
++            {mode === 'live' ? t('accounts.live') : t('accounts.paper')}
            </dd>
          </div>
 -        {order.type === 'limit' && order.price != null && (
--          <div className="flex justify-between">
++        {order.accountLabel && (
+           <div className="flex justify-between">
 -            <dt>{t('copilot.orderTypeLimit')}</dt>
 -            <dd className="text-foreground font-mono font-medium tabular-nums">
 -              {fmt(order.price)}
 -            </dd>
--          </div>
--        )}
++            <dt>Account</dt>
++            <dd>{order.accountLabel}</dd>
+           </div>
+         )}
++        <div className="flex justify-between">
++          <dt>{t('copilot.fieldSize')}</dt>
++          <dd className="text-foreground font-mono font-medium tabular-nums">
++            {order.exactSize ?? fmt(order.size)}
++          </dd>
++        </div>
 +        {order.type === 'limit' &&
 +          (order.price != null || order.exactPrice) && (
 +            <div className="flex justify-between">
@@ -8837,7 +8846,18 @@ index 219799a..23ae25a 100644
  
        {order.reason && (
          <p className="mt-2 text-[11px] italic text-muted-foreground">
-@@ -240,43 +246,23 @@ export function CopilotPlaceOrderCard({
+@@ -228,8 +245,8 @@ export function CopilotPlaceOrderCard({
+                 <CheckCircle2 className="size-3.5" />
+                 <span>
+                   {mode === 'paper'
+-                    ? t('copilot.orderPlacedPaper')
+-                    : t('copilot.orderPlaced')}
++                    ? `Paper simulation recorded — no order sent to ${venueLabel}`
++                    : `Order submitted to ${venueLabel}`}
+                   {outcome.orderId ? ` · ${outcome.orderId}` : ''}
+                 </span>
+               </>
+@@ -240,43 +257,22 @@ export function CopilotPlaceOrderCard({
                </>
              )}
            </div>
@@ -8862,7 +8882,12 @@ index 219799a..23ae25a 100644
 -                {t('copilot.turnOff')}
 -              </button>
 -            </div>
--          )}
++          {outcome.success && mode === 'paper' && (
++            <p className="mt-2 text-[11px] text-muted-foreground">
++              To trade live, ask the assistant for a fresh live proposal and
++              confirm that card. This paper simulation cannot be submitted live.
++            </p>
+           )}
          </>
 -      ) : autoApproved ? (
 -        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -8873,14 +8898,7 @@ index 219799a..23ae25a 100644
 -        </div>
        ) : (
          <div className="mt-2.5 space-y-2">
-+          {order.mode !== undefined ? (
-+            <p className="rounded-md bg-background/60 px-2 py-1 text-[11px] text-muted-foreground">
-+              Reviewed mode:{' '}
-+              <span className={mode === 'live' ? 'text-down' : 'text-primary'}>
-+                {mode === 'live' ? t('accounts.live') : t('accounts.paper')}
-+              </span>
-+            </p>
-+          ) : (
++          {order.mode === undefined && (
            <div className="flex items-center gap-1 rounded-md bg-background/60 p-0.5">
              {(['paper', 'live'] as const).map((m) => (
                <button
@@ -8890,10 +8908,16 @@ index 219799a..23ae25a 100644
                  onClick={() => setMode(m)}
                  className={cn(
                    'flex-1 rounded px-2 py-1 text-[11px] font-medium capitalize transition-colors',
-@@ -291,22 +277,13 @@ export function CopilotPlaceOrderCard({
+@@ -291,22 +287,19 @@ export function CopilotPlaceOrderCard({
                </button>
              ))}
            </div>
++          )}
++          {order.mode === 'paper' && (
++            <p className="text-[11px] text-muted-foreground">
++              This proposal simulates an order. To submit to {venueLabel}, ask
++              the assistant for a fresh live proposal.
++            </p>
 +          )}
            {mode === 'live' && (
              <p className="flex items-center gap-1 text-[10px] text-amber-500">
@@ -11677,15 +11701,18 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..8ea17f7 100644
+index ce0d317..7a651b2 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -73,8 +73,11 @@ const WORKING_RULES = [
+@@ -73,8 +73,14 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
++  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
++  'Committing a workflow only saves its definition. A place_order card does not launch a workflow, and current Hyperliquid/Lighter connectors refuse unattended workflow orders. Never claim a committed DCA workflow or follow-up buys are running merely because an entry card was confirmed; explain that each live order needs its own approval with the current implementation.',
 +  'When the user asks to set up, prepare or submit a trade, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
 +  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
 +  'A place_order proposal submits one order. Separate protective exits are not an attached bracket or OCO: do not claim entry plus stop-loss/take-profit are atomically submitted or protected before confirmed exchange evidence. Prepare separate explicit approval cards for supported exit orders after verifying the position.',
@@ -11694,7 +11721,7 @@ index ce0d317..8ea17f7 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +97,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +100,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -11703,6 +11730,30 @@ index ce0d317..8ea17f7 100644
      'You are not a sidebar chatbot. You sit above the whole terminal, you can see what the user is doing on any screen, and you can drive every part of it on their behalf.',
      `Today's date: ${today} (UTC).`,
      '',
+diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
+index 26e075b..0d208fb 100644
+--- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
++++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
+@@ -36,6 +36,7 @@ import type {
+   UIMessage,
+   UIMessageChunk,
+ } from 'ai'
++import { getTradeSubmissions } from '@/lib/copilot/trade-submissions'
+ import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
+ import { track } from '@/lib/analytics-events'
+ 
+@@ -101,7 +102,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+         venues: deps
+           .getMarketData()
+           ?.availableMarkets.map((market) => market.marketId),
+-        guides: guidesFor(deps),
++        guides: [
++          ...guidesFor(deps),
++          `Observed approval results from this browser session (submission is not fill confirmation; no record means unknown): ${JSON.stringify(getTradeSubmissions().slice(0, 5))}`,
++        ],
+       }),
+       messages: await convertToModelMessages(options.messages),
+       tools,
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
 index 74cf26a..5fbf941 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
@@ -11912,6 +11963,23 @@ index a445de9..9e39057 100644
      >
        {children}
      </ChartTerminalProvider>
+diff --git a/apps/terminal/src/lib/copilot/__tests__/resolve-target.test.ts b/apps/terminal/src/lib/copilot/__tests__/resolve-target.test.ts
+index 5a3bae1..a37411c 100644
+--- a/apps/terminal/src/lib/copilot/__tests__/resolve-target.test.ts
++++ b/apps/terminal/src/lib/copilot/__tests__/resolve-target.test.ts
+@@ -86,7 +86,11 @@ describe('trading on an assumed target', () => {
+ 
+   test('place_order proposes normally once something names the pair', async () => {
+     const tools = buildTradingTools(deps({ market: 'okx', pair: 'BTC-USDT' }))
+-    const result = await call(tools.place_order, { side: 'buy', size: 1 })
++    const result = await call(tools.place_order, {
++      side: 'buy',
++      size: 1,
++      mode: 'paper',
++    })
+ 
+     expect(result.status).toBe('awaiting_confirmation')
+     expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
 diff --git a/apps/terminal/src/lib/copilot/index.ts b/apps/terminal/src/lib/copilot/index.ts
 index a34eeca..86a6054 100644
 --- a/apps/terminal/src/lib/copilot/index.ts
@@ -11932,6 +12000,175 @@ index a34eeca..86a6054 100644
      ...buildContextTools(deps),
      ...buildPortfolioTools(deps),
      ...buildChartTools(deps),
+diff --git a/apps/terminal/src/lib/copilot/portfolio-tools.ts b/apps/terminal/src/lib/copilot/portfolio-tools.ts
+index e7631ae..5082a86 100644
+--- a/apps/terminal/src/lib/copilot/portfolio-tools.ts
++++ b/apps/terminal/src/lib/copilot/portfolio-tools.ts
+@@ -3,11 +3,106 @@
+ import { tool } from 'ai'
+ import { z } from 'zod'
+ import { api } from '../api'
++import { hasAppServer } from '../auth-client'
++import { loadConnectedExchanges } from '../plugins/quanttrade-connections'
++import { credentialMarketFor } from '../venues/credential-alias'
+ import { getBalances } from '../../stores/balances-store'
++import { useCredentialsStore } from '../../stores/credentials-store'
+ import { getOrderEvents } from '../../stores/order-events-store'
+ import { useRiskConfigStore } from '../../stores/risk-config-store'
+-import { useTradeConsentStore } from '../../stores/trade-consent-store'
++import { getTradeSubmissions } from './trade-submissions'
+ import type { CopilotToolDeps } from './tool-deps'
++import type { UserConfig } from '../api'
++import type {
++  CredentialsStatus,
++  ExchangeCredential,
++} from '../../stores/credentials-store'
++
++export type AccountSettingsReaders = {
++  hasAppServer: boolean
++  loadHostedAccounts: () => Promise<Array<ExchangeCredential>>
++  readLocalAccounts: () => Promise<{
++    status: CredentialsStatus
++    credentials: Array<ExchangeCredential>
++  }>
++  getUserConfig: () => Promise<UserConfig>
++}
++
++const accountSettingsReaders: AccountSettingsReaders = {
++  hasAppServer,
++  loadHostedAccounts: loadConnectedExchanges,
++  readLocalAccounts: async () => {
++    await useCredentialsStore.getState().load()
++    const { status, credentials } = useCredentialsStore.getState()
++    return { status, credentials }
++  },
++  getUserConfig: api.getUserConfig,
++}
++
++/** Account routing is independent of an optional upstream App Server profile. */
++export async function readTradingAccountSettings(
++  market?: string,
++  readers: AccountSettingsReaders = accountSettingsReaders,
++) {
++  const [hosted, local, profile] = await Promise.allSettled([
++    readers.loadHostedAccounts(),
++    readers.readLocalAccounts(),
++    readers.hasAppServer ? readers.getUserConfig() : Promise.resolve(null),
++  ])
++  const project = (
++    credential: ExchangeCredential,
++    source: 'local' | 'hosted',
++  ) => ({
++    credentialId: credential.id,
++    market: credential.market,
++    label: credential.label,
++    mode: credential.mode,
++    source,
++  })
++  const localStatus = local.status === 'fulfilled' ? local.value.status : 'error'
++  // Server references from a previous load are not current connection evidence.
++  const accounts = [
++    ...(local.status === 'fulfilled' && local.value.status === 'ready'
++      ? local.value.credentials
++          .filter((credential) => !credential.serverManaged)
++          .map((credential) => project(credential, 'local'))
++      : []),
++    ...(hosted.status === 'fulfilled'
++      ? hosted.value.map((credential) => project(credential, 'hosted'))
++      : []),
++  ]
++  const scoped = market
++    ? accounts.filter((account) => account.market === credentialMarketFor(market))
++    : accounts
++  const modes = new Set(scoped.map((account) => account.mode))
++  return {
++    tradingMode:
++      modes.size === 1
++        ? [...modes][0]
++        : modes.size > 1
++          ? 'per-account'
++          : 'unavailable',
++    tradingModeScope: market || 'connected-accounts',
++    accounts,
++    hostedSession: {
++      status: hosted.status === 'fulfilled' ? 'authenticated' : 'unavailable',
++    },
++    localCredentials: { status: localStatus },
++    appServerPreferences: !readers.hasAppServer
++      ? { status: 'not_configured' }
++      : profile.status === 'fulfilled' && profile.value
++        ? {
++            status: 'available',
++            tradingMode: profile.value.tradingMode ?? null,
++            aiPersona: profile.value.aiPersona ?? null,
++          }
++        : { status: 'unavailable' },
++    autoApproval: { paper: false, liveMarkets: [] },
++    confirmationRequired: true,
++    note:
++      'Trading mode belongs to the reviewed exchange account. App Server preferences do not override connected account modes or the hosted session. An unavailable read does not mean signed out or paper mode. Every AI order requires confirmation; confirm submission separately from these settings.',
++  }
++}
+ 
+ // ---------------------------------------------------------------------------
+ // Phase 3 (account state) — read-only portfolio, open orders, and the risk
+@@ -15,7 +110,7 @@ import type { CopilotToolDeps } from './tool-deps'
+ // globally accessible, so these execute directly in the transport.
+ // ---------------------------------------------------------------------------
+ 
+-export function buildPortfolioTools(_deps: CopilotToolDeps) {
++export function buildPortfolioTools(deps: CopilotToolDeps) {
+   return {
+     get_portfolio: tool({
+       description:
+@@ -102,27 +197,27 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+ 
+     get_account_settings: tool({
+       description:
+-        'Get the user’s trading preferences: paper vs live trading mode, AI persona, and the standing trade auto-approval permissions (paper globally, live per market).',
++        'Read current hosted authentication and connected exchange account IDs, labels and paper/live modes. Mode belongs to each exchange account. The optional upstream App Server profile is separate and does not gate hosted trading. Every AI order requires confirmation. This tool does not verify whether an order was submitted or filled.',
+       inputSchema: z.object({}),
+-      execute: async () => {
+-        const consent = useTradeConsentStore.getState()
+-        const autoApproval = {
+-          paper: consent.paper,
+-          liveMarkets: consent.liveMarkets,
+-        }
+-        try {
+-          const cfg = await api.getUserConfig()
+-          return {
+-            tradingMode: cfg.tradingMode ?? 'paper',
+-            aiPersona: cfg.aiPersona ?? 'balanced',
+-            autoApproval,
+-          }
+-        } catch {
+-          return {
+-            tradingMode: 'paper',
+-            autoApproval,
+-            note: 'Signed out — defaulting to paper mode.',
+-          }
++      execute: () => readTradingAccountSettings(deps.getContextInfo().market),
++    }),
++
++    get_trade_submissions: tool({
++      description:
++        'Read actual AI confirmation results recorded in this browser session, including reviewed paper/live mode, client order ID, submission status and returned order ID. Use this after the user confirms to distinguish a simulation, a submission and an unverified result. No record means unknown, not awaiting confirmation. Submitted does not mean filled; verify fills against the exchange.',
++      inputSchema: z.object({
++        clientOrderId: z.string().min(1).optional(),
++      }),
++      execute: async ({ clientOrderId }) => {
++        const submissions = getTradeSubmissions().filter(
++          (submission) =>
++            !clientOrderId || submission.clientOrderId === clientOrderId,
++        )
++        return {
++          status: submissions.length > 0 ? 'recorded' : 'unknown',
++          submissions,
++          note:
++            'These are confirmation results from this browser session, not exchange fill history. No record is proof of neither pending confirmation nor execution. A submitted order is not proof of a fill or a running workflow; verify exchange positions, orders and fills.',
+         }
+       },
+     }),
 diff --git a/apps/terminal/src/lib/copilot/tool-labels.ts b/apps/terminal/src/lib/copilot/tool-labels.ts
 index fc621a5..5db9d78 100644
 --- a/apps/terminal/src/lib/copilot/tool-labels.ts
@@ -11958,17 +12195,21 @@ index fc621a5..5db9d78 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..628a921 100644
+index 2f8e01a..0709795 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,86 @@
+@@ -2,9 +2,90 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
  import { resolveTarget } from './tool-deps'
-+import { assistantOrderAccount, requiresExchangeAccount } from './order-account'
++import {
++  assistantOrderAccount,
++  assistantProposalMode,
++  requiresExchangeAccount,
++} from './order-account'
 +import {
 +  exchangeOperationInputSchema,
 +  validateExchangeOperation,
@@ -12049,9 +12290,14 @@ index 2f8e01a..628a921 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -15,22 +92,53 @@ import type { CopilotToolDeps } from './tool-deps'
- // cancelOrder when the user explicitly confirms. Paper is the default; live
- // requires an explicit choice on the card. The AI proposes; the human commits.
+@@ -12,25 +93,56 @@ import type { CopilotToolDeps } from './tool-deps'
+ // place_order / cancel_order NEVER execute directly. They return a structured
+ // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
+ // card and only calls the risk-guarded MarketDataProvider.placeOrder /
+-// cancelOrder when the user explicitly confirms. Paper is the default; live
+-// requires an explicit choice on the card. The AI proposes; the human commits.
++// cancelOrder when the user explicitly confirms. The proposal fixes the mode
++// and account before review. The AI proposes; the human commits.
  //
 -// "Don't ask again": the user can grant standing consent (trade-consent-store)
 -// per scope — paper globally, live per market. When consent covers a fresh
@@ -12087,7 +12333,8 @@ index 2f8e01a..628a921 100644
 +    }),
      place_order: tool({
        description:
-         'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order — it returns a proposal that the user must explicitly approve (paper or live) in the chat. Every order is enforced against the user’s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
+-        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order — it returns a proposal that the user must explicitly approve (paper or live) in the chat. Every order is enforced against the user’s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
++        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order. It returns an exact account and mode proposal for human approval in the chat. Omit mode to use the exact connected account or the venue\'s only connected account; ask when ambiguous. Use paper only for requested simulation, never as a fallback for unavailable live execution. Every order is enforced against the user\'s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
        inputSchema: z.object({
 +        ...venueOrderControlsSchema.shape,
          pair: z.string().optional(),
@@ -12096,19 +12343,19 @@ index 2f8e01a..628a921 100644
 +          .enum(['paper', 'live'])
 +          .optional()
 +          .describe(
-+            'Use live only when the user requested a live trade; otherwise paper.',
++            'Use the user\'s requested mode. If unspecified, omit to resolve from the exact connected account or one unambiguous venue account. Never silently substitute paper for live.',
 +          ),
 +        credentialId: z
 +          .string()
 +          .min(1)
 +          .optional()
 +          .describe(
-+            'Exact connected account ID; ask which account when multiple live accounts exist.',
++            'Exact connected account ID; ask which account and mode when multiple venue accounts exist.',
 +          ),
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -69,39 +177,168 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +181,186 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -12162,9 +12409,15 @@ index 2f8e01a..628a921 100644
 -        const consent = useTradeConsentStore.getState()
 -        const paperAuto = consent.isAutoApproved('paper', target.market)
 -        const liveAuto = consent.isAutoApproved('live', target.market)
-+        const mode = args.mode ?? 'paper'
++        let mode = args.mode
 +        let account
 +        try {
++          mode = assistantProposalMode(
++            useCredentialsStore.getState().credentials,
++            target.market,
++            mode,
++            args.credentialId,
++          )
 +          account = assistantOrderAccount(
 +            useCredentialsStore.getState().credentials,
 +            target.market,
@@ -12193,7 +12446,7 @@ index 2f8e01a..628a921 100644
 +              .credentials.filter(
 +                (entry) =>
 +                  entry.market === credentialMarketFor(target.market) &&
-+                  entry.mode === mode,
++                  (mode === undefined || entry.mode === mode),
 +              )
 +              .map((entry) => ({
 +                credentialId: entry.id,
@@ -12227,7 +12480,9 @@ index 2f8e01a..628a921 100644
 -            paperAuto || liveAuto
 -              ? `Order prepared. The user has standing auto-approval (paper: ${paperAuto}, live on ${target.market}: ${liveAuto}) — the card executes automatically when the user's default trading mode is covered; otherwise it waits for their confirmation. Verify the outcome with get_open_orders before claiming the order was placed.`
 -              : 'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
-+            'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
++            mode === 'live'
++              ? 'Live order prepared for the reviewed exchange account. It will NOT be placed until the user confirms it on the confirmation card. Confirmation submits this exact live order directly. Nothing has been submitted yet.'
++              : 'Paper simulation prepared. It will NOT run until the user confirms it on the confirmation card. This simulates the trade and never submits it to the live exchange.',
          }
        },
      }),
@@ -12270,12 +12525,22 @@ index 2f8e01a..628a921 100644
 +            signal: AbortSignal.timeout(35000),
 +          },
 +        )
-+        if (!response.ok)
++        if (!response.ok) {
++          let detail = `Exchange snapshot request failed (HTTP ${response.status}).`
++          try {
++            const parsed = z.object({ error: z.string() }).safeParse(await response.json())
++            if (parsed.success) detail = parsed.data.error
++          } catch {
++            detail = `Exchange snapshot request failed (HTTP ${response.status}).`
++          }
 +          return {
 +            status: 'unavailable',
-+            error:
-+              'Exchange snapshot unavailable. Connect the account and sign in as operator.',
++            httpStatus: response.status,
++            error: response.status === 401
++              ? 'The hosted exchange session could not be verified after renewal. Refresh the terminal and check the hosted connection; this does not indicate paper mode.'
++              : detail,
 +          }
++        }
 +        return parseNativeSnapshot(
 +          await response.json(),
 +          venue,

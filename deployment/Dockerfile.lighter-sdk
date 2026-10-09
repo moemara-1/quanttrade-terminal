@@ -1,0 +1,4 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+# Pin the official SDK/signers that support the expanded market-index range.
+RUN pip install --no-cache-dir --no-deps 'git+https://github.com/elliottech/lighter-python.git@a38b6405f362fc14a562fe7a97df03f3ee756bc1'

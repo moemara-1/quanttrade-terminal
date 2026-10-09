@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { submitReviewedOrder } from '../submit-reviewed-order'
+import { getTradeSubmissions } from '../trade-submissions'
 import type { ExchangeCredential } from '@/stores/credentials-store'
 import type { CopilotOrderRequest } from '@/components/copilot/copilot-order-card'
 
@@ -109,4 +110,19 @@ test('wallet venues preserve their direct live route without exchange credential
   })
   expect(calls).toHaveLength(1)
   expect(calls[0]).not.toHaveProperty('credentialId')
+})
+
+test('confirmation evidence distinguishes a paper simulation from live submission', async () => {
+  await submitReviewedOrder({ ...order, mode: 'paper', credentialId: undefined, clientOrderId: 'simulated-review' }, 'paper', [], async () => ({ success: true, orderId: 'local-paper-id' }))
+  await submitReviewedOrder({ ...order, clientOrderId: 'live-review' }, 'live', [account], async () => ({ success: true, orderId: 'venue-id' }))
+  expect(getTradeSubmissions().find((entry) => entry.clientOrderId === 'simulated-review')).toMatchObject({ mode: 'paper', status: 'simulated', orderId: 'local-paper-id' })
+  expect(getTradeSubmissions().find((entry) => entry.clientOrderId === 'live-review')).toMatchObject({ mode: 'live', status: 'submitted', orderId: 'venue-id', credentialId: account.id })
+})
+
+test('unknown or failed execution is never reported as confirmed on the exchange', async () => {
+  await expect(submitReviewedOrder({ ...order, clientOrderId: 'timeout-review' }, 'live', [account], async () => { throw new Error('Timed out; reconcile exchange') })).rejects.toThrow('Timed out')
+  await submitReviewedOrder({ ...order, clientOrderId: 'rejected-review' }, 'live', [account], async () => ({ success: false, error: 'Exchange rejected' }))
+  for (const id of ['timeout-review', 'rejected-review']) {
+    expect(getTradeSubmissions().find((entry) => entry.clientOrderId === id)).toMatchObject({ status: 'unverified', mode: 'live' })
+  }
 })
