@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
-import { createHash, timingSafeEqual, randomBytes } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { HostedAuth, readWebCredentials, type WebCredentials } from './hosted-auth.ts';
 import type { TradingDesk } from './trading.ts';
 import type { MarketService } from './markets.ts';
 import type { ProposalAgent } from './agent.ts';
@@ -23,7 +24,7 @@ interface Services {
   desk: TradingDesk; markets: MarketService; agent: Pick<ProposalAgent,'prepare'>;
   execution?: Pick<HummingbotExecution,'account'|'connect'|'connections'|'disconnect'|'balances'> & Partial<Pick<HummingbotExecution,'spotConnections'>>; operatorToken: string; agentToken: string;
   allowedOrigins?: string[];
-  webSession?: {origin:string;proxySecret:string};
+  webSession?: {origin:string;proxySecret:string;loginFile?:string;sessionFile?:string;credentials?:()=>WebCredentials};
 }
 function matches(value: string, expected: string): boolean {
   return timingSafeEqual(createHash('sha256').update(value).digest(),createHash('sha256').update(expected).digest());
@@ -42,7 +43,9 @@ export function createApp(services: Services) {
     allowedOrigins.add(value);
   }
   const app=express();
-  const sessions=new Map<string,number>();
+  const settings=services.webSession;
+  const hostedAuth=settings?new HostedAuth({sessionFile:settings.sessionFile??':memory:',...(settings.credentials?{credentials:settings.credentials}:settings.loginFile?{credentials:()=>readWebCredentials(settings.loginFile!)}:{})}):undefined;
+  app.locals.hostedAuthClose=()=>hostedAuth?.close();
   const cookieName='qt_operator';
   if (services.webSession && (!allowedOrigins.has(services.webSession.origin) || !services.webSession.origin.startsWith('https://') || services.webSession.proxySecret.length<32)) throw new Error('Hosted sessions require an allowed HTTPS origin and a strong proxy secret');
   app.disable('x-powered-by');
@@ -95,26 +98,41 @@ export function createApp(services: Services) {
   app.get('/api/public/markets',async(req,res)=>res.json(await markets.list(venueSchema.parse(req.query.venue),marketTypeSchema.parse(req.query.marketType))));
   app.get('/api/public/candles',async(req,res)=>res.json(await markets.candles(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),z.string().default('1h').parse(req.query.interval),marketTypeSchema.parse(req.query.marketType),z.coerce.number().int().nonnegative().optional().parse(req.query.endTs),z.coerce.number().int().min(1).max(1000).optional().parse(req.query.limit))));
   app.get('/api/public/book',async(req,res)=>res.json(await markets.book(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),marketTypeSchema.parse(req.query.marketType))));
-  app.post('/api/session',(req,res)=>{
-    const settings=services.webSession;
-    if (!settings || !matches(req.get('X-QuantTrade-Session-Secret')??'',settings.proxySecret)) {res.status(401).json({error:'Sign in to QuantTrade first'});return;}
-    if (req.get('Origin')!==settings.origin) {res.status(403).json({error:'Hosted session requires the terminal origin'});return;}
-    const now=Date.now();
-    for (const [key,expiry] of sessions) if (expiry<=now) sessions.delete(key);
-    const existing=req.get('Cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(cookieName+'='))?.slice(cookieName.length+1);
-    if (existing && (sessions.get(existing)??0)>now) {res.json({ok:true});return;}
-    if (sessions.size>=100) {res.status(429).json({error:'Too many active sessions'});return;}
-    const id=randomBytes(32).toString('hex');sessions.set(id,now+8*60*60*1000);
-    res.cookie(cookieName,id,{httpOnly:true,secure:true,sameSite:'strict',path:'/_quanttrade/api',maxAge:8*60*60*1000});
+  const sessionCookie=(req:express.Request)=>req.get('Cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(cookieName+'='))?.slice(cookieName.length+1)??'';
+  const validSession=(req:express.Request)=>!!hostedAuth?.valid(sessionCookie(req));
+  const originCheck:RequestHandler=(req,res,next)=>{if(!settings||req.get('Origin')!==settings.origin){res.status(403).json({error:'Sign-in requires the terminal origin'});return;}next();};
+  const issueSession=(res:express.Response,remember:boolean)=>{
+    const token=hostedAuth!.issue(remember);
+    res.cookie(cookieName,token,{httpOnly:true,secure:true,sameSite:'strict',path:'/',maxAge:(remember?30*24:12)*60*60*1000});
+    res.clearCookie(cookieName,{httpOnly:true,secure:true,sameSite:'strict',path:'/_quanttrade/api'});
     res.json({ok:true});
+  };
+  const loginWindows=new Map<string,{start:number;count:number}>();
+  app.post('/api/login',originCheck,express.json({limit:'4kb'}),(req,res)=>{
+    if(!hostedAuth||(!settings?.credentials&&!settings?.loginFile)){res.status(503).json({error:'Password sign-in is not configured'});return;}
+    const now=Date.now();for(const [key,value] of loginWindows)if(now-value.start>=15*60_000)loginWindows.delete(key);
+    // All hosted requests arrive from the local proxy: use a shared budget rather than trusting client IP headers.
+    const key=req.socket.remoteAddress??'local';let window=loginWindows.get(key);
+    if(!window){if(loginWindows.size>=100){res.set('Retry-After','900').status(429).json({error:'Sign-in unavailable; try again later'});return;}window={start:now,count:0};loginWindows.set(key,window);}
+    if(++window.count>20){res.set('Retry-After','900').status(429).json({error:'Too many sign-in attempts; try again later'});return;}
+    const parsed=z.object({username:z.string().min(1).max(128),password:z.string().min(1).max(1024),remember:z.boolean().default(false)}).strict().safeParse(req.body);
+    if(!parsed.success||!hostedAuth.authenticate(parsed.data.username,parsed.data.password)){res.status(401).json({error:'Invalid username or password'});return;}
+    issueSession(res,parsed.data.remember);
+  });
+  app.get('/api/session',(req,res)=>{if(!validSession(req)){res.status(401).json({error:'Sign in to QuantTrade'});return;}res.json({ok:true});});
+  app.get('/api/session-check',(req,res)=>{res.status(validSession(req)?204:401).end();});
+  app.delete('/api/session',originCheck,(req,res)=>{hostedAuth?.revoke(sessionCookie(req));res.clearCookie(cookieName,{httpOnly:true,secure:true,sameSite:'strict',path:'/'});res.clearCookie(cookieName,{httpOnly:true,secure:true,sameSite:'strict',path:'/_quanttrade/api'});res.json({ok:true});});
+  app.post('/api/session',originCheck,(req,res)=>{
+    if(validSession(req)){res.json({ok:true});return;}
+    if(!settings||!hostedAuth||!matches(req.get('X-QuantTrade-Session-Secret')??'',settings.proxySecret)){res.status(401).json({error:'Sign in to QuantTrade first'});return;}
+    issueSession(res,false);
   });
   const windows=new Map<string,{start:number;count:number}>();
   app.use('/api',(req,res,next)=>{
     const header=req.get('Authorization')??'';
     const token=header.startsWith('Bearer ')?header.slice(7):'';
     const cookie=req.get('Cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(cookieName+'='))?.slice(cookieName.length+1)??'';
-    const sessionExpiry=sessions.get(cookie)??0;
-    const cookieAuthenticated=!header && sessionExpiry>Date.now();
+    const cookieAuthenticated=!header && !!hostedAuth?.valid(cookie);
     const role=matches(token,services.operatorToken)?'operator':matches(token,services.agentToken)?'agent':cookieAuthenticated?'operator':null;
     if (!role) {res.status(401).json({error:services.webSession&&!header?'Your QuantTrade session has expired. Sign in to reconnect your exchange.':'Enter the operator token from data/operator-token to unlock the desk.'});return;}
     if (cookieAuthenticated && !['GET','HEAD'].includes(req.method) && req.get('Origin')!==services.webSession?.origin) {res.status(403).json({error:'Operator actions require the terminal origin'});return;}

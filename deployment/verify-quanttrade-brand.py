@@ -1,4 +1,6 @@
 """Verify protected published product branding and every brand asset."""
+from hosted_login import login_headers
+headers=login_headers()
 import base64
 import hashlib
 import json
@@ -9,8 +11,6 @@ from urllib.request import Request, urlopen
 
 root = Path('/opt/quanttrade/current/frontend')
 base = 'https://quanttrade.azurestore.shop'
-auth = json.loads(Path('/opt/quanttrade/shared/web-access.json').read_text())
-headers = {'Authorization': 'Basic ' + base64.b64encode((auth['username'] + ':' + auth['password']).encode()).decode()}
 
 def asset(path):
     with urlopen(Request(base + path, headers=headers), timeout=60) as response:

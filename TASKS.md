@@ -128,3 +128,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Audit original core workflow engine, venue execution and OCO semantics; define server persistence and approval integration.
 - [completed] Implement original graph nodes, branch/join behavior, dynamic terms, fill-aware exits and OCO coordination; remove artificial schedule limits.
 - [completed] Verified 123 backend tests, 66 native tests/290 assertions, 60 Python tests, TypeScript, lint and production build. Deployed Hetzner release20261009-10; all hosted guards and offline container SDK OCO signing passed. An outdated verifier label caused a successful automatic rollback before correction and verified redeployment. No trades, workflows, browser automation or paid model calls used. Committing/pushing authorized changes.
+
+## Persistent hosted login
+- [completed] Trace browser Basic challenges and session restart/expiry behavior.
+- [completed] Replace browser prompt with remembered password login, durable sessions, logout and protected navigation.
+- [completed] 125 backend tests, TypeScript and 10 offline login-page flows passed. Deployed Hetzner release20261009-11; normal sign-in, logout revocation, protected shell/assets, origin/agent guards, feeds, catalogs, sync and branding verified. Cleared only failed staging releases after disk-full staging failure and omitted redundant build backups in new release. No trades placed; committing/pushing authorized changes.

@@ -1,6 +1,8 @@
 from pathlib import Path
 import urllib.request,urllib.error,json,base64
 
+from hosted_login import login_headers
+login=login_headers()
 base='https://quanttrade.azurestore.shop'
 auth=json.loads(Path('/opt/quanttrade/shared/web-access.json').read_text())
 basic='Basic '+base64.b64encode((auth['username']+':'+auth['password']).encode()).decode()
@@ -16,8 +18,8 @@ def request(path,authorization=None,origin=None,body=None,cookie=None):
     try:
         with urllib.request.urlopen(req,timeout=30) as r: return r.status,r.read(),r.headers
     except urllib.error.HTTPError as e: return e.code,e.read(),e.headers
-assert request('/futures')[0]==401
-status,body,headers=request('/futures',basic)
+assert request('/futures')[0]==200 and b'Sign in' in request('/futures')[1]
+status,body,headers=request('/futures',cookie=login['Cookie'])
 assert status==200 and b'QuantTrade Terminal' in body
 assert headers.get('Strict-Transport-Security')=='max-age=31536000'
 assert request('/_quanttrade/api/health')[0]==200
@@ -27,12 +29,10 @@ assert status==200 and json.loads(body)['mode'] in ['paper','live']
 assert json.loads(body)['pairlensUrl']==base
 assert request('/_quanttrade/api/status','Bearer '+operator,'https://evil.example')[0]==403
 assert request('/_quanttrade/api/proposals/00000000-0000-4000-8000-000000000000/approve','Bearer '+agent,base,{})[0]==403
-print('Public HTTPS certificate validation, password-protected SPA, operator authorization, exact origin and agent approval denial passed; no execution requests sent.')
-status,body,headers=request('/_quanttrade/api/session',basic,base,{})
+print('Public HTTPS certificate validation, session-protected SPA, operator authorization, exact origin and agent approval denial passed; no execution requests sent.')
+status,body,headers=request('/_quanttrade/api/session',None,base,{},login['Cookie'])
 assert status==200 and json.loads(body)=={'ok':True}
-cookie_header=headers.get('Set-Cookie')
-assert cookie_header and all(flag in cookie_header for flag in ['HttpOnly','Secure','SameSite=Strict'])
-cookie=cookie_header.split(';')[0]
+cookie=login['Cookie']
 status,body,_=request('/_quanttrade/api/connections',basic,base,cookie=cookie)
 assert status==200
 connections=json.loads(body)

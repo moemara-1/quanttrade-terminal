@@ -1,10 +1,10 @@
 """Read-only HTTPS provider release verification. No orders or provider charges."""
+from hosted_login import login_headers
+headers=login_headers()
 import base64, hashlib, json
 from pathlib import Path
 from urllib.request import Request, urlopen
 origin = 'https://quanttrade.azurestore.shop'
-auth = json.loads(Path('/opt/quanttrade/shared/web-access.json').read_text())
-headers = {'Authorization': 'Basic '+base64.b64encode((auth['username']+':'+auth['password']).encode()).decode()}
 frontend = Path('/opt/quanttrade/current/frontend')
 paths = ['posters/hyperliquid-market-connector.png', 'posters/lighter-market-connector.svg', 'posters/nanogpt-inference.svg']
 paths += ['assets/'+p.name for p in sorted((frontend/'assets').glob('*.js'), key=lambda p:p.stat().st_size, reverse=True)[:3]]

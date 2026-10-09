@@ -1,10 +1,10 @@
 """Verify the actual protected shell and its referenced production chunks."""
+from hosted_login import login_headers
+headers=login_headers()
 import base64, hashlib, json, re
 from pathlib import Path
 from urllib.request import Request, urlopen
 root=Path('/opt/quanttrade/current/frontend')
-auth=json.loads(Path('/opt/quanttrade/shared/web-access.json').read_text())
-headers={'Authorization':'Basic '+base64.b64encode((auth['username']+':'+auth['password']).encode()).decode()}
 with urlopen(Request('https://quanttrade.azurestore.shop/futures',headers=headers),timeout=60) as response:
     shell=response.read()
 assert hashlib.sha256(shell).digest()==hashlib.sha256((root/'_shell.html').read_bytes()).digest()

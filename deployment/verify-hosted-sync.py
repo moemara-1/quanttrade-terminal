@@ -3,6 +3,8 @@ import base64,json
 from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
+from hosted_login import login_headers
+login=login_headers()
 base='https://quanttrade.azurestore.shop'
 auth=json.loads(Path('/opt/quanttrade/shared/web-access.json').read_text())
 basic='Basic '+base64.b64encode((auth['username']+':'+auth['password']).encode()).decode()
@@ -17,9 +19,9 @@ def request(path,method='GET',headers=None,payload=None):
 assert request('/_quanttrade/api/sync-state')[0]==401
 agent=Path('/opt/quanttrade/shared/data/agent-token').read_text().strip()
 assert request('/_quanttrade/api/sync-state',headers={'Authorization':'Bearer '+agent})[0]==403
-status,body,headers=request('/_quanttrade/api/session','POST',{'Authorization':basic,'Origin':base},{})
+status,body,headers=request('/_quanttrade/api/session','POST',{**login,'Origin':base},{})
 assert status==200
-cookie=headers['Set-Cookie'].split(';')[0]
+cookie=login['Cookie']
 operator={'Authorization':basic,'Cookie':cookie,'Origin':base}
 status,body,_=request('/_quanttrade/api/sync-state',headers=operator)
 assert status==200 and isinstance(json.loads(body)['entries'],dict)

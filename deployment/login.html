@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Sign in · QuantTrade</title>
+    <link rel="stylesheet" href="/login.css">
+    <script src="/login.js" defer></script>
+  </head>
+  <body>
+    <main class="login-shell">
+      <header class="brand"><span class="brand-mark" aria-hidden="true">Q</span><span>QuantTrade</span></header>
+      <section class="login-panel" aria-labelledby="login-title">
+        <p class="eyebrow">YOUR TRADING TERMINAL</p>
+        <h1 id="login-title">Welcome back.</h1>
+        <p class="intro" id="login-intro">Sign in to open your desk.</p>
+        <form id="login-form" action="/_quanttrade/api/login" method="post">
+          <div class="field"><label for="username">Username</label><input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="256"></div>
+          <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024"></div>
+          <label class="remember" for="remember"><input id="remember" name="remember" type="checkbox" checked><span>Keep me signed in on this device<small>For 30 days. Use only on a device you trust.</small></span></label>
+          <button id="submit-button" type="submit">Open QuantTrade <span aria-hidden="true">→</span></button>
+        </form>
+        <p id="login-error" class="error" role="alert" hidden></p>
+        <div id="session-controls" hidden><p class="session-copy">You are signed in on this device.</p><button id="continue-button" type="button">Open QuantTrade <span aria-hidden="true">→</span></button><button id="logout-button" class="secondary" type="button">Sign out of this device</button></div>
+        <noscript><p class="error">Enable JavaScript to sign in securely.</p></noscript>
+      </section>
+      <footer>QuantTrade <span aria-hidden="true">·</span> Your markets. Your decisions.</footer>
+    </main>
+  </body>
+</html>
