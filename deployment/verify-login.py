@@ -35,6 +35,8 @@ assert json.loads(body) == json.loads(
 status, headers, _ = request("/futures")
 assert status == 200 and b'Sign in' in _, f"Terminal navigation must show login: {status}"
 assert headers.get("WWW-Authenticate") is None, "Browser password challenge remains"
+assert headers.get_content_type()=="text/html", "Sign-in page would download instead of render"
+assert headers.get("Content-Disposition") is None, "Sign-in page must render inline"
 
 print("Login regression checks passed: no background challenges; normal login page protects the terminal.")
 

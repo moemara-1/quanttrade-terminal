@@ -133,3 +133,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Trace browser Basic challenges and session restart/expiry behavior.
 - [completed] Replace browser prompt with remembered password login, durable sessions, logout and protected navigation.
 - [completed] 125 backend tests, TypeScript and 10 offline login-page flows passed. Deployed Hetzner release20261009-11; normal sign-in, logout revocation, protected shell/assets, origin/agent guards, feeds, catalogs, sync and branding verified. Cleared only failed staging releases after disk-full staging failure and omitted redundant build backups in new release. No trades placed; committing/pushing authorized changes.
+
+## Login document content type
+- [completed] Reproduced live /login application/octet-stream response; JS/CSS already have correct types.
+- [completed] Explicit HTML MIME type deployed; nginx syntax, live HTML/JS/CSS response types, password login/logout, protected navigation and operator/agent guards verified. No trades placed.
