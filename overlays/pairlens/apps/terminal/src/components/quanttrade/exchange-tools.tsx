@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   OperationKeys,
   nativeField,
@@ -20,26 +20,18 @@ export function ExchangeTools({
   pair,
   credentialId,
   mode,
-  postOnly,
-  onPostOnly,
-  maxLeverage,
-  onLeverageApplied,
+  isolatedSelected,
 }: {
   market: string
   pair: string
   credentialId: string
   mode: 'paper' | 'live'
-  postOnly: boolean
-  onPostOnly: (value: boolean) => void
-  maxLeverage: number | null
-  onLeverageApplied: (value: number) => void
+  isolatedSelected: boolean
 }) {
   const { placeOrder } = useMarketData()
   const [snapshot, setSnapshot] = useState<NativeSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const [leverage, setLeverage] = useState('1')
-  const [marginMode, setMarginMode] = useState<'cross' | 'isolated'>('cross')
   const [amount, setAmount] = useState('')
   const [direction, setDirection] = useState<'add' | 'remove'>('add')
   const [kind, setKind] = useState<'sl' | 'tp'>('sl')
@@ -53,15 +45,6 @@ export function ExchangeTools({
   const [amendPrice, setAmendPrice] = useState('')
   const [amendTimeInForce, setAmendTimeInForce] = useState<'Gtc' | 'Alo'>('Gtc')
   const keys = useRef(new OperationKeys())
-  useEffect(() => {
-    setLeverage((value) =>
-      String(
-        maxLeverage === null
-          ? 1
-          : Math.min(Math.max(1, Number(value)), maxLeverage),
-      ),
-    )
-  }, [maxLeverage])
   if (!isQuantTradeVenue(market)) return null
   const venue = quantTradeBaseVenue(market),
     marketType = market.endsWith('-spot') ? 'spot' : 'perpetual'
@@ -96,11 +79,7 @@ export function ExchangeTools({
       setBusy(false)
     }
   }
-  const operation = async (
-    action: string,
-    fields: Record<string, unknown>,
-    accepted?: () => void,
-  ) => {
+  const operation = async (action: string, fields: Record<string, unknown>) => {
     const payload = { ...scope, mode: 'live', action, ...fields }
     await connectBrowserSession()
     requireOperationAccepted(
@@ -110,7 +89,6 @@ export function ExchangeTools({
       }),
     )
     keys.current.complete(payload)
-    accepted?.()
     setMessage('Request accepted. Refreshing exchange state…')
     await refresh()
   }
@@ -121,19 +99,11 @@ export function ExchangeTools({
   return (
     <details className="rounded border border-border p-2 text-xs">
       <summary className="cursor-pointer font-medium">
-        Exchange controls ·{' '}
+        Manage position and orders ·{' '}
         {venue === 'hyperliquid' ? 'Hyperliquid' : 'Lighter'} · {pair} ·{' '}
         {marketType}
       </summary>
       <div className="mt-3 space-y-3">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={postOnly}
-            onChange={(e) => onPostOnly(e.target.checked)}
-          />
-          Post-only for limit orders
-        </label>
         {!live && (
           <p className="text-muted-foreground">
             Select a live exchange account to manage native orders and margin.
@@ -141,73 +111,16 @@ export function ExchangeTools({
         )}
         {marketType === 'perpetual' && (
           <>
-            <div className="grid grid-cols-2 gap-2">
-              <label>
-                Leverage
-                <input
-                  aria-label="Exchange leverage"
-                  className={input + ' w-full'}
-                  value={maxLeverage === null ? '' : leverage}
-                  disabled={maxLeverage === null || busy}
-                  onChange={(e) => setLeverage(e.target.value)}
-                  type="number"
-                  min="1"
-                  max={maxLeverage ?? 1}
-                />
-              </label>
-              <label>
-                Margin
-                <select
-                  className={input + ' w-full'}
-                  value={marginMode}
-                  onChange={(e) =>
-                    setMarginMode(
-                      e.target.value === 'isolated' ? 'isolated' : 'cross',
-                    )
-                  }
-                >
-                  <option value="cross">Cross</option>
-                  <option value="isolated">Isolated</option>
-                </select>
-              </label>
-            </div>
-            <button
-              className={button}
-              disabled={
-                !live ||
-                busy ||
-                maxLeverage === null ||
-                !Number.isInteger(Number(leverage)) ||
-                Number(leverage) < 1 ||
-                Number(leverage) > maxLeverage
-              }
-              onClick={() =>
-                void run(async () => {
-                  const value = Number(leverage)
-                  if (
-                    maxLeverage === null ||
-                    !Number.isInteger(value) ||
-                    value < 1 ||
-                    value > maxLeverage
-                  )
-                    throw new Error(
-                      'Select leverage within this contract’s current limit',
-                    )
-                  await operation(
-                    'leverage',
-                    { leverage: value, marginMode },
-                    () => onLeverageApplied(value),
-                  )
-                })
-              }
-            >
-              Apply leverage and margin mode
-            </button>
-            <div className="flex gap-2">
+            <p className="text-muted-foreground">
+              Collateral changes require an existing isolated position.
+              Selecting Isolated in the ticket does not change the exchange
+              until you submit an order; verify the position first.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <input
-                aria-label="Isolated margin amount in USD"
-                placeholder="Isolated margin · USD"
-                className={input + ' flex-1'}
+                aria-label="Isolated margin amount in USDC"
+                placeholder="Isolated margin · USDC"
+                className={input + ' w-full'}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
@@ -224,7 +137,14 @@ export function ExchangeTools({
               </select>
               <button
                 className={button}
-                disabled={!live || busy || !amount}
+                disabled={
+                  !live ||
+                  busy ||
+                  !isolatedSelected ||
+                  !/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(amount) ||
+                  Number(amount) <= 0 ||
+                  !Number.isFinite(Number(amount))
+                }
                 onClick={() =>
                   void run(() => operation('margin', { amount, direction }))
                 }
@@ -233,8 +153,13 @@ export function ExchangeTools({
               </button>
             </div>
             <fieldset className="space-y-2 rounded border border-border p-2">
-              <legend>Stop-loss / Take-profit</legend>
-              <div className="flex gap-2">
+              <legend>Protect an existing position</legend>
+              <p className="text-muted-foreground">
+                Submit a separate reduce-only stop-loss or take-profit. These
+                are not attached to the entry order; the other exit is not
+                automatically cancelled.
+              </p>
+              <div className="flex flex-wrap gap-2">
                 <select
                   aria-label="Trigger kind"
                   className={input}

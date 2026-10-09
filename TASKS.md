@@ -89,3 +89,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Trace native provider and reproduce hosted liquidation route failure; verify official feed protocols and data coverage.
 - [completed] Implement persistent Binance/Bybit collection, native public route and truthful collection/coverage states.
 - [completed] 97 backend tests and 102 focused frontend/provider tests pass; root/native TypeScript, 140-file lint and production build pass. Deployed 20261009-1; both live streams connected across all four history windows, existing feed/login/trading/sync guards and protected assets verified. Commit and publication recorded below. No orders placed.
+
+## Unified order controls and AI trade preparation
+- [completed] Trace duplicated controls and AI order preparation; define shared venue/account/contract draft.
+- [completed] Integrate one leverage/margin ticket, limit-only post-only, position management, and contextual AI entry point.
+- [completed] 98 backend and 60 focused terminal tests pass; root/native TypeScript, 143-file lint and production build pass. Deployed 20261009-2; active assets, ticket/approval guards, live streams, news/calendars, login, market controls and sync checked. No real orders or paid model calls; browser interaction not automated. Publication follows the authorized GitHub workflow.

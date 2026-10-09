@@ -23,6 +23,7 @@ export const orderSchema = z.object({
   if (order.marketType === 'spot' && (order.leverage!==undefined||order.marginMode!==undefined)) ctx.addIssue({code:z.ZodIssueCode.custom,message:'Spot orders do not support perpetual leverage or margin'});
   if (order.marketType==='spot'&&order.trigger) ctx.addIssue({code:z.ZodIssueCode.custom,message:'Native conditional orders are not yet verified for this spot market'});
   if (order.marginMode!==undefined&&order.leverage===undefined) ctx.addIssue({code:z.ZodIssueCode.custom,message:'Changing margin mode requires an explicit leverage'});
+  if (order.leverage!==undefined&&order.marginMode===undefined) ctx.addIssue({code:z.ZodIssueCode.custom,message:'Changing leverage requires an explicit margin mode; choose Cross or Isolated'});
   if (order.trigger&&order.postOnly) ctx.addIssue({code:z.ZodIssueCode.custom,message:'Trigger orders cannot be post-only'});
   if (order.type === 'limit' && !order.price) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Limit price is required' });
   if (order.type === 'market' && order.price) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Market orders must not include a limit price' });

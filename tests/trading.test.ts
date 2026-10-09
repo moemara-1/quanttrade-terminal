@@ -214,7 +214,7 @@ test('PRL rejects over-cap manual orders before execution and rechecks approved 
  const {desk,store,calls,setMarket}=setup({mode:'live'});
  try {
   setMarket({venue:'lighter',symbol:'PRL-USDC',base:'PRL',maxLeverage:3,sizeDecimals:2,priceDecimals:4,minSize:'5',minNotional:'10',price:'2'});
-  const prl={...draft,venue:'lighter' as const,symbol:'PRL-USDC',size:'5',price:'2',leverage:3};
+  const prl={...draft,venue:'lighter' as const,symbol:'PRL-USDC',size:'5',price:'2',leverage:3,marginMode:'cross' as const};
   await assert.rejects(desk.confirm('prl-over-cap','live',{...prl,leverage:4}),/maximum leverage is 3x/);assert.equal(calls(),0);
   assert.equal((await desk.confirm('prl-valid','live',prl)).status,'submitted');assert.equal(calls(),1);
   const proposal=await desk.propose(prl,'agent');assert.equal(proposal.status,'pending');

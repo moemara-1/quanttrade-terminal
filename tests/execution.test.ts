@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { HummingbotExecution } from '../src/server/execution.ts';
 
+test('changing leverage without an explicit margin mode never mutates exchange state', async () => {
+  let calls=0;
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async()=>{calls++;return Response.json({status:'accepted',order_id:'unexpected'});});
+  await assert.rejects(client.place({venue:'lighter',symbol:'STRK-USDC',side:'buy',type:'limit',size:'100',price:'0.1',leverage:2,rationale:'test'},undefined,'missing-margin-mode'),/explicit margin mode/);
+  assert.equal(calls,0);
+});
+
 test('leverage acknowledgment precedes exact order submission and failure cannot place an order',async()=>{
   const paths:string[]=[];
   const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{

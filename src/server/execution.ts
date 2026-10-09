@@ -61,7 +61,8 @@ export class HummingbotExecution implements ExecutionClient {
     if ((order.leverage!==undefined||order.trigger)&&!requestId) throw new Error('Exchange state changes require a persistent request ID');
     if (order.leverage!==undefined) {
       if (order.marketType==='spot') throw new Error('Spot orders do not support leverage');
-      z.object({status:z.literal('accepted')}).parse(await this.post('/quanttrade/trading/leverage',{request_id:requestId+'-lev',account_name:this.config.accountName,connector_name:connectorName,trading_pair:tradingPair,leverage:order.leverage,margin_mode:order.marginMode??'cross'}));
+      if (!order.marginMode) throw new Error('Changing leverage requires an explicit margin mode; choose Cross or Isolated');
+      z.object({status:z.literal('accepted')}).parse(await this.post('/quanttrade/trading/leverage',{request_id:requestId+'-lev',account_name:this.config.accountName,connector_name:connectorName,trading_pair:tradingPair,leverage:order.leverage,margin_mode:order.marginMode}));
     }
     if (order.type === 'market' && (!protectionPrice || !new Decimal(protectionPrice).isFinite() || new Decimal(protectionPrice).lte(0))) throw new Error('Market orders require an explicit protection price');
     if (order.trigger) {

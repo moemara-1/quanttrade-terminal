@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from 'bun:test'
 import { buildTradingTools, confirmedOrderFields } from '../trading-tools'
+import { proposalApprovalError } from '../ai-proposal-approval'
 import type { CopilotToolDeps } from '../tool-deps'
+import { useTradeConsentStore } from '@/stores/trade-consent-store'
 
 const deps: CopilotToolDeps = {
   getCtx: () => null,
@@ -20,6 +22,7 @@ const call = (input: Record<string, unknown>) =>
 const originalFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = originalFetch
+  useTradeConsentStore.setState({ paper: false, liveMarkets: [] })
 })
 test('preparation preserves exact venue controls without execution', async () => {
   const result = await call({
@@ -128,4 +131,55 @@ test('snapshot is an authenticated same-origin read with normalized perpetual sy
     marketType: 'perpetual',
     symbol: 'ETH-USDC',
   })
+})
+
+test('legacy standing consent never authorizes AI preparation on any exchange', async () => {
+  useTradeConsentStore.setState({
+    paper: true,
+    liveMarkets: ['binance', 'bybit', 'hyperliquid', 'lighter'],
+  })
+  for (const market of [
+    'binance',
+    'bybit',
+    'hyperliquid',
+    'lighter',
+    'hyperliquid-spot',
+    'lighter-spot',
+  ]) {
+    const result = await call({
+      market,
+      pair: 'ETH-USDC',
+      side: 'buy',
+      type: 'market',
+      size: 1,
+    })
+    expect(result.status).toBe('awaiting_confirmation')
+    expect(result.autoApproval).toEqual({ paper: false, live: false })
+    expect(String(result.message)).toContain('until the user confirms')
+  }
+})
+
+test('approval rejects stale, future and replayed proposals, preserving legacy manual review', () => {
+  const now = 1_000_000
+  expect(proposalApprovalError(now, false, now)).toBeNull()
+  expect(proposalApprovalError(undefined, false, now)).toBeNull()
+  expect(proposalApprovalError(now - 180_001, false, now)).toContain('expired')
+  expect(proposalApprovalError(now + 1, false, now)).toContain('expired')
+  expect(proposalApprovalError(NaN, false, now)).toContain('expired')
+  expect(proposalApprovalError(now, true, now)).toContain('already submitted')
+})
+
+test('perpetual leverage requires an explicit margin mode without execution', async () => {
+  for (const market of ['hyperliquid', 'lighter']) {
+    const result = await call({
+      market,
+      pair: 'ETH-USDC-USDC',
+      side: 'buy',
+      type: 'market',
+      size: 1,
+      leverage: 2,
+    })
+    expect(result.status).toBe('invalid')
+    expect(String(result.error)).toContain('choose Cross or Isolated')
+  }
 })

@@ -190,7 +190,7 @@ function ConnectedInbox({
         <div>
           <h2 className="text-sm font-semibold">Agent Inbox</h2>
           <p className="text-muted-foreground">
-            Every trade requires your approval
+            AI proposals require your approval; manual tickets submit directly
           </p>
         </div>
         <div className="flex gap-2">
@@ -230,7 +230,7 @@ function ConnectedInbox({
               {status.mode === 'paper'
                 ? 'Paper limits remain open; there is no automatic fill simulation. Paper market fills omit fees and slippage.'
                 : status.executionConfigured
-                  ? 'Exchange credentials configured. Live limit orders only. Submitted means acknowledged, not filled.'
+                  ? 'Exchange credentials configured. Approved orders use Hummingbot. Submitted means acknowledged, not filled.'
                   : 'Live execution unavailable. Connect your exchange in Accounts and configure the server for live execution.'}
             </p>
           </div>
@@ -252,8 +252,9 @@ function ConnectedInbox({
         )}
         {status && proposals.length === 0 && (
           <p className="py-5 text-muted-foreground">
-            No trade proposals yet. Connect an external agent or prepare an
-            order in the terminal.
+            No external agent proposals yet. Use the Assistant for trades you
+            review in chat, or connect a proposal-only external agent to review
+            its orders here.
           </p>
         )}
         {proposals.map((proposal) => {
@@ -284,15 +285,15 @@ function ConnectedInbox({
               <p>
                 {proposal.order.marketType ?? 'perpetual'}
                 {proposal.order.leverage
-                  ? ` � ${proposal.order.leverage}� leverage`
+                  ? ` · ${proposal.order.leverage}× leverage`
                   : ''}
                 {proposal.order.marginMode
-                  ? ` � ${proposal.order.marginMode} margin`
+                  ? ` · ${proposal.order.marginMode} margin`
                   : ''}
-                {proposal.order.reduceOnly ? ' � Reduce-only' : ''}
-                {proposal.order.postOnly ? ' � Post-only' : ''}
+                {proposal.order.reduceOnly ? ' · Reduce-only' : ''}
+                {proposal.order.postOnly ? ' · Post-only' : ''}
                 {proposal.order.trigger
-                  ? ` � ${proposal.order.trigger.triggerType === 'sl' ? 'Stop-loss' : 'Take-profit'} trigger @ ${proposal.order.trigger.triggerPrice}`
+                  ? ` · ${proposal.order.trigger.triggerType === 'sl' ? 'Stop-loss' : 'Take-profit'} trigger @ ${proposal.order.trigger.triggerPrice}`
                   : ''}
               </p>
               <p className="text-muted-foreground">

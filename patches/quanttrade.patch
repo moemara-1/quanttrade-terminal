@@ -378,31 +378,48 @@ index 553652d..ed08af2 100644
  
              {error && <p className="text-destructive text-xs">{error}</p>}
 diff --git a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-index d295e08..378cb20 100644
+index d295e08..ee164ba 100644
 --- a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 +++ b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-@@ -66,6 +66,7 @@ import { track } from '@/lib/analytics-events'
+@@ -61,11 +61,14 @@ import type {
+   CopilotOrderActions,
+   CopilotOrderRequest,
+ } from '@/components/copilot/copilot-order-card'
++import type { ExchangeCredential } from '@/stores/credentials-store'
+ import i18n from '@/lib/i18n'
+ import { track } from '@/lib/analytics-events'
  import { useCapabilityAccess } from '@/hooks/use-capability-access'
  import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
  import { useMarketData } from '@/lib/market-data-provider'
 +import { confirmedOrderFields } from '@/lib/copilot/trading-tools'
++import { assistantOrderAccount } from '@/lib/copilot/order-account'
  import { useMarketRefWithPreferred } from '@/lib/market-ref/use-market-ref'
  import { credentialMarketFor } from '@/lib/venues/credential-alias'
  import { useCredentialsStore } from '@/stores/credentials-store'
-@@ -592,7 +593,11 @@ function AssistantConversationInner({
+@@ -590,9 +593,19 @@ function AssistantConversationInner({
+             error: i18n.t('security.vault.orderBlocked'),
+           }
          }
-         const cred = useCredentialsStore
-           .getState()
+-        const cred = useCredentialsStore
+-          .getState()
 -          .getCredentialForMarket(credentialMarketFor(req.market))
-+          .credentials.find(
-+            (candidate) =>
-+              candidate.market === credentialMarketFor(req.market) &&
-+              candidate.mode === mode,
++        let cred: ExchangeCredential | undefined
++        try {
++          cred = assistantOrderAccount(
++            useCredentialsStore.getState().credentials,
++            req.market,
++            mode,
 +          )
++        } catch (cause) {
++          return {
++            success: false,
++            error: cause instanceof Error ? cause.message : 'Select an exchange account.',
++          }
++        }
          if (mode === 'live' && !cred) {
            return {
              success: false,
-@@ -606,14 +611,12 @@ function AssistantConversationInner({
+@@ -606,14 +619,12 @@ function AssistantConversationInner({
            pair: req.pair,
            side: req.side,
            type: req.type,
@@ -448,21 +465,43 @@ index 8feeacd..862c161 100644
      // status chip — the order only executes when the user confirms.
      if (toolName === 'place_order' && output?.order) {
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-index 219799a..b47231c 100644
+index 219799a..34be7c3 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-@@ -6,7 +6,9 @@ import { useTranslation } from 'react-i18next'
+@@ -1,18 +1,17 @@
+ // Copyright (c) 2026 Juan Ignacio Molina Estrada
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+-import { AlertTriangle, CheckCircle2, XCircle, Zap } from 'lucide-react'
++import { createContext, useContext, useRef, useState } from 'react'
++import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
+ import { useTranslation } from 'react-i18next'
  import { Button } from '@pairlens/ui/components/ui/button'
- import { Checkbox } from '@pairlens/ui/components/ui/checkbox'
+-import { Checkbox } from '@pairlens/ui/components/ui/checkbox'
  import { cn } from '@pairlens/ui/lib/utils'
 +import type { VenueOrderControls } from '@/lib/copilot/trading-tools'
  import { track } from '@/lib/analytics-events'
-+import { requiresAttendedTrading } from '@/lib/attended-trading'
  import { useHoldConfirm } from '@/hooks/use-trade-confirm'
  import { tradeHoldMs } from '@/lib/settings/trade-confirm'
++import { proposalApprovalError } from '@/lib/copilot/ai-proposal-approval'
  import {
-@@ -32,7 +34,7 @@ import {
- // chat history can never replay an order. Consent is revocable on the card.
+-  PROPOSAL_FRESHNESS_MS,
+   markProposalExecuted,
+-  useTradeConsentStore,
+   wasProposalExecuted,
+ } from '@/stores/trade-consent-store'
+ 
+@@ -25,14 +24,11 @@ import {
+ // cancelOrder when the user explicitly confirms. Paper is preselected; live is
+ // an explicit second choice.
+ //
+-// "Don't ask again": the confirm step can be skipped by standing consent
+-// (trade-consent-store) — paper globally, live per market. Auto-execution is
+-// restricted to FRESH proposals (proposalId + proposedAt from the tool call,
+-// within PROPOSAL_FRESHNESS_MS) that were never executed before, so re-rendered
+-// chat history can never replay an order. Consent is revocable on the card.
++// Every proposal needs a fresh human confirmation. Stored standing consent is
++// deliberately ignored; stable request IDs and the execution ledger prevent replay.
  // ---------------------------------------------------------------------------
  
 -export type CopilotOrderRequest = {
@@ -470,7 +509,7 @@ index 219799a..b47231c 100644
    market: string
    pair: string
    side: 'buy' | 'sell'
-@@ -40,6 +42,7 @@ export type CopilotOrderRequest = {
+@@ -40,6 +36,7 @@ export type CopilotOrderRequest = {
    size: number
    price?: number | null
    reason?: string | null
@@ -478,33 +517,53 @@ index 219799a..b47231c 100644
  }
  
  export type CopilotCancelRequest = {
-@@ -98,7 +101,9 @@ export function CopilotPlaceOrderCard({
+@@ -97,36 +94,35 @@ export function CopilotPlaceOrderCard({
+   )
    const [state, setState] = useState<'idle' | 'placing' | 'done'>('idle')
    const [outcome, setOutcome] = useState<OrderOutcome | null>(null)
-   const [dontAskAgain, setDontAskAgain] = useState(false)
-+  const attendedOnly = requiresAttendedTrading(order.market)
-   const [autoApproved, setAutoApproved] = useState(false)
+-  const [dontAskAgain, setDontAskAgain] = useState(false)
+-  const [autoApproved, setAutoApproved] = useState(false)
+-
+-  const paperConsent = useTradeConsentStore((s) => s.paper)
+-  const liveConsent = useTradeConsentStore((s) =>
+-    s.liveMarkets.includes(order.market.toLowerCase()),
+-  )
+-  const setPaperAutoApprove = useTradeConsentStore((s) => s.setPaperAutoApprove)
+-  const setLiveAutoApprove = useTradeConsentStore((s) => s.setLiveAutoApprove)
++  const confirming = useRef(false)
 +  const clientOrderId = useRef(proposalId ?? crypto.randomUUID()).current
  
-   const paperConsent = useTradeConsentStore((s) => s.paper)
-   const liveConsent = useTradeConsentStore((s) =>
-@@ -113,6 +118,7 @@ export function CopilotPlaceOrderCard({
-     execMode: 'paper' | 'live',
-     opts?: { grantConsent?: boolean; auto?: boolean },
-   ) => {
-+    if (attendedOnly && opts?.auto) return
-     if (!actions || state !== 'idle') return
+   const isBuy = order.side === 'buy'
+ 
+-  const confirm = async (
+-    execMode: 'paper' | 'live',
+-    opts?: { grantConsent?: boolean; auto?: boolean },
+-  ) => {
+-    if (!actions || state !== 'idle') return
++  const confirm = async (execMode: 'paper' | 'live') => {
++    if (!actions || state !== 'idle' || confirming.current) return
++    const approvalError = proposalApprovalError(
++      proposedAt,
++      proposalId ? wasProposalExecuted(proposalId) : false,
++    )
++    if (approvalError) {
++      setOutcome({ success: false, error: approvalError })
++      setState('done')
++      return
++    }
++    confirming.current = true
      setState('placing')
      track('trade_proposal_decided', {
-@@ -121,12 +127,15 @@ export function CopilotPlaceOrderCard({
-       auto_approved: opts?.auto ?? false,
+       decision: 'accepted',
+       mode: execMode,
+-      auto_approved: opts?.auto ?? false,
++      auto_approved: false,
      })
      if (proposalId) markProposalExecuted(proposalId)
 -    if (opts?.grantConsent) {
-+    if (opts?.grantConsent && !attendedOnly) {
-       if (execMode === 'paper') setPaperAutoApprove(true)
-       else setLiveAutoApprove(order.market, true)
-     }
+-      if (execMode === 'paper') setPaperAutoApprove(true)
+-      else setLiveAutoApprove(order.market, true)
+-    }
      try {
 -      const result = await actions.placeOrder(order, execMode)
 +      const result = await actions.placeOrder(
@@ -514,15 +573,37 @@ index 219799a..b47231c 100644
        setOutcome(result)
      } catch (err) {
        setOutcome({
-@@ -155,6 +164,7 @@ export function CopilotPlaceOrderCard({
-   // proposal, and only in the user's default trading mode.
-   const autoRan = useRef(false)
-   useEffect(() => {
-+    if (attendedOnly) return
-     if (autoRan.current || !actions || state !== 'idle') return
-     if (!proposalId || !proposedAt) return
-     if (Date.now() - proposedAt > PROPOSAL_FRESHNESS_MS) return
-@@ -196,18 +206,38 @@ export function CopilotPlaceOrderCard({
+@@ -148,28 +144,9 @@ export function CopilotPlaceOrderCard({
+     holdMs: tradeHoldMs(mode === 'live'),
+     disabled: !actions || state !== 'idle',
+     busy: state === 'placing',
+-    onConfirm: () => void confirm(mode, { grantConsent: dontAskAgain }),
++    onConfirm: () => void confirm(mode),
+   })
+ 
+-  // Auto-execute under standing consent — only for a fresh, never-executed
+-  // proposal, and only in the user's default trading mode.
+-  const autoRan = useRef(false)
+-  useEffect(() => {
+-    if (autoRan.current || !actions || state !== 'idle') return
+-    if (!proposalId || !proposedAt) return
+-    if (Date.now() - proposedAt > PROPOSAL_FRESHNESS_MS) return
+-    if (wasProposalExecuted(proposalId)) return
+-    const defaultMode = actions.tradingMode === 'live' ? 'live' : 'paper'
+-    const covered = defaultMode === 'paper' ? paperConsent : liveConsent
+-    if (!covered) return
+-    autoRan.current = true
+-    setMode(defaultMode)
+-    setAutoApproved(true)
+-    void confirm(defaultMode, { auto: true })
+-    // Consent + proposal identity are fixed for the card's lifetime; this is
+-    // a mount-time decision, not a reactive one.
+-  }, [])
+-
+   return (
+     <div className="border-border/60 bg-muted/40 elevated-panel rounded-lg border p-3 text-xs">
+       <div className="mb-2 flex items-center gap-2">
+@@ -196,18 +173,38 @@ export function CopilotPlaceOrderCard({
          <div className="flex justify-between">
            <dt>{t('copilot.fieldSize')}</dt>
            <dd className="text-foreground font-mono font-medium tabular-nums">
@@ -570,7 +651,44 @@ index 219799a..b47231c 100644
  
        {order.reason && (
          <p className="mt-2 text-[11px] italic text-muted-foreground">
-@@ -297,16 +327,18 @@ export function CopilotPlaceOrderCard({
+@@ -240,36 +237,7 @@ export function CopilotPlaceOrderCard({
+               </>
+             )}
+           </div>
+-          {autoApproved && (
+-            <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
+-              <span className="flex items-center gap-1">
+-                <Zap className="size-3 text-primary" />
+-                {t('copilot.autoApprovedNote', {
+-                  mode:
+-                    mode === 'paper' ? t('accounts.paper') : t('accounts.live'),
+-                })}
+-              </span>
+-              <button
+-                type="button"
+-                className="underline underline-offset-2 hover:text-foreground"
+-                onClick={() =>
+-                  mode === 'paper'
+-                    ? setPaperAutoApprove(false)
+-                    : setLiveAutoApprove(order.market, false)
+-                }
+-              >
+-                {t('copilot.turnOff')}
+-              </button>
+-            </div>
+-          )}
+         </>
+-      ) : autoApproved ? (
+-        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+-          <Zap className="size-3.5 text-primary" />
+-          {t('copilot.autoApproving', {
+-            mode: mode === 'paper' ? t('accounts.paper') : t('accounts.live'),
+-          })}
+-        </div>
+       ) : (
+         <div className="mt-2.5 space-y-2">
+           <div className="flex items-center gap-1 rounded-md bg-background/60 p-0.5">
+@@ -297,16 +265,6 @@ export function CopilotPlaceOrderCard({
                {t('copilot.liveOrderWarning')}
              </p>
            )}
@@ -584,18 +702,6 @@ index 219799a..b47231c 100644
 -              ? t('copilot.dontAskAgainPaper')
 -              : t('copilot.dontAskAgainLive', { market: order.market })}
 -          </label>
-+          {!attendedOnly && (
-+            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted-foreground">
-+              <Checkbox
-+                checked={dontAskAgain}
-+                onCheckedChange={(v) => setDontAskAgain(v === true)}
-+                className="size-3.5"
-+              />
-+              {mode === 'paper'
-+                ? t('copilot.dontAskAgainPaper')
-+                : t('copilot.dontAskAgainLive', { market: order.market })}
-+            </label>
-+          )}
            <div className="flex gap-2">
              <Button
                size="sm"
@@ -1832,18 +1938,19 @@ index 0bcabb1..afd7b75 100644
        pairKey={activePair.pairKey}
        pricesRef={pricesRef}
 diff --git a/apps/terminal/src/components/terminal/trade-entry-panel.tsx b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-index 0d3b2e9..b1fb635 100644
+index 0d3b2e9..db42de1 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 +++ b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-@@ -48,6 +48,7 @@ import type { RefObject } from 'react'
+@@ -48,6 +48,8 @@ import type { RefObject } from 'react'
  
  import type { OrderExecutor } from '@pairlens/workflow-engine/types'
  import type { BalanceRecord } from '@/stores/balances-store'
 +import { ExchangeTools } from '@/components/quanttrade/exchange-tools'
++import { askAssistant } from '@/stores/assistant-store'
  import { OutcomeSwitch } from '@/components/predictions/outcome-switch'
  import { track } from '@/lib/analytics-events'
  import { useSwapPresets } from '@/hooks/use-swap-presets'
-@@ -62,6 +63,12 @@ import {
+@@ -62,6 +64,12 @@ import {
    formatPrice,
  } from '@/lib/format-price'
  import { useContractSize } from '@/lib/futures/contract-size'
@@ -1856,7 +1963,7 @@ index 0d3b2e9..b1fb635 100644
  import {
    balanceScopeFor,
    credentialsForMarket,
-@@ -269,18 +276,16 @@ function showTradeToast(opts: TradeToastProps) {
+@@ -269,18 +277,16 @@ function showTradeToast(opts: TradeToastProps) {
  
  // ── Helpers ───────────────────────────────────────────────────────────
  
@@ -1880,7 +1987,7 @@ index 0d3b2e9..b1fb635 100644
  }
  
  function computeSellSize(available: string, pct: number): string {
-@@ -484,7 +489,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -484,7 +490,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // What it adds is leverage, a reduce-only intent, and a size denominated in
    // contracts rather than in the base asset.
    const isPerp = marketInfo?.assetClasses.includes('crypto-perp') ?? false
@@ -1895,7 +2002,7 @@ index 0d3b2e9..b1fb635 100644
  
    // Derived here rather than beside the other pair state above, because a
    // stock's key is the bare ticker and its quote can only come from the venue.
-@@ -604,12 +615,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -604,12 +616,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and a futures margin balance, and they are not the same number.
    const balanceMap = useBalanceMap(
      usesWallet
@@ -1913,17 +2020,23 @@ index 0d3b2e9..b1fb635 100644
    )
  
    // Slippage, priority fee, tip and lane come from the execution preset in
-@@ -683,6 +695,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -682,7 +695,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+   // and would do it on orders that are only closing a position. So it rides
    // only on a deliberate choice, and never on a reduce-only order.
    const [leverageDirty, setLeverageDirty] = useState(false)
++  const [marginMode, setMarginMode] = useState<'cross' | 'isolated'>('cross')
++  const [marginModeDirty, setMarginModeDirty] = useState(false)
    const [reduceOnly, setReduceOnly] = useState(false)
 +  const [quantTradePostOnly, setQuantTradePostOnly] = useState(false)
    useEffect(() => {
      // Both reset on every venue or contract change. The clamp is separate
      // from the reset because a venue switch can also LOWER the ceiling, and
-@@ -693,7 +706,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -692,8 +708,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+   useEffect(() => {
      setLeverage(1)
      setLeverageDirty(false)
++    setMarginMode('cross')
++    setMarginModeDirty(false)
      setReduceOnly(false)
 -  }, [market, pairKey])
 +    setQuantTradePostOnly(false)
@@ -1934,7 +2047,7 @@ index 0d3b2e9..b1fb635 100644
  
    // A price is denominated in the instrument that is on screen. Moving to a
    // prediction outcome must therefore drop whatever the previous pair left in
-@@ -865,18 +882,34 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -865,18 +887,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          price: perpReferencePrice,
        })
      : null
@@ -1964,11 +2077,20 @@ index 0d3b2e9..b1fb635 100644
 +        })
 +      : null
  
++  const marginDraftError =
++    isPerp &&
++    isQuantTradeVenue(market) &&
++    leverageDirty &&
++    !reduceOnly &&
++    !marginModeDirty
++      ? 'Choose Cross or Isolated when changing leverage.'
++      : null
    const canSubmit =
      (usesWallet ? selectedWallet : selectedCred) &&
      mdStatus === 'connected' &&
      !submitting &&
 +    !nativeDraftError &&
++    !marginDraftError &&
 +    (!isPerp ||
 +      !leverageDirty ||
 +      reduceOnly ||
@@ -1976,24 +2098,32 @@ index 0d3b2e9..b1fb635 100644
      Number(size) > 0 &&
      // A prediction amount that buys less than one whole contract is not an
      // order the venue can take, however valid the dollar figure looks.
-@@ -899,6 +932,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -899,6 +946,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // or a click-mode user is told to hold a button that fires on release.
    const [confirmMode] = useTradeConfirmMode()
    const submitHint = useMemo(() => {
 +    if (nativeDraftError) return nativeDraftError
++    if (marginDraftError) return marginDraftError
      const hold = confirmMode === 'hold'
      if (orderType === 'workflow') {
        return hold
-@@ -913,7 +947,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -913,7 +962,14 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      return hold
        ? t('terminal.trade.holdToPlace')
        : t('terminal.trade.clickToPlace')
 -  }, [confirmMode, orderType, isLiveOrder, t])
-+  }, [confirmMode, orderType, isLiveOrder, t, nativeDraftError])
++  }, [
++    confirmMode,
++    orderType,
++    isLiveOrder,
++    t,
++    nativeDraftError,
++    marginDraftError,
++  ])
  
    const handleSideChange = (newSide: 'buy' | 'sell') => {
      setSide(newSide)
-@@ -1422,7 +1456,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1422,7 +1478,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
        let tgtCcy: string | undefined =
          sizeCcy === 'base' ? 'base_ccy' : 'quote_ccy'
  
@@ -2005,7 +2135,7 @@ index 0d3b2e9..b1fb635 100644
          tgtCcy = undefined
          if (sizeCcy === 'quote' && Number(limitPrice) > 0) {
            orderSize = (Number(size) / Number(limitPrice)).toFixed(8)
-@@ -1446,6 +1483,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1446,6 +1505,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          credentialId: selectedCred.id,
          ...(tgtCcy ? { tgtCcy } : {}),
          ...(orderType === 'limit' ? { price: String(limitPrice) } : {}),
@@ -2019,7 +2149,21 @@ index 0d3b2e9..b1fb635 100644
          ...(extendedHours && extendedHoursEligible
            ? { extendedHours: true }
            : {}),
-@@ -1504,6 +1548,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1455,6 +1521,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+         // state at the venue, and a close should not rewrite it. Matches the
+         // positions pane, which closes without leverage for the same reason.
+         ...(isPerp && leverageDirty && !reduceOnly ? { leverage } : {}),
++        ...(isPerp &&
++        isQuantTradeVenue(market) &&
++        leverageDirty &&
++        marginModeDirty &&
++        !reduceOnly
++          ? { marginMode }
++          : {}),
+         ...(isPerp && contractSizeKnown ? { contractSize } : {}),
+         ...(isPerp && reduceOnly ? { reduceOnly: true } : {}),
+       })
+@@ -1504,6 +1577,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    const body = (
      <div className="flex shrink-0 flex-col">
        <div className="flex flex-col gap-2.5 py-2.5">
@@ -2030,35 +2174,192 @@ index 0d3b2e9..b1fb635 100644
          {/* Wallet status. The "nothing connected here" case belongs to the
              connect gate below — what's left is a vault that can't be read, and
              an account that exists but hasn't been picked for this pane. */}
-@@ -1541,6 +1589,28 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1781,9 +1858,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+           </div>
          )}
  
-         <VaultUnlockDialog open={unlockOpen} onOpenChange={setUnlockOpen} />
-+        {selectedCred &&
-+          [
-+            'hyperliquid',
-+            'lighter',
-+            'hyperliquid-spot',
-+            'lighter-spot',
-+          ].includes(market) && (
-+            <ExchangeTools
-+              key={`${market}:${pairKey}:${selectedCred.id}`}
-+              market={market}
-+              pair={pairKey}
-+              credentialId={selectedCred.id}
-+              mode={selectedCred.mode}
-+              maxLeverage={contractLimit}
-+              onLeverageApplied={(value) => {
-+                setLeverage(value)
-+                setLeverageDirty(false)
-+              }}
-+              postOnly={quantTradePostOnly}
-+              onPostOnly={setQuantTradePostOnly}
-+            />
-+          )}
+-        {/* Leverage. Presets rather than a free field: the venue accepts
+-            integers within its own ceiling, and the row always ends at that
+-            ceiling so the top of the range is visible rather than implied.
++        {/* Leverage. Integer entry and presets share the same draft; the
++            row ends at this contract's ceiling.
+             Never persisted — see the state declaration. */}
+         {isPerp && maxLeverage > 1 && (
+           <div className="space-y-1">
+@@ -1791,15 +1867,43 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+               <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
+                 {t('terminal.trade.leverage')}
+               </span>
+-              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+-                {leverage}x
+-              </span>
++              <label className="flex items-center gap-1 font-mono text-[10px] tabular-nums text-muted-foreground">
++                <input
++                  aria-label="Order leverage"
++                  className="w-14 rounded border border-border bg-background px-1 py-0.5 text-right"
++                  type="number"
++                  min={1}
++                  max={maxLeverage}
++                  step={1}
++                  value={leverage}
++                  disabled={
++                    reduceOnly ||
++                    (isQuantTradeVenue(market) && orderType === 'workflow')
++                  }
++                  onChange={(event) => {
++                    const value = Number(event.target.value)
++                    if (
++                      !Number.isInteger(value) ||
++                      value < 1 ||
++                      value > maxLeverage
++                    )
++                      return
++                    setLeverage(value)
++                    setLeverageDirty(true)
++                  }}
++                />
++                ×
++              </label>
+             </div>
+             <div className="flex gap-1">
+               {leveragePresets(maxLeverage).map((lev) => (
+                 <button
+                   key={lev}
+                   type="button"
++                  disabled={
++                    reduceOnly ||
++                    (isQuantTradeVenue(market) && orderType === 'workflow')
++                  }
+                   className={cn(
+                     'flex-1 rounded-md border px-1 py-0.5 font-mono text-[11.5px] tabular-nums transition-colors',
+                     leverage === lev
+@@ -1826,6 +1930,42 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+           </div>
+         )}
  
-         {showRegionHint && (
-           <div className="flex items-start gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
++        {isPerp && isQuantTradeVenue(market) && (
++          <div className="space-y-1">
++            <label className="flex items-center justify-between gap-2 text-xs">
++              Requested margin
++              <select
++                aria-label="Order margin mode"
++                className="min-w-0 rounded-md border border-border bg-background px-2 py-1 text-xs"
++                value={marginModeDirty ? marginMode : 'unchanged'}
++                disabled={
++                  reduceOnly ||
++                  contractLimit === null ||
++                  orderType === 'workflow'
++                }
++                onChange={(event) => {
++                  const value = event.target.value
++                  setMarginModeDirty(value !== 'unchanged')
++                  if (value !== 'unchanged') {
++                    setMarginMode(value === 'isolated' ? 'isolated' : 'cross')
++                    setLeverageDirty(true)
++                  }
++                }}
++              >
++                <option value="unchanged">Keep exchange setting</option>
++                <option value="cross">Cross</option>
++                <option value="isolated">Isolated</option>
++              </select>
++            </label>
++            <p className="text-[10.5px] text-muted-foreground">
++              {leverageDirty && !reduceOnly
++                ? (marginDraftError ??
++                  `Applied with next opening order: ${leverage}× · ${marginMode}.`)
++                : 'Exchange leverage and margin stay unchanged.'}
++            </p>
++          </div>
++        )}
++
+         {/* Amount input. A prediction ticket takes DOLLARS and shows what they
+             buy: traders decide in money, both venues settle in contracts, and
+             the count under the field is the conversion stated rather than left
+@@ -1835,7 +1975,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+           <div className="flex items-center justify-between">
+             <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
+               {isPerp
+-                ? t('terminal.trade.contracts')
++                ? isQuantTradeVenue(market)
++                  ? `Amount · ${baseLabel}`
++                  : t('terminal.trade.contracts')
+                 : t('terminal.trade.amount')}
+             </span>
+             {/* No base/quote switch on a contract ticket: there is no second
+@@ -2174,6 +2316,17 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+           />
+         )}
+ 
++        {orderType === 'limit' && isQuantTradeVenue(market) && (
++          <label className="flex items-center justify-between gap-2 text-xs">
++            Post-only · maker orders
++            <Switch
++              aria-label="Post-only limit order"
++              checked={quantTradePostOnly}
++              onCheckedChange={setQuantTradePostOnly}
++            />
++          </label>
++        )}
++
+         {/* Submit — press & hold to commit (single click if the user set that
+             in settings). Conveys the criticality of the moment (a fuller hold
+             for live funds); the toast is the confirmation. */}
+@@ -2204,6 +2357,54 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+             </span>
+           }
+         />
++        {!isDex &&
++          !isPrediction &&
++          marketInfo?.capabilities.includes('trade') && (
++            <Button
++              variant="outline"
++              size="sm"
++              type="button"
++              onClick={() =>
++                askAssistant(
++                  [
++                    `Prepare a trade proposal for human review on exactly ${market}, ${pairKey}.`,
++                    `Draft intent: ${side}, ${orderType === 'workflow' ? 'choose a supported order type' : orderType}.`,
++                    Number(size) > 0
++                      ? `User-entered size: ${size} ${isPerp ? (isQuantTradeVenue(market) ? baseLabel : 'contracts') : sizeAsset}.`
++                      : 'Ask me for size and risk budget before preparing an order.',
++                    orderType === 'limit' && Number(limitPrice) > 0
++                      ? `Limit price: ${limitPrice} ${quoteAsset}.`
++                      : '',
++                    isPerp && leverageDirty && !reduceOnly
++                      ? `Requested leverage: ${leverage}×${marginModeDirty ? `; ${marginMode} margin` : ''}.`
++                      : '',
++                    marginDraftError
++                      ? 'Ask me to choose Cross or Isolated before preparing a leverage change.'
++                      : '',
++                    reduceOnly
++                      ? 'Reduce-only: close an existing position; do not open or reverse.'
++                      : '',
++                    'Research current conditions; read the selected account snapshot and verify exact instrument, available balance, position, precision, minimums and leverage cap. Do not invent missing account data. Explain risks and prepare exact orders for my approval. Do not execute or assume protective exits exist.',
++                  ]
++                    .filter(Boolean)
++                    .join('\n'),
++                  { send: false },
++                )
++              }
++            >
++              Prepare with AI
++            </Button>
++          )}
++        {selectedCred && isQuantTradeVenue(market) && (
++          <ExchangeTools
++            key={`${market}:${pairKey}:${selectedCred.id}`}
++            market={market}
++            pair={pairKey}
++            credentialId={selectedCred.id}
++            mode={selectedCred.mode}
++            isolatedSelected={marginModeDirty && marginMode === 'isolated'}
++          />
++        )}
+       </div>
+ 
+       {/* Presets config dialog */}
 diff --git a/apps/terminal/src/components/user-settings-dialog.tsx b/apps/terminal/src/components/user-settings-dialog.tsx
 index a4ff795..93edd76 100644
 --- a/apps/terminal/src/components/user-settings-dialog.tsx
@@ -2987,9 +3288,20 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..f8d28bf 100644
+index ce0d317..fff3d8c 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
+@@ -73,8 +73,8 @@ const WORKING_RULES = [
+ ]
+ 
+ const SAFETY_RULES = [
+-  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
+-  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Orders are PREPARED, never executed by you. place_order returns a proposal the user explicitly confirms on a card for every order on every exchange; paper is the default and live is their explicit choice. Standing consent never approves AI trade proposals.',
++  'Never claim an order was placed, filled or cancelled without evidence from the user-confirmed execution result and exchange state.',
+   'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
+   'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
+   'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
 @@ -94,7 +94,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
@@ -3241,15 +3553,15 @@ index fc621a5..5db9d78 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..d97574e 100644
+index 2f8e01a..1d2621a 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,79 @@
+@@ -2,9 +2,83 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
+-import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
- import { useTradeConsentStore } from '../../stores/trade-consent-store'
  import { resolveTarget } from './tool-deps'
 +import {
 +  exchangeOperationInputSchema,
@@ -3279,7 +3591,12 @@ index 2f8e01a..d97574e 100644
 +    postOnly: z.boolean().optional(),
 +    reduceOnly: z.boolean().optional(),
 +    leverage: z.number().int().min(1).max(125).optional(),
-+    marginMode: z.enum(['cross', 'isolated']).optional(),
++    marginMode: z
++      .enum(['cross', 'isolated'])
++      .optional()
++      .describe(
++        'Choose Cross or Isolated explicitly whenever setting leverage.',
++      ),
 +    trigger: z
 +      .object({ triggerPrice: decimal, triggerType: z.enum(['tp', 'sl']) })
 +      .strict()
@@ -3324,8 +3641,16 @@ index 2f8e01a..d97574e 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -21,14 +91,34 @@ import type { CopilotToolDeps } from './tool-deps'
- // risk guardrails; it only skips the confirm click.
+@@ -15,20 +89,38 @@ import type { CopilotToolDeps } from './tool-deps'
+ // cancelOrder when the user explicitly confirms. Paper is the default; live
+ // requires an explicit choice on the card. The AI proposes; the human commits.
+ //
+-// "Don't ask again": the user can grant standing consent (trade-consent-store)
+-// per scope — paper globally, live per market. When consent covers a fresh
+-// proposal, the card auto-executes it and says so. Consent never bypasses the
+-// risk guardrails; it only skips the confirm click.
++// Every AI proposal requires fresh human approval, including paper and CEX orders.
++// Previously saved standing consent cannot authorize these cards.
  // ---------------------------------------------------------------------------
  
 -export const TRADING_TOOL_NAMES = ['place_order', 'cancel_order'] as const
@@ -3360,7 +3685,7 @@ index 2f8e01a..d97574e 100644
          pair: z.string().optional(),
          market: z.string().optional(),
          side: z.enum(['buy', 'sell']),
-@@ -69,7 +159,44 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,22 +161,55 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -3394,41 +3719,47 @@ index 2f8e01a..d97574e 100644
 +        }
 +        if (
 +          (controls.postOnly && (args.type !== 'limit' || controls.trigger)) ||
-+          (controls.marginMode && controls.leverage === undefined)
++          (controls.marginMode !== undefined) !==
++            (controls.leverage !== undefined)
 +        ) {
 +          return {
 +            status: 'invalid',
 +            error:
-+              'Post-only requires a regular limit order; margin mode requires explicit leverage.',
++              'Post-only requires a regular limit order; leverage and margin mode must be supplied together (choose Cross or Isolated).',
 +          }
 +        }
 +        if (args.type === 'limit' && !args.price && !controls.exactPrice) {
            return {
              status: 'invalid',
              error: 'A limit order requires a price.',
-@@ -78,8 +205,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
-         // Standing consent covering this proposal? The card auto-executes
-         // fresh consented proposals; stale/replayed ones still require a click.
-         const consent = useTradeConsentStore.getState()
+           }
+         }
+-        // Standing consent covering this proposal? The card auto-executes
+-        // fresh consented proposals; stale/replayed ones still require a click.
+-        const consent = useTradeConsentStore.getState()
 -        const paperAuto = consent.isAutoApproved('paper', target.market)
 -        const liveAuto = consent.isAutoApproved('live', target.market)
-+        const attendedOnly = requiresAttendedTrading(target.market)
-+        const paperAuto =
-+          !attendedOnly && consent.isAutoApproved('paper', target.market)
-+        const liveAuto =
-+          !attendedOnly && consent.isAutoApproved('live', target.market)
          return {
            status: 'awaiting_confirmation',
            proposalId: crypto.randomUUID(),
-@@ -93,6 +223,7 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+           proposedAt: Date.now(),
+-          autoApproval: { paper: paperAuto, live: liveAuto },
++          autoApproval: { paper: false, live: false },
+           order: {
+             market: target.market,
+             pair: target.pair,
+@@ -93,15 +218,66 @@ export function buildTradingTools(deps: CopilotToolDeps) {
              size: args.size,
              price: args.price ?? null,
              reason: args.reason ?? null,
 +            ...controls,
            },
            message:
-             paperAuto || liveAuto
-@@ -102,6 +233,58 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+-            paperAuto || liveAuto
+-              ? `Order prepared. The user has standing auto-approval (paper: ${paperAuto}, live on ${target.market}: ${liveAuto}) — the card executes automatically when the user's default trading mode is covered; otherwise it waits for their confirmation. Verify the outcome with get_open_orders before claiming the order was placed.`
+-              : 'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
++            'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
+         }
        },
      }),
  
