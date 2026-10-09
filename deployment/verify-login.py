@@ -56,3 +56,21 @@ for path in ('/login.js','/login.css'):
     status,headers,body=request(path)
     assert status==200 and headers.get('WWW-Authenticate') is None and body
 print('Password login, logout revocation and challenge-free sign-in assets verified; no trades placed.')
+
+import hashlib
+for name in ('quanttrade-wordmark.svg','quanttrade-mark.svg'):
+    status,headers,body=request('/login-assets/'+name)
+    assert status==200 and headers.get_content_type()=='image/svg+xml'
+    assert hashlib.sha256(body).digest()==hashlib.sha256(Path('/opt/quanttrade/current/frontend',name).read_bytes()).digest()
+print('Login uses the same verified QuantTrade logos as the terminal.')
+
+status,headers,body=request('/login-assets/hanken-grotesk-latin.woff2')
+assert status==200 and headers.get_content_type()=='font/woff2'
+assert hashlib.sha256(body).digest()==hashlib.sha256(Path('/opt/quanttrade/current/frontend/assets/hanken-grotesk-latin-wght-normal-CaVRRdDk.woff2').read_bytes()).digest()
+print('Login typography matches the bundled terminal font.')
+
+for name in ('login.html','login.css'):
+    status,headers,body=request('/login' if name=='login.html' else '/login.css')
+    assert status==200
+    assert hashlib.sha256(body).digest()==hashlib.sha256(Path('/opt/quanttrade/current/deployment',name).read_bytes()).digest()
+print('Published login document and styling match the active release.')

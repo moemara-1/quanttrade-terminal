@@ -137,3 +137,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Login document content type
 - [completed] Reproduced live /login application/octet-stream response; JS/CSS already have correct types.
 - [completed] Explicit HTML MIME type deployed; nginx syntax, live HTML/JS/CSS response types, password login/logout, protected navigation and operator/agent guards verified. No trades placed.
+
+## Match login to QuantTrade brand
+- [completed] Adapted login to real QuantTrade logos, Hanken Grotesk, Graphite colors/mint accent and responsive terminal composition.
+- [completed] Form hooks, JS syntax and structural checks passed; deployed login HTML/CSS and public brand aliases. Live asset hashes, HTML/JS/CSS/font types, login/logout, protected terminal and operator/agent guards passed. Committing/pushing authorized design.
