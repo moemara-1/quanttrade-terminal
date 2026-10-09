@@ -19,7 +19,7 @@ test('leverage acknowledgment precedes exact order submission and failure cannot
   });
   const order={venue:'hyperliquid' as const,symbol:'BTC-USDC',side:'buy' as const,type:'limit' as const,price:'100',size:'1',leverage:3,marginMode:'isolated' as const,rationale:'test'};
   assert.equal(await client.place(order,undefined,'proposal-identifier'),'oid');
-  assert.deepEqual(paths,['/quanttrade/trading/leverage','/trading/orders']);
+  assert.deepEqual(paths,['/quanttrade/trading/leverage','/quanttrade/trading/orders']);
   let calls=0;
   const failing=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async()=>{calls++;return Response.json({status:'error'});});
   await assert.rejects(failing.place(order,undefined,'failed-identifier'));assert.equal(calls,1);

@@ -1,6 +1,7 @@
 import { assistantOrderAccount, requiresExchangeAccount } from './order-account'
 import { confirmedOrderFields } from './trading-tools'
 import { recordTradeSubmission } from './trade-submissions'
+import { submitReviewedWorkflow } from './submit-reviewed-workflow'
 import type {
   CopilotOrderRequest,
   OrderOutcome,
@@ -34,6 +35,7 @@ export async function submitReviewedOrder(
   )
   if (mode === 'live' && !account && requiresExchangeAccount(request.market))
     throw new Error('No live account is connected for this exchange.')
+  if (request.workflow) return submitReviewedWorkflow(request, mode)
   const params = {
     market: request.market,
     pair: request.pair,

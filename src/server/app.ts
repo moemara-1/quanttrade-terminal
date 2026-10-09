@@ -11,8 +11,10 @@ import type { VenueResearch } from './research.ts';
 import type { VenueOperations } from './operations.ts';
 import { validateSyncEntries } from './sync-state.ts';
 import type { LiquidationCollector } from './liquidations.ts';
+import type { WorkflowRuns } from './workflows.ts';
 
 interface Services {
+  workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
   liquidations?: Pick<LiquidationCollector,'get'>;
   news?: Pick<NewsService,'get'>;
   calendars?: Pick<MarketCalendars,'earnings'|'ipos'|'economic'>;
@@ -151,6 +153,7 @@ export function createApp(services: Services) {
     const input=z.object({venue:venueSchema,credentials:z.unknown(),mode:z.enum(['paper','live']).optional()}).strict().parse(req.body);
     if (connecting.size) {res.status(409).json({error:'An exchange connection is already being updated'});return;}
     connecting.add(input.venue);
+    services.workflows?.pauseVenue(input.venue);
     try {
       await services.execution.connect(input.venue,input.credentials);
       if (input.mode) desk.setVenueMode(input.venue,input.mode);
@@ -162,6 +165,7 @@ export function createApp(services: Services) {
     const venue=venueSchema.parse(req.params.venue);
     if (connecting.size) {res.status(409).json({error:'An exchange connection is already being updated'});return;}
     connecting.add(venue);
+    services.workflows?.pauseVenue(venue);
     try {await services.execution.disconnect(venue);res.json({venue,connected:false,mode:desk.status().mode,accountName:desk.status().accountName});}
     finally {connecting.delete(venue);}
   });
@@ -178,6 +182,16 @@ export function createApp(services: Services) {
   app.post('/api/terminal/orders',operator,async(req,res)=>{
     const input=z.object({clientOrderId:z.string().min(1).max(128),mode:z.enum(['paper','live']),order:z.unknown()}).strict().parse(req.body);
     res.json(await desk.confirm(input.clientOrderId,input.mode,input.order));
+  });
+  app.get('/api/workflow-runs',operator,(_req,res)=>res.json(services.workflows?.list()??[]));
+  app.post('/api/workflow-runs',operator,async(req,res)=>{
+    if(!services.workflows){res.status(503).json({error:'Workflow execution is unavailable'});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh plan afterwards'});return;}
+    res.json(await services.workflows.start(req.body));
+  });
+  app.post('/api/workflow-runs/:id/cancel',operator,(req,res)=>{
+    if(!services.workflows){res.status(503).json({error:'Workflow execution is unavailable'});return;}
+    res.json(services.workflows.cancel(z.string().min(1).max(100).parse(req.params.id)));
   });
   app.post('/api/terminal/operations',operator,async(req,res)=>{
     if (!services.operations) {res.status(503).json({error:'Exchange operations are unavailable'});return;}

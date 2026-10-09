@@ -72,6 +72,13 @@ export class TradingDesk {
     return this.approve(proposal.id);
   }
 
+  async preview(input: unknown): Promise<{order:OrderDraft;notional:string}> {
+    const order=orderSchema.parse(input);
+    if (order.sizeUnit==='quote') throw new Error('Workflow orders must specify the exact base amount');
+    const market=await this.quote(order);
+    return {order,notional:this.validate(order,market,'manual')};
+  }
+
   private async quote(order: OrderDraft): Promise<Market> {
     const market = (await this.markets.list(order.venue,order.marketType ?? 'perpetual')).find((item) => item.symbol === order.symbol);
     if (!market) throw new Error('Market is unavailable on the selected venue');

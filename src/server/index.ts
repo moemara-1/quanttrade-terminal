@@ -7,6 +7,7 @@ import { DeskStore } from './store.ts';
 import { PublicMarkets } from './markets.ts';
 import { HummingbotExecution } from './execution.ts';
 import { TradingDesk } from './trading.ts';
+import { WorkflowRuns } from './workflows.ts';
 import { ProposalAgent } from './agent.ts';
 import { createApp } from './app.ts';
 import { NewsService } from './news.ts';
@@ -43,10 +44,12 @@ const execution=new HummingbotExecution({url:env.HUMMINGBOT_URL,username:env.HUM
 const desk=new TradingDesk(store,markets,execution,{mode:env.DESK_MODE,accountName:env.HUMMINGBOT_ACCOUNT,maxOrderNotional:env.MAX_ORDER_NOTIONAL,
   dailyNotionalLimit:env.DAILY_NOTIONAL_LIMIT,maxPriceDeviationBps:env.MAX_PRICE_DEVIATION_BPS,proposalTtlSeconds:env.PROPOSAL_TTL_SECONDS,pairlensUrl:env.PAIRLENS_URL});
 const agent=new ProposalAgent({url:env.AGENT_BASE_URL,key:env.AGENT_API_KEY,model:env.AGENT_MODEL},markets,desk);
+const workflows=new WorkflowRuns(resolve('data','workflow-runs.sqlite'),desk);
+workflows.startTimer();
 desk.agentConfigured=agent.configured;
 const operations=new VenueOperations(desk,new HummingbotOperations({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT}),markets);
-const app=createApp({liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET}}:{})});
+const app=createApp({workflows,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET}}:{})});
 const server=app.listen(4318,'127.0.0.1',()=>console.log(`QuantTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
-server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);liquidations.close();store.close();process.exitCode=1;});
-function shutdown() {liquidations.close();server.close(()=>{store.close();process.exit(0);});setTimeout(()=>process.exit(1),5000).unref();}
+server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);liquidations.close();workflows.close();store.close();process.exitCode=1;});
+function shutdown() {liquidations.close();workflows.close();server.close(()=>{store.close();process.exit(0);});setTimeout(()=>process.exit(1),5000).unref();}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);

@@ -72,8 +72,8 @@ export class HummingbotExecution implements ExecutionClient {
       if (result.client_order_id!==undefined) return 'native-client:'+order.venue+':'+result.client_order_id;
       throw new Error('Trigger acknowledgment is missing its exchange identifier');
     }
-    const response = await this.post(order.type === 'market' ? '/quanttrade/trading/market-orders' : '/trading/orders', {account_name:this.config.accountName,connector_name:order.marketType === 'spot' ? order.venue : connectors[order.venue],trading_pair:tradingPair,
-      trade_type:order.side.toUpperCase(),order_type:order.postOnly ? 'LIMIT_MAKER' : order.type.toUpperCase(),amount:order.size,...(order.type === 'market' ? {protection_price:protectionPrice} : {price:order.price}),position_action:order.reduceOnly?'CLOSE':'OPEN'});
+    const response = await this.post(order.type === 'market' ? '/quanttrade/trading/market-orders' : '/quanttrade/trading/orders', {account_name:this.config.accountName,connector_name:order.marketType === 'spot' ? order.venue : connectors[order.venue],trading_pair:tradingPair,
+      trade_type:order.side.toUpperCase(),order_type:order.postOnly ? 'LIMIT_MAKER' : order.type.toUpperCase(),amount:order.size,...(order.type === 'market' ? {protection_price:protectionPrice} : {price:order.price}),position_action:order.reduceOnly?'CLOSE':'OPEN'},35_000);
     return z.object({order_id:z.string().min(1).max(200)}).parse(response).order_id;
   }
   async cancel(proposal: Proposal): Promise<void> {

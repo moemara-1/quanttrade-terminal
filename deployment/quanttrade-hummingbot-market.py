@@ -84,36 +84,42 @@ def install(app, auth_user):
         connector_name: Literal["hyperliquid_perpetual", "lighter_perpetual", "hyperliquid", "lighter"]
         trading_pair: str = Field(min_length=1, max_length=100)
         trade_type: Literal["BUY", "SELL"]
-        order_type: Literal["MARKET"]
+        order_type: Literal["MARKET", "LIMIT", "LIMIT_MAKER"]
         amount: Decimal = Field(gt=0, allow_inf_nan=False)
-        protection_price: Decimal = Field(gt=0, allow_inf_nan=False)
+        protection_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+        price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
         position_action: Literal["OPEN", "CLOSE"] = "OPEN"
 
     router = APIRouter(prefix="/quanttrade/trading", tags=["QuantTrade"])
 
     @router.post("/market-orders", status_code=201)
+    @router.post("/orders", status_code=201)
     async def place_market(request: Request, accounts=Depends(get_accounts_service)):
         if request.account_name not in accounts.list_accounts():
             raise HTTPException(404, "Exchange account is unavailable")
         connector = await accounts._connector_service.get_trading_connector(request.account_name, request.connector_name)
         rule = connector.trading_rules.get(request.trading_pair)
-        if rule is None or OrderType.MARKET not in connector.supported_order_types():
+        order_type = OrderType[request.order_type]
+        if rule is None or order_type not in connector.supported_order_types():
             raise HTTPException(400, "Market order is unavailable for this pair")
         amount = connector.quantize_order_amount(request.trading_pair, request.amount)
-        price = connector.quantize_order_price(request.trading_pair, request.protection_price)
+        requested_price = request.protection_price if order_type == OrderType.MARKET else request.price
+        if requested_price is None:
+            raise HTTPException(400, "An exact limit or market protection price is required")
+        price = connector.quantize_order_price(request.trading_pair, requested_price)
         # Reject any quantization that could change the amount or loosen the bound.
         if amount != request.amount or amount < rule.min_order_size:
             raise HTTPException(400, "Market amount violates exchange precision or minimum")
-        if price != request.protection_price or price <= 0:
+        if price != requested_price or price <= 0:
             raise HTTPException(400, "Protection price violates exchange precision")
         if amount * price < rule.min_notional_size:
             raise HTTPException(400, "Market order is below exchange minimum notional")
         if request.connector_name in ("hyperliquid", "lighter") and request.position_action == "CLOSE":
             raise HTTPException(400, "Spot orders cannot be reduce-only")
         submit = connector.buy if request.trade_type == "BUY" else connector.sell
-        order_id = submit(trading_pair=request.trading_pair, amount=amount, order_type=OrderType.MARKET,
+        order_id = submit(trading_pair=request.trading_pair, amount=amount, order_type=order_type,
                           price=price, position_action=PositionAction[request.position_action],
-                          quanttrade_protection_price=price)
+                          **({"quanttrade_protection_price": price} if order_type == OrderType.MARKET else {}))
         if not order_id:
             raise HTTPException(500, "Exchange submission did not return an order ID")
         try:

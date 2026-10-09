@@ -120,6 +120,6 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Passed58native tests/267assertions,32Python tests, native lint/typecheck/build and offline signer red/green. Deployed20261009-8, all hosted checks passed; committed/pushed. No user trade replayed.
 
 ## Restore approved native workflows
-- [in_progress] Implement bounded, persistent approved workflow runs for HL/Lighter, with direct chat confirmation and truthful run state.
-- [pending] Restore native ticket workflow preparation and test scheduling, failure, cancellation, restart and account/mode boundaries.
-- [pending] Build, deploy, verify and push workflow support.
+- [completed] Implement bounded, persistent approved workflow runs for HL/Lighter, with direct chat confirmation and truthful run state. Exact steps, reviewed cap, per-leg risk checks, kill/mode/credential/late-step pauses, and interrupted-submission refusal.
+- [completed] Restore native ticket workflow preparation, complete-plan review and persisted run/cancellation cards. 105 backend tests,61 focused native tests/278 assertions,51 Python tests and root/native TypeScript plus targeted ESLint passed. No orders or paid model calls.
+- [completed] Production build passed; deployed Hetzner release20261009-9. Authenticated runtime schema, persisted run reads, private workflow writes, approval/run assets, login, feeds, account controls, catalogs, sync and branding guards passed. No real orders, workflow registration, paid models or browser automation used. Committing/pushing authorized repair.
