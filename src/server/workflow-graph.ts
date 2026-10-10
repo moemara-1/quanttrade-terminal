@@ -5,7 +5,7 @@ import type {Market,OrderDraft} from '../shared/types.ts';
 const number=z.number().finite();
 const side=z.enum(['buy','sell','inherit','opposite']);
 const sizing={side,sizeMode:z.enum(['absolute','percent']),size:number.positive()};
-const exit={triggerMode:z.enum(['percent','absolute']),triggerValue:number.positive(),sizePercent:number.min(1).max(100),orderType:z.enum(['market','limit']),limitPrice:number.nonnegative().optional()};
+const exit={sizeScope:z.enum(['parent','workflow']).optional(),triggerMode:z.enum(['percent','absolute']),triggerValue:number.positive(),sizePercent:number.min(1).max(100),orderType:z.enum(['market','limit']),limitPrice:number.nonnegative().optional()};
 const dataSchemas={
   trigger:z.object({}),'market-order':z.object(sizing),'limit-order':z.object({...sizing,priceMode:z.enum(['absolute','offset-percent','offset-absolute']),priceValue:number}),
   'take-profit':z.object(exit),'stop-loss':z.object(exit),
@@ -41,14 +41,19 @@ export const workflowGraphSchema=z.object({oco:z.boolean().optional(),steps:z.ar
   for(let i=0;i<queue.length;i++){visited++;for(const edge of graph.edges.filter(edge=>edge.source===queue[i])){const count=(indegree.get(edge.target)??0)-1;indegree.set(edge.target,count);if(count===0)queue.push(edge.target);}}
   if(visited!==graph.steps.length)issue('Workflow contains a cycle');
   if(triggers.length===1){const reachable=new Set([triggers[0].id]);for(let changed=true;changed;){changed=false;for(const edge of graph.edges)if(reachable.has(edge.source)&&!reachable.has(edge.target)){reachable.add(edge.target);changed=true;}}if(graph.steps.some(step=>!reachable.has(step.id)))issue('Workflow contains unreachable nodes');}
+  for(const exitStep of graph.steps.filter(step=>['take-profit','stop-loss'].includes(step.type)&&step.data.sizeScope==='workflow')){
+    const ancestors=new Set<string>();const pending=[exitStep.id];while(pending.length){const id=pending.pop()!;for(const edge of graph.edges.filter(edge=>edge.target===id))if(!ancestors.has(edge.source)){ancestors.add(edge.source);pending.push(edge.source);}}
+    const entries=graph.steps.filter(step=>step.type==='market-order'||step.type==='limit-order');
+    if(!entries.length||entries.some(step=>!ancestors.has(step.id)))issue('Workflow-scoped protection must follow every workflow entry');
+  }
   if(graph.oco){
     const exits=graph.steps.filter(step=>['take-profit','stop-loss'].includes(step.type));
     if(!exits.length)issue('OCO requires paired protective exits');
-    for(const step of exits){const parents=parentSignature(graph,step.id);const matches=exits.filter(other=>other.id!==step.id&&other.type!==step.type&&other.data.sizePercent===step.data.sizePercent&&parentSignature(graph,other.id)===parents);if(matches.length!==1)issue('OCO requires one matching TP/SL sibling with identical parents and close percentage');}
+    for(const step of exits){const parents=parentSignature(graph,step.id);const matches=exits.filter(other=>other.id!==step.id&&other.type!==step.type&&other.data.sizePercent===step.data.sizePercent&&(other.data.sizeScope??'parent')===(step.data.sizeScope??'parent')&&parentSignature(graph,other.id)===parents);if(matches.length!==1)issue('OCO requires one matching TP/SL sibling with identical parents and close percentage');}
   }
 });
 export type WorkflowGraph=z.infer<typeof workflowGraphSchema>;
-export type GraphNodeState={status:'pending'|'waiting'|'waiting-fill'|'submitting'|'executed'|'skipped'|'failed'|'unverified';effectiveSize:string;entryPrice:string;dueAt?:number;orderId?:string;error?:string;passed?:boolean};
+export type GraphNodeState={filledSize?:string;fillPrice?:string;status:'pending'|'waiting'|'waiting-fill'|'submitting'|'executed'|'skipped'|'failed'|'unverified';effectiveSize:string;entryPrice:string;dueAt?:number;orderId?:string;error?:string;passed?:boolean};
 export type GraphExecutionState={nodes:Record<string,GraphNodeState>};
 export type GraphOrderResult={status:'executed'|'waiting-fill'|'unverified';orderId?:string;entryOrderId?:string;fillPrice?:string;fillSize?:string;error?:string};
 export type GraphCallbacks={now:number;market:()=>Promise<Market>;submit:(nodeId:string,order:OrderDraft)=>Promise<GraphOrderResult>;submitBracket?:(nodeIds:[string,string],orders:[OrderDraft,OrderDraft])=>Promise<GraphOrderResult>;submitEntryBracket?:(nodeIds:[string,string,string],orders:[OrderDraft,OrderDraft,OrderDraft])=>Promise<GraphOrderResult>;reconcile?:(nodeId:string,orderId:string)=>Promise<GraphOrderResult>;save:()=>Promise<void>|void;active:()=>boolean};
@@ -65,6 +70,7 @@ export function hyperliquidOcoTopologies(graph:WorkflowGraph):HyperliquidOcoTopo
     const matches=sls.filter(sl=>parentSignature(graph,sl.id)===parentSignature(graph,tp.id));
     if(matches.length!==1||usedSl.has(matches[0].id))throw new Error('Hyperliquid OCO requires uniquely paired protective siblings');
     const sl=matches[0];usedSl.add(sl.id);
+    if(tp.data.sizeScope==='workflow'||sl.data.sizeScope==='workflow')throw new Error('Hyperliquid entry-attached OCO protects only its own entry, not full workflow scope');
     if(tp.data.sizePercent!==100||sl.data.sizePercent!==100)throw new Error('Verified Hyperliquid entry-attached OCO requires both exits to protect 100% of the entry');
     const parents=graph.edges.filter(edge=>edge.target===tp.id);const other=graph.edges.filter(edge=>edge.target===sl.id);
     if(parents.length!==1||other.length!==1||parents[0].source!==other[0].source)throw new Error('Hyperliquid OCO exits must be direct siblings of their entry or one Split');
@@ -83,8 +89,35 @@ function attachedExit(step:WorkflowGraph['steps'][number],entry:OrderDraft,marke
   const order:OrderDraft={venue:entry.venue,symbol:entry.symbol,marketType:entry.marketType,side:entry.side==='buy'?'sell':'buy',type:step.data.orderType==='limit'?'limit':'market',size,sizeUnit:'base',reduceOnly:true,rationale:`Workflow ${step.id}: native entry-attached ${step.type}`,trigger:{triggerType:step.type==='take-profit'?'tp':'sl',triggerPrice:normalizedPrice(trigger,market,step.data.triggerMode==='absolute')}};
   if(order.type==='limit')order.price=normalizedPrice(new Decimal(String(step.data.limitPrice)),market,true);return order;
 }
+function recordFill(node:GraphNodeState,result:GraphOrderResult):void{
+  if(result.fillSize)node.effectiveSize=result.fillSize;if(result.fillPrice)node.entryPrice=result.fillPrice;
+  // Only terminal verified fill evidence counts toward full-workflow protection.
+  if(result.status==='executed'&&result.fillSize&&result.fillPrice){const size=new Decimal(result.fillSize),price=new Decimal(result.fillPrice);if(size.isFinite()&&size.gt(0)&&price.isFinite()&&price.gt(0)){node.filledSize=size.toFixed();node.fillPrice=price.toFixed();}}
+}
+export function validateWorkflowInput(graph:WorkflowGraph,input:OrderDraft):void{
+  if(!graph.steps.some(step=>['take-profit','stop-loss'].includes(step.type)&&step.data.sizeScope==='workflow'))return;
+  if(input.reduceOnly)throw new Error('Workflow-scoped protection requires opening entries, not reduce-only entries');
+  if(input.marketType==='spot')throw new Error('Workflow-scoped protection requires a verified perpetual connector');
+  for(const entry of graph.steps.filter(step=>step.type==='market-order'||step.type==='limit-order')){
+    const selected=entry.data.side;const direction=selected==='opposite'?(input.side==='buy'?'sell':'buy'):selected==='buy'||selected==='sell'?selected:input.side;
+    if(direction!==input.side)throw new Error('Workflow-scoped protection requires all entries in the reviewed direction');
+  }
+}
+function workflowProtection(graph:WorkflowGraph,input:OrderDraft,state:GraphExecutionState):{size:string;price:string}{
+  if(input.reduceOnly)throw new Error('Workflow-scoped protection requires opening entries, not reduce-only entries');
+  let size=new Decimal(0),notional=new Decimal(0);
+  for(const entry of graph.steps.filter(step=>step.type==='market-order'||step.type==='limit-order')){
+    const selected=entry.data.side;const direction=selected==='opposite'?(input.side==='buy'?'sell':'buy'):selected==='buy'||selected==='sell'?selected:input.side;
+    if(direction!==input.side)throw new Error('Workflow-scoped protection requires all entries in the reviewed direction');
+    const fill=state.nodes[entry.id];if(fill.status!=='executed'||!fill.filledSize||!fill.fillPrice)throw new Error(`Workflow-scoped protection requires verified fills for every entry: ${entry.id}`);
+    const quantity=new Decimal(fill.filledSize),price=new Decimal(fill.fillPrice);if(!quantity.isFinite()||quantity.lte(0)||!price.isFinite()||price.lte(0))throw new Error('Workflow fill evidence is invalid');
+    size=size.plus(quantity);notional=notional.plus(quantity.mul(price));
+  }
+  if(size.lte(0))throw new Error('Workflow-scoped protection has no verified opening fills');return {size:size.toFixed(),price:notional.div(size).toFixed()};
+}
 /** Durable DAG tick: waits never block unrelated branches, and submission is journalled first. */
 export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,state:GraphExecutionState,callbacks:GraphCallbacks):Promise<void>{
+  validateWorkflowInput(graph,input);
   const attachedGroups=graph.oco&&input.venue==='hyperliquid'?hyperliquidOcoTopologies(graph):[];
   for(let changed=true;changed&&callbacks.active();){changed=false;
     for(const step of graph.steps){
@@ -92,7 +125,7 @@ export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,sta
       const node=state.nodes[step.id];if(terminal(node)||node.status==='submitting')continue;
       if(node.status==='waiting-fill'){
         if(!callbacks.reconcile||!node.orderId)continue;
-        const result=await callbacks.reconcile(step.id,node.orderId);node.status=result.status;node.error=result.error;if(result.fillSize)node.effectiveSize=result.fillSize;if(result.fillPrice)node.entryPrice=result.fillPrice;await callbacks.save();if(result.status==='waiting-fill')continue;changed=true;
+        const result=await callbacks.reconcile(step.id,node.orderId);node.status=result.status;node.error=result.error;recordFill(node,result);await callbacks.save();if(result.status==='waiting-fill')continue;changed=true;
         // Newly resolved fills propagate on the next pass, never submit again.
         continue;
       }
@@ -118,6 +151,7 @@ export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,sta
           node.status='executed';await callbacks.save();changed=true;continue;
         }
         const protective=step.type==='take-profit'||step.type==='stop-loss';
+        if(protective&&step.data.sizeScope==='workflow'){const coverage=workflowProtection(graph,input,state);node.effectiveSize=coverage.size;node.entryPrice=coverage.price;}
         if(protective&&input.marketType==='spot')throw new Error('Spot protective trigger orders are not verified for this connector');
         const amount=protective?new Decimal(node.effectiveSize).mul(String(step.data.sizePercent)).div(100):step.data.sizeMode==='absolute'?new Decimal(String(step.data.size)):new Decimal(node.effectiveSize).mul(String(step.data.size)).div(100);
         const size=amount.toDecimalPlaces(market.sizeDecimals,Decimal.ROUND_DOWN).toFixed();if(new Decimal(size).lte(0))throw new Error('Workflow size rounds to zero');if(!protective&&step.data.sizeMode==='absolute'&&!amount.eq(size))throw new Error('Fixed workflow size violates exchange precision; revise the reviewed size');
@@ -135,7 +169,7 @@ export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,sta
           const tp=attachedExit(graph.steps.find(item=>item.id===attached.tp)!,order,market),sl=attachedExit(graph.steps.find(item=>item.id===attached.sl)!,order,market);
           node.status='submitting';tpState.status='submitting';slState.status='submitting';await callbacks.save();if(!callbacks.active())return;
           const result=await callbacks.submitEntryBracket([step.id,attached.tp,attached.sl],[order,tp,sl]);
-          node.status=result.status;node.orderId=result.entryOrderId??(result.status==='waiting-fill'?undefined:result.orderId);node.error=result.error;if(result.fillSize)node.effectiveSize=result.fillSize;if(result.fillPrice)node.entryPrice=result.fillPrice;
+          node.status=result.status;node.orderId=result.entryOrderId??(result.status==='waiting-fill'?undefined:result.orderId);node.error=result.error;recordFill(node,result);
           if(result.status==='waiting-fill'&&!result.entryOrderId){node.status='unverified';node.error='Native bracket entry acknowledgment has no entry order ID';}
           for(const exitState of [tpState,slState]){exitState.status=node.status==='unverified'?'unverified':'executed';exitState.orderId=result.orderId;exitState.effectiveSize=tp.size;exitState.entryPrice=order.price??market.price;exitState.error=node.error;}
           await callbacks.save();changed=true;continue;
@@ -146,7 +180,7 @@ export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,sta
         if(protective&&graph.oco){
           if(!callbacks.submitBracket)throw new Error('Native OCO execution is unavailable');
           const parents=parentSignature(graph,step.id);
-          const pairs=graph.steps.filter(other=>other.type===(step.type==='take-profit'?'stop-loss':'take-profit')&&other.data.sizePercent===step.data.sizePercent&&parentSignature(graph,other.id)===parents);
+          const pairs=graph.steps.filter(other=>other.type===(step.type==='take-profit'?'stop-loss':'take-profit')&&other.data.sizePercent===step.data.sizePercent&&(other.data.sizeScope??'parent')===(step.data.sizeScope??'parent')&&parentSignature(graph,other.id)===parents);
           if(pairs.length!==1)throw new Error('OCO pairing is ambiguous or incomplete');
           const paired=pairs[0];
           siblingId=paired.id;sibling=state.nodes[paired.id];if(sibling.status!=='pending')throw new Error('OCO sibling is not pending');
@@ -157,7 +191,7 @@ export async function tickWorkflowGraph(graph:WorkflowGraph,input:OrderDraft,sta
           sibling.effectiveSize=node.effectiveSize;sibling.entryPrice=node.entryPrice;sibling.status='submitting';
         }
         node.status='submitting';await callbacks.save();if(!callbacks.active())return;
-        const result=sibling&&siblingId&&siblingOrder?await callbacks.submitBracket!([step.id,siblingId],[order,siblingOrder]):await callbacks.submit(step.id,order);node.status=result.status;node.orderId=result.orderId;node.error=result.error;if(result.fillSize)node.effectiveSize=result.fillSize;if(result.fillPrice)node.entryPrice=result.fillPrice;
+        const result=sibling&&siblingId&&siblingOrder?await callbacks.submitBracket!([step.id,siblingId],[order,siblingOrder]):await callbacks.submit(step.id,order);node.status=result.status;node.orderId=result.orderId;node.error=result.error;recordFill(node,result);
         if(sibling){sibling.status=result.status;sibling.orderId=result.orderId;sibling.error=result.error;}
         await callbacks.save();changed=true;
       }catch(error){node.status=node.status==='submitting'?'unverified':'failed';node.error=error instanceof Error?error.message:'Workflow step failed';for(const pending of Object.values(state.nodes))if(pending.status==='submitting'){pending.status='unverified';pending.error=node.error;}await callbacks.save();changed=true;}

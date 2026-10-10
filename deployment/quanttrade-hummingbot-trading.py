@@ -19,6 +19,7 @@ request state across service restarts; the in-process ledger is a second guard.
 import asyncio
 import hashlib
 import json
+import time
 from decimal import Decimal
 from typing import Literal
 
@@ -125,6 +126,122 @@ class SnapshotRequest(BaseModel):
     history_cursor: str | None = Field(default=None, max_length=500)
     fills_cursor: str | None = Field(default=None, max_length=500)
     start_time: StrictInt = Field(default=0, ge=0)
+
+
+class NativeOrderLeg(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    side: Literal['buy', 'sell']
+    type: Literal['market', 'limit', 'sl-market', 'sl-limit', 'tp-market', 'tp-limit', 'twap']
+    amount: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    trigger_price: str | None = Field(default=None, max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    reduce_only: StrictBool = False
+    time_in_force: Literal['ioc', 'gtt', 'post-only'] = 'ioc'
+    expiry: StrictInt | None = Field(default=None, ge=1)
+    duration_seconds: StrictInt | None = Field(default=None, ge=300, le=2592000)
+
+
+class NativeOrderRequest(Scope):
+    connector_name: Literal['lighter_perpetual'] = 'lighter_perpetual'
+    grouping: Literal['single', 'oto', 'oco', 'otoco'] = 'single'
+    legs: list[NativeOrderLeg] = Field(min_length=1, max_length=3)
+    leverage: StrictInt | None = Field(default=None, ge=1, le=125)
+    margin_mode: Literal['cross', 'isolated'] | None = None
+
+
+async def lighter_native_orders(connector, dto, order_factory=None, now_ms=None):
+    """Submit one reviewed native transaction. Acceptance is never fill proof."""
+    counts = {'single': 1, 'oto': 2, 'oco': 2, 'otoco': 3}
+    types = {'limit': 0, 'market': 1, 'sl-market': 2, 'sl-limit': 3, 'tp-market': 4, 'tp-limit': 5, 'twap': 6}
+    tifs = {'ioc': 0, 'gtt': 1, 'post-only': 2}
+    if len(dto.legs) != counts[dto.grouping]:
+        raise ValueError('Native grouping has an invalid number of orders')
+    if (dto.leverage is None) != (dto.margin_mode is None):
+        raise ValueError('Leverage and margin mode must be reviewed together')
+    parent = dto.legs[0]
+    if any(leg.type.startswith(('sl-', 'tp-')) and leg.trigger_price is None for leg in dto.legs):
+        raise ValueError('Conditional native orders require an explicit trigger price')
+    children = dto.legs[1:] if dto.grouping in ['oto', 'otoco'] else []
+    if children and parent.type not in ['market', 'limit']:
+        raise ValueError('Native attached protection requires a market or limit entry')
+    if dto.leverage is not None and (dto.grouping == 'oco' or parent.reduce_only):
+        raise ValueError('Leverage changes require an opening parent order')
+    for child in children:
+        if Decimal(child.amount) != 0 or not child.reduce_only or child.side == parent.side or child.type not in ['sl-market', 'sl-limit', 'tp-market', 'tp-limit']:
+            raise ValueError('Native attached exits require zero amount, reduce-only and opposite sides')
+    siblings = dto.legs if dto.grouping == 'oco' else children if dto.grouping == 'otoco' else []
+    if siblings:
+        if {leg.type.split('-')[0] for leg in siblings} != {'tp', 'sl'} or len({leg.side for leg in siblings}) != 1 or len({Decimal(leg.amount) for leg in siblings}) != 1 or not all(leg.reduce_only for leg in siblings):
+            raise ValueError('Native OCO requires matching reduce-only TP and SL exits')
+        tp = next(leg for leg in siblings if leg.type.startswith('tp'))
+        sl = next(leg for leg in siblings if leg.type.startswith('sl'))
+        if not (positive_decimal(tp.trigger_price) > positive_decimal(sl.trigger_price) if tp.side == 'sell' else positive_decimal(tp.trigger_price) < positive_decimal(sl.trigger_price)):
+            raise ValueError('Native OCO thresholds contradict the closing side')
+    await connector._ensure_account_ready()
+    market = connector.market_info_for_trading_pair(dto.trading_pair)
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    wires, ids = [], []
+    for index, leg in enumerate(dto.legs):
+        tied = leg in children or dto.grouping == 'oco' and Decimal(leg.amount) == 0
+        amount = Decimal(leg.amount)
+        size = 0 if tied else units(leg.amount, market.size_decimals)
+        price = units(leg.price, market.price_decimals)
+        conditional = leg.type.startswith(('sl-', 'tp-'))
+        trigger_price = units(leg.trigger_price, market.price_decimals) if conditional else 0
+        if not conditional and leg.trigger_price is not None:
+            raise ValueError('Only conditional orders accept trigger prices')
+        if size > (1 << 48) - 1 or price > (1 << 32) - 1 or trigger_price > (1 << 32) - 1:
+            raise ValueError('Native order exceeds integer bounds')
+        if not tied and (amount < market.min_base_amount or amount * Decimal(leg.price) < market.min_quote_amount):
+            raise ActionRejected('Native order is below the market minimum')
+        expiry = -1 if leg.expiry is None else leg.expiry
+        if leg.expiry is not None and not 300000 <= leg.expiry - now_ms <= 2592000000:
+            raise ValueError('Expiry must be between five minutes and thirty days')
+        if leg.type == 'market' or leg.type == 'limit' and leg.time_in_force == 'ioc':
+            if leg.expiry is not None:
+                raise ValueError('Immediate entry orders cannot have an expiry')
+            expiry = 0
+        if leg.type in ['market', 'sl-market', 'tp-market'] and leg.time_in_force != 'ioc':
+            raise ValueError('Market orders require immediate-or-cancel')
+        if leg.type == 'twap':
+            if dto.grouping != 'single' or leg.time_in_force != 'gtt' or leg.duration_seconds is None or leg.expiry is not None:
+                raise ValueError('TWAP requires standalone GTT and a reviewed duration')
+            expiry = now_ms + leg.duration_seconds * 1000
+            slices = Decimal(leg.duration_seconds) / 30 + 1
+            slice_amount = (Decimal(size) / slices).to_integral_value(rounding='ROUND_FLOOR') / (Decimal(10) ** market.size_decimals)
+            if slice_amount < market.min_base_amount or slice_amount * Decimal(leg.price) < market.min_quote_amount:
+                raise ActionRejected('TWAP slices are below the market minimum')
+        elif leg.duration_seconds is not None:
+            raise ValueError('Only TWAP accepts a duration')
+        client_id = int(hashlib.sha256((dto.request_id + '-native-' + str(index)).encode()).hexdigest()[:12], 16) or 1
+        ids.append(str(client_id))
+        wires.append(dict(MarketIndex=market.market_id, ClientOrderIndex=client_id, BaseAmount=size, Price=price,
+            IsAsk=int(leg.side == 'sell'), Type=types[leg.type], TimeInForce=tifs[leg.time_in_force],
+            ReduceOnly=int(leg.reduce_only), TriggerPrice=trigger_price, OrderExpiry=expiry))
+    if len(set(ids)) != len(ids):
+        raise ValueError('Native client identities collide')
+    if siblings and len({wire['OrderExpiry'] for wire in (wires if dto.grouping == 'oco' else wires[1:])}) != 1:
+        raise ValueError('Native sibling exits must share the same expiry')
+    if children and wires[0]['OrderExpiry'] != 0 and any(wire['OrderExpiry'] != wires[0]['OrderExpiry'] for wire in wires[1:]):
+        raise ValueError('Resting parent and child expiries must match')
+    for index, leg in enumerate(dto.legs):
+        if leg.reduce_only and leg not in children:
+            await verify_exit_position(connector, dto.connector_name, dto.trading_pair, leg.side, leg.amount)
+    if dto.leverage is not None:
+        await leverage(connector, dto.connector_name, dto.trading_pair, dto.leverage, dto.margin_mode)
+    async with connector._tx_lock:
+        if dto.grouping == 'single':
+            wire = wires[0]
+            result = lighter_ack(await connector._signer_client.create_order(market_index=wire['MarketIndex'], client_order_index=wire['ClientOrderIndex'],
+                base_amount=wire['BaseAmount'], price=wire['Price'], is_ask=bool(wire['IsAsk']), order_type=wire['Type'], time_in_force=wire['TimeInForce'],
+                reduce_only=bool(wire['ReduceOnly']), trigger_price=wire['TriggerPrice'], order_expiry=wire['OrderExpiry']))
+        else:
+            if order_factory is None:
+                from lighter.signer_client import CreateOrderTxReq
+                order_factory = CreateOrderTxReq
+            result = lighter_ack(await connector._signer_client.create_grouped_orders(
+                grouping_type={'oto': 1, 'oco': 2, 'otoco': 3}[dto.grouping], orders=[order_factory(**wire) for wire in wires]))
+    return {**result, 'grouping': dto.grouping, 'client_order_ids': ids, 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair}
 
 
 async def hl_asset(connector, pair):
@@ -585,6 +702,11 @@ async def perform(request, dto, operation):
 @router.post('/leverage')
 async def leverage_route(dto: LeverageRequest, request: Request):
     return await perform(request, dto, lambda c: leverage(c, dto.connector_name, dto.trading_pair, dto.leverage, dto.margin_mode))
+
+
+@router.post('/lighter-native-orders')
+async def lighter_native_orders_route(dto: NativeOrderRequest, request: Request):
+    return await perform(request, dto, lambda c: lighter_native_orders(c, dto))
 
 
 @router.post('/margin')

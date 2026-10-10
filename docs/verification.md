@@ -18,3 +18,12 @@ Release 20261006-2 is active on Hetzner. Root/backend36tests pass, native48focus
 
 ## Exchange pair discovery, 6 October 2026
 Native global browse/search now includes complete supported HL/Lighter perpetual catalogs, with venue identity preserved for charts and recent pairs. Thirty focused tests (113 assertions), final native TypeScript, changed-file lint and overlay reverse check pass. Final production build passed; release 20261006-3 deployed. Hosted shell and complete 1,067,434-byte main module verified (SHA-256 matches local build), service active and Nginx config valid. Fixed pre-existing Nginx proxy-temp permission failures by disabling buffering in the QuantTrade vhost; large assets now download completely. Live authenticated feeds returned 178 Hyperliquid and 196 Lighter contracts. Scope is existing standard perpetual connectors; spot/HIP-3 builder catalogs are not included. No real keys or trades used.
+
+
+## Native Lighter execution repair, 10 October 2026
+
+Release `/opt/quanttrade/releases/20261010-8` serves build `5e93f5ae9110-a5d85d6b6c9d4d84`. Root and terminal TypeScript, changed-file ESLint, production build, 156 backend tests, 74 mocked Python extension tests, and 68 focused terminal tests pass. A transient local socket-buffer failure during parallel build/test activity disappeared on the final full test run.
+
+Regressions cover client-ID placeholders, exact native fill totals or owned trade VWAP, the real account `index` field, pagination/deduplication, temporary fill-read failures without entry resubmission, combined verified workflow protection sizing, native signer payloads, grouped exit sizing, exposure limits, approval expiry/account revision, unknown-outcome duplicate prevention, and assistant receipt projection. A post-submission journal-write failure remains uncertain rather than being mislabeled as a pre-submission rejection.
+
+Hetzner checks verified backend tests, private native endpoint guards, public market/feed availability, PRL's 3x limit, operator login/sync, served asset hashes, approval/workflow controls, branding, loaded native SDK methods and identical Python extension hashes. A read-only live Lighter snapshot confirmed the account DTO field name without printing balances or account values. No test orders, model calls, resumed paused plans, or actual signer submissions were used for verification. Native order acceptance is not fill evidence. Existing immutable paused runs are not repaired or replayed automatically.

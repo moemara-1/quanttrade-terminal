@@ -25,6 +25,25 @@ const calculate = (
   })
 
 describe('workflow total margin sizing', () => {
+  test('workflow exit budget uses weighted entry prices rather than the last entry price', () => {
+    const limit = { id: 'b', type: 'limit-order', data: { side: 'inherit', sizeMode: 'percent', size: 100, priceMode: 'absolute', priceValue: 4 } }
+    const exit = { id: 'tp', type: 'take-profit', data: { sizeScope: 'workflow', triggerMode: 'percent', triggerValue: 10, sizePercent: 100, orderType: 'market' } }
+    const result = calculate([trigger, buy('a'), limit, exit], [edge('root', 'a'), edge('a', 'b'), edge('b', 'tp')])
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.maxTotalNotional).toBe('2310')
+  })
+  test('workflow protection sizes all four entries without any preexisting position input', () => {
+    const exits = ['stop-loss', 'take-profit'].map((type) => ({ id: type, type, data: { sizeScope: 'workflow', triggerMode: 'percent', triggerValue: 10, sizePercent: 100, orderType: 'market' } }))
+    const entries = ['a', 'b', 'c', 'd'].map((id) => buy(id))
+    const result = calculate([trigger, ...entries, ...exits], [edge('root', 'a'), edge('a', 'b'), edge('b', 'c'), edge('c', 'd'), ...exits.map((exit) => edge('d', exit.id))])
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.inputSize).toBe('125')
+      expect(result.totalEntryQuote).toBe('1000')
+      expect(result.maxTotalNotional).toBe('3410')
+    }
+    expect(calculate([trigger, ...entries, ...exits], [edge('root', 'a'), edge('a', 'b'), edge('b', 'c'), edge('c', 'd'), ...exits.map((exit) => edge('a', exit.id))]).ok).toBe(false)
+  })
   test('validates each slice against exchange minimums', () => {
     expect(calculate([trigger, buy('a', 1)], [edge('root', 'a')], { minSize: '600' }).ok).toBe(false)
     expect(calculate([trigger, buy('a')], [edge('root', 'a')], { minNotional: '1001' }).ok).toBe(false)

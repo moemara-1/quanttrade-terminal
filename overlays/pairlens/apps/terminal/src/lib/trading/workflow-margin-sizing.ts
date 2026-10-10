@@ -142,7 +142,7 @@ export function sizeWorkflowFromMargin(request: Request): Result {
     for (const step of ordered) {
       const parentId = parents.get(step.id)
       let coefficient = parentId ? coefficients.get(parentId)! : new D(1)
-      const reference = parentId ? referencePrices.get(parentId)! : mark
+      let reference = parentId ? referencePrices.get(parentId)! : mark
       let nextReference = reference
       let price = mark
       if (parentId && afterExit.has(parentId)) afterExit.add(step.id)
@@ -178,6 +178,15 @@ export function sizeWorkflowFromMargin(request: Request): Result {
         quoteCoefficient = quoteCoefficient.plus(coefficient.mul(price))
         entryCount++
       } else if (exitTypes.has(step.type)) {
+        if (step.data.sizeScope !== undefined && !['parent', 'workflow'].includes(String(step.data.sizeScope))) return invalid('Exit size scope is invalid.')
+        if (step.data.sizeScope === 'workflow') {
+          const ancestors = new Set<string>()
+          for (let id = parentId; id; id = parents.get(id)) ancestors.add(id)
+          const entries = graph.steps.filter((node) => entryTypes.has(node.type))
+          if (!entries.length || entries.some((node) => !ancestors.has(node.id))) return invalid('Workflow-scoped protection must follow every workflow entry.')
+          coefficient = coefficientSum
+          reference = quoteCoefficient.div(coefficientSum)
+        }
         if (afterExit.has(step.id))
           return invalid(
             'An exit follows another exit. Its size depends on future fills; review this workflow in the editor.',
@@ -243,11 +252,13 @@ export function sizeWorkflowFromMargin(request: Request): Result {
           .mul(String(step.data.size))
           .div(100)
           .toDecimalPlaces(sizeDecimals, D.ROUND_DOWN)
-      if (exitTypes.has(step.type))
+      if (exitTypes.has(step.type)) {
+        if (step.data.sizeScope === 'workflow') size = graph.steps.filter((node) => entryTypes.has(node.type)).reduce((sum, node) => sum.plus(sizes.get(node.id)!), new D(0))
         size = size
           .mul(String(step.data.sizePercent))
           .div(100)
           .toDecimalPlaces(sizeDecimals, D.ROUND_DOWN)
+      }
       if (
         (entryTypes.has(step.type) || exitTypes.has(step.type)) &&
         size.lte(0)

@@ -61,3 +61,15 @@ test('review rejects spot protective orders and mismatched native siblings', () 
   expect(workflowGraphReviewError('lighter', graph)).toContain('matching')
   expect(workflowGraphReviewError('lighter-spot', { ...graph, oco: false })).toContain('Spot protective')
 })
+
+test('workflow scope requires every entry ancestor and matching OCO scope', () => {
+  const second = { ...entry, id: 'second' }
+  const scoped = exits.map((node) => ({ ...node, data: { ...node.data, sizeScope: 'workflow' } }))
+  const graph = { oco: true, steps: [trigger, entry, second, ...scoped], edges: [{ id: 'first', source: 'trigger', target: 'entry' }, { id: 'second', source: 'entry', target: 'second' }, ...scoped.map((node) => ({ id: node.id, source: 'second', target: node.id }))] }
+  expect(workflowGraphReviewError('lighter', graph)).toBeUndefined()
+  expect(workflowGraphReviewError('hyperliquid', graph)).toContain('own entry')
+  expect(workflowGraphReviewError('lighter', { ...graph, edges: graph.edges.map((edge) => edge.target === 'sl' ? { ...edge, source: 'entry' } : edge) })).toContain('every workflow entry')
+  expect(workflowGraphReviewError('lighter', { ...graph, steps: [...graph.steps.filter((node) => node.id !== 'tp'), { ...scoped[1], data: { ...scoped[1].data, sizeScope: 'parent' } }] })).toContain('matching')
+  expect(workflowOcoReview('lighter', graph)).toContain('verified workflow entry fills')
+  expect(workflowOcoReview('lighter', graph)).toContain('existing position')
+})

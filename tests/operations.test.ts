@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TradingDesk } from '../src/server/trading.ts';
 import { DeskStore } from '../src/server/store.ts';
-import { VenueOperations } from '../src/server/operations.ts';
+import { HummingbotOperations, VenueOperations } from '../src/server/operations.ts';
 
 function setup(fail=false) {
   const store=new DeskStore(':memory:');
@@ -42,4 +42,10 @@ test('market leverage operations reject the current contract cap before invoking
   await assert.rejects(state.operations.execute({...leverage,requestId:'over-market-cap-operation',leverage:50}),/maximum leverage is 40x/);
   assert.equal(state.calls(),0);
  } finally {state.store.close();}
+});
+
+test('native operation reaches the installed Lighter Python route with the exact reviewed payload',async()=>{
+ const payload={request_id:'approved-native-plan',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',grouping:'single',legs:[]};let path='',body='';
+ const client=new HummingbotOperations({url:'http://127.0.0.1:8000',username:'test',password:'test',accountName:'desk'},async(url,init)=>{path=new URL(String(url)).pathname;body=String(init?.body);return new Response(JSON.stringify({status:'accepted'}),{status:200,headers:{'Content-Type':'application/json'}});});
+ await client.perform('native-orders',payload);assert.equal(path,'/quanttrade/trading/lighter-native-orders');assert.deepEqual(JSON.parse(body),payload);
 });

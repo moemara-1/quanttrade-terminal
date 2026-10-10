@@ -14,8 +14,10 @@ import { validateSyncEntries } from './sync-state.ts';
 import type { LiquidationCollector } from './liquidations.ts';
 import type { WorkflowRuns } from './workflows.ts';
 import { parseCredentials } from './connections.ts';
+import type { LighterNativeOrders } from './lighter-native-orders.ts';
 
 interface Services {
+  lighterNativeOrders?:Pick<LighterNativeOrders,'execute'>;
   workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
   liquidations?: Pick<LiquidationCollector,'get'>;
   news?: Pick<NewsService,'get'>;
@@ -150,7 +152,7 @@ export function createApp(services: Services) {
     if (res.locals.role!=='operator') {res.status(403).json({error:'Human operator approval is required for this action'});return;}
     next();
   };
-  app.get('/api/status',(_req,res)=>res.json(desk.status()));
+  app.get('/api/status',(_req,res)=>res.json({...desk.status(),connectionRevisions:{lighter:desk.store.connectionFingerprint(desk.status().accountName,'lighter'),hyperliquid:desk.store.connectionFingerprint(desk.status().accountName,'hyperliquid')}}));
   app.get('/api/sync-state',operator,(_req,res)=>res.json({entries:desk.store.syncEntries()}));
   app.put('/api/sync-state',operator,(req,res)=>{
     const input=z.object({entries:z.unknown()}).strict().parse(req.body);
@@ -225,6 +227,15 @@ export function createApp(services: Services) {
   app.post('/api/terminal/operations',operator,async(req,res)=>{
     if (!services.operations) {res.status(503).json({error:'Exchange operations are unavailable'});return;}
     res.json(await services.operations.execute(req.body));
+  });
+  app.post('/api/terminal/lighter-native-orders',operator,async(req,res)=>{
+    if(!services.lighterNativeOrders){res.status(503).json({error:'Native Lighter execution is unavailable',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh native plan afterwards',submissionAttempted:false});return;}
+    try{res.json(await services.lighterNativeOrders.execute(req.body));}
+    catch(error){
+      const message=error instanceof z.ZodError?error.issues.map(issue=>`${issue.path.join('.')||'request'}: ${issue.message}`).join('; '):error instanceof Error?error.message:'Native order validation failed before submission';
+      res.status(400).json({error:message,submissionAttempted:false});
+    }
   });
   app.post('/api/terminal/snapshot',operator,async(req,res)=>{
     if (!services.operations) {res.status(503).json({error:'Exchange account access is unavailable'});return;}

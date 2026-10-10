@@ -147,7 +147,92 @@ test('post-only limit maps to maker order without changing price',async()=>{
 
 test('workflow fill evidence is scoped to exact account/instrument and never treats accepted or partial orders as filled',async()=>{
   let state='OPEN';
-  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(_url,init)=>{const body=JSON.parse(String(init?.body));assert.deepEqual(body.account_names,['desk']);assert.deepEqual(body.connector_names,['lighter_perpetual']);assert.deepEqual(body.trading_pairs,['PRL-USDC']);return Response.json({data:[{order_id:'entry',account_name:'other',connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',status:'FILLED',filled_amount:'999',average_fill_price:'999'},{order_id:'entry',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',status:state,filled_amount:'9.99',average_fill_price:'1.2345'}],pagination:{has_more:false,next_cursor:null}});});
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{const body=JSON.parse(String(init?.body));if(new URL(String(url)).pathname.endsWith('/snapshot'))return Response.json({connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',open_orders:[],order_history:[],fills:[],account:{accounts:[{account_index:12}]}});assert.deepEqual(body.account_names,['desk']);assert.deepEqual(body.connector_names,['lighter_perpetual']);assert.deepEqual(body.trading_pairs,['PRL-USDC']);return Response.json({data:[{order_id:'entry',account_name:'other',connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',status:'FILLED',filled_amount:'999',average_fill_price:'999'},{order_id:'entry',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',status:state,filled_amount:'9.99',average_fill_price:'1.2345'}],pagination:{has_more:false,next_cursor:null}});});
   const order:OrderDraft={venue:'lighter',symbol:'PRL-USDC',side:'buy',type:'market',size:'10',rationale:'test'};
   assert.deepEqual(await client.orderEvidence(order,'entry'),{status:'pending'});state='PARTIALLY_FILLED';assert.deepEqual(await client.orderEvidence(order,'entry'),{status:'pending'});state='FILLED';assert.deepEqual(await client.orderEvidence(order,'entry'),{status:'filled',fillSize:'9.99',fillPrice:'1.2345'});state='FAILED';assert.equal((await client.orderEvidence(order,'entry')).status,'failed');
+});
+
+test('Lighter filled database row without averages reconciles native quote/base totals instead of throwing',async()=>{
+  const order:OrderDraft={venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'171',rationale:'test'};
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{
+    const body=JSON.parse(String(init?.body));
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[{order_id:'231496392805437',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',status:'FILLED',filled_amount:'171',average_fill_price:null,exchange_order_id:'231496392805437'}],pagination:{has_more:false}});
+    assert.equal(body.account_name,'desk');assert.equal(body.trading_pair,'GRAM-USDC');
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'231496392805437',status:'filled',filled_base_amount:'171',filled_quote_amount:'250.59537'}],fills:[],account:{accounts:[{account_index:12}]},history_next_cursor:null,fills_next_cursor:null});
+  });
+  assert.deepEqual(await client.orderEvidence(order,'231496392805437'),{status:'filled',fillSize:'171',fillPrice:'1.46547'});
+});
+
+test('Lighter missing eventual fill totals remains pending and read-only until later reconciliation',async()=>{
+  let complete=false;const paths:string[]=[];
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+    paths.push(new URL(String(url)).pathname);
+    if(paths.at(-1)?.endsWith('/search'))return Response.json({data:[{order_id:'42',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',status:'FILLED'}],pagination:{has_more:false}});
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'42',status:'filled',filled_base_amount:complete?'2':'0',filled_quote_amount:complete?'3':'0'}],fills:[],account:{accounts:[{account_index:12}]}});
+  });
+  const order:OrderDraft={venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'2',rationale:'test'};
+  assert.deepEqual(await client.orderEvidence(order,'42'),{status:'pending'});complete=true;
+  assert.deepEqual(await client.orderEvidence(order,'42'),{status:'filled',fillSize:'2',fillPrice:'1.5'});
+  assert(paths.every(path=>path.endsWith('/search')||path.endsWith('/snapshot')));
+});
+
+test('Lighter native fills reconcile exact owner, native ID and market across pages with deduplicated VWAP',async()=>{
+  let snapshotReads=0;
+  const fill=(id:number,size:string,price:string,overrides:Record<string,unknown>={})=>({trade_id:id,bid_account_id:12,bid_id_str:'987',market_id:9,size,price,...overrides});
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[],pagination:{has_more:false}});
+    const body=JSON.parse(String(init?.body));snapshotReads++;
+    if(snapshotReads===2)assert.equal(body.fills_cursor,'next');
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'42',market_id:9,status:'filled',filled_base_amount:'3'}],fills:snapshotReads===1?[fill(1,'1','2'),fill(99,'9','999',{bid_account_id:13}),fill(98,'9','999',{bid_id_str:'986'}),fill(97,'9','999',{market_id:8})]:[fill(1,'1','2'),fill(2,'2','5')],account:{accounts:[{account_index:12}]},fills_next_cursor:snapshotReads===1?'next':null});
+  });
+  const order:OrderDraft={venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'};
+  assert.deepEqual(await client.orderEvidence(order,'42'),{status:'filled',fillSize:'3',fillPrice:'4'});assert.equal(snapshotReads,2);
+});
+
+test('Lighter partial fills and cancelled partials never advance the requested complete entry',async()=>{
+  let status='open';
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[],pagination:{has_more:false}});
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[{exchange_order_id:'987',client_order_index:'42',market_id:9,status,filled_base_amount:'1',filled_quote_amount:'2'}],order_history:[],fills:[{trade_id:1,bid_account_id:12,bid_id_str:'987',market_id:9,size:'1',price:'2'}],account:{accounts:[{account_index:12}]}});
+  });
+  const order:OrderDraft={venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'};
+  assert.deepEqual(await client.orderEvidence(order,'42'),{status:'pending'});status='canceled-not-enough-liquidity';
+  const result=await client.orderEvidence(order,'42');assert.equal(result.status,'failed');assert.match(result.error??'',/partial fills/);
+});
+
+test('Lighter native completion overrides stale partial database status without submitting another order',async()=>{
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[{order_id:'42',exchange_order_id:'987',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',status:'PARTIALLY_FILLED',filled_amount:'1',average_fill_price:'2'}],pagination:{has_more:false}});
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'42',status:'filled',filled_base_amount:'3',filled_quote_amount:'6'}],fills:[],account:{accounts:[{account_index:12}]}});
+  });
+  assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'},'42'),{status:'filled',fillSize:'3',fillPrice:'2'});
+});
+
+test('Lighter connector client ID placeholder is replaced by the native ID only through exact client history',async()=>{
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[{order_id:'42',exchange_order_id:'42',account_name:'desk',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',status:'FILLED'}],pagination:{has_more:false}});
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'42',status:'filled',filled_base_amount:'3',filled_quote_amount:'6'}],fills:[],account:{accounts:[{account_index:12}]}});
+  });
+  assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'},'42'),{status:'filled',fillSize:'3',fillPrice:'2'});
+});
+
+test('Lighter native sell identity can be found on a later history page without using a position as proof',async()=>{
+  let page=0;
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{
+    if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[],pagination:{has_more:false}});
+    page++;const body=JSON.parse(String(init?.body));if(page===2)assert.equal(body.history_cursor,'history-2');
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:page===1?[]:[{exchange_order_id:'987',market_id:9,status:'filled',filled_base_amount:'3'}],fills:page===1?[]:[{trade_id:1,ask_account_id:12,ask_id_str:'987',market_id:9,size:'3',price:'2'}],account:{accounts:[{index:12,positions:[{size:'999'}]}]},history_next_cursor:page===1?'history-2':null});
+  });
+  assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'sell',type:'market',size:'3',rationale:'test'},'native:lighter:987'),{status:'filled',fillSize:'3',fillPrice:'2'});assert.equal(page,2);
+});
+
+test('Lighter ambiguous client mappings and looping pagination remain unverified',async()=>{
+  for(const ambiguous of [true,false]){
+    let reads=0;
+    const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+      if(new URL(String(url)).pathname.endsWith('/search'))return Response.json({data:[],pagination:{has_more:false}});reads++;
+      return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:ambiguous?[{client_order_index:'42',exchange_order_id:'987',status:'filled',filled_base_amount:'3',filled_quote_amount:'6'},{client_order_index:'42',exchange_order_id:'988',status:'filled',filled_base_amount:'3',filled_quote_amount:'6'}]:[],fills:[],account:{accounts:[{account_index:12}]},history_next_cursor:'same'});
+    });
+    assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'},'42'),{status:'pending'});assert.equal(reads,ambiguous?1:2);
+  }
 });

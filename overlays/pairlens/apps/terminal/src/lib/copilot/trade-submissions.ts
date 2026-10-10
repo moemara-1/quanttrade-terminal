@@ -4,7 +4,9 @@ export type TradeSubmission = {
   pair: string
   credentialId?: string
   mode: 'paper' | 'live'
-  status: 'submitting' | 'simulated' | 'submitted' | 'unverified'
+  status: 'submitting' | 'simulated' | 'submitted' | 'unverified' | 'blocked'
+  nativeClientOrderIds?: Array<string>
+  txHash?: string
   orderId?: string
   error?: string
   recordedAt: number

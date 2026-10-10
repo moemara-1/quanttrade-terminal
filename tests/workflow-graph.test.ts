@@ -95,3 +95,54 @@ test('Hyperliquid finite graphs permit separate native entry brackets across par
   const parallel=workflowGraphSchema.parse({...graph,steps:graph.steps.filter(step=>step.id!=='wait'),edges:[...graph.edges.filter(edge=>edge.source!=='wait'&&edge.target!=='wait'),edge('fork','b','branch-1')]});const parallelState=createGraphState(parallel,hlInput);submitted.length=0;await tickWorkflowGraph(parallel,hlInput,parallelState,callbacks);assert.deepEqual(submitted,['a','b']);
   assert.throws(()=>hyperliquidOcoTopologies({...graph,steps:graph.steps.map(step=>step.id==='atp'?{...step,data:{...step.data,sizePercent:50}}:step)}),/100%/);
 });
+
+test('workflow scope protects four verified fills at their weighted price, not the last slice',async()=>{
+  const steps=[node('t','trigger'),...Array.from({length:4},(_,i)=>node('e'+i,'market-order',{...buy,sizeMode:'absolute',size:171})),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:'workflow'})];
+  const graph=workflowGraphSchema.parse({steps,edges:[edge('t','e0'),edge('e0','e1'),edge('e1','e2'),edge('e2','e3'),edge('e3','tp')]});
+  const state=createGraphState(graph,input);const exits:OrderDraft[]=[];
+  await tickWorkflowGraph(graph,input,state,{now:0,active:()=>true,market:async()=>market,save:()=>{},submit:async(id,order)=>{if(id==='tp'){exits.push(order);return {status:'executed'};}return {status:'executed',fillSize:'171',fillPrice:String(100+Number(id.slice(1))*10)};}});
+  assert.equal(exits[0]?.size,'684');assert.equal(exits[0]?.trigger?.triggerPrice,'120.75');assert.equal(state.nodes.e0.filledSize,'171');assert.equal(state.nodes.e3.fillPrice,'130');
+});
+
+test('workflow scope never guesses fill quantities from effective size and blocks incomplete or mixed entries',async()=>{
+  for(const failure of ['missing','waiting','partial']){
+    const graph=workflowGraphSchema.parse({steps:[node('t','trigger'),node('a','market-order',buy),node('b','market-order',{...buy,...(failure==='opposite'?{side:'opposite'}:{})}),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:'workflow'})],edges:[edge('t','a'),edge('a','b'),edge('b','tp')]});
+    const state=createGraphState(graph,input);let exits=0;
+    await tickWorkflowGraph(graph,{...input,...(failure==='reduce-only'?{reduceOnly:true}:{})},state,{now:0,active:()=>true,market:async()=>market,save:()=>{},submit:async(id)=>{if(id==='tp'){exits++;return {status:'executed'};}return id==='b'&&failure==='waiting'?{status:'waiting-fill',orderId:'b'}:failure==='missing'?{status:'executed'}:{status:'executed',fillSize:failure==='partial'&&id==='b'?'4':'10',fillPrice:'100'};}});
+    assert.equal(exits,failure==='partial'?1:0);
+    if(failure==='partial')assert.equal(state.nodes.tp.effectiveSize,'14');
+  }
+});
+
+test('workflow scope must follow every entry and cannot pair with a parent-scoped OCO exit',()=>{
+  const graph={steps:[node('t','trigger'),node('a','market-order',buy),node('b','market-order',buy),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:'workflow'})],edges:[edge('t','a'),edge('t','b'),edge('a','tp')]};
+  assert.equal(workflowGraphSchema.safeParse(graph).success,false);
+  const paired={...graph,oco:true,steps:[...graph.steps,node('sl','stop-loss',{triggerMode:'percent',triggerValue:3,sizePercent:100,orderType:'market'})],edges:[edge('t','a'),edge('a','b'),edge('b','tp'),edge('b','sl')]};
+  assert.equal(workflowGraphSchema.safeParse(paired).success,false);
+});
+
+test('workflow-scoped OCO uses persisted reconciled partial fills and preserves default parent sizing',async()=>{
+  for(const scope of ['workflow','parent']){
+    const graph=workflowGraphSchema.parse({oco:true,steps:[node('t','trigger'),node('a','market-order',{...buy,sizeMode:'absolute',size:171}),node('b','market-order',{...buy,sizeMode:'absolute',size:171}),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:scope}),node('sl','stop-loss',{triggerMode:'percent',triggerValue:3,sizePercent:100,orderType:'market',sizeScope:scope})],edges:[edge('t','a'),edge('a','b'),edge('b','tp'),edge('b','sl')]});
+    let state=createGraphState(graph,input);let filled=false;const brackets:OrderDraft[][]=[];
+    const callbacks:GraphCallbacks={now:0,active:()=>true,market:async()=>market,save:()=>{},submit:async(id)=>id==='a'?{status:'executed',fillSize:'171',fillPrice:'100'}:{status:'waiting-fill',orderId:'b-id'},reconcile:async()=>filled?{status:'executed',fillSize:'80',fillPrice:'120'}:{status:'waiting-fill',fillSize:'40',fillPrice:'120'},submitBracket:async(_ids,orders)=>{brackets.push(orders);return {status:'executed',orderId:'oco'};}};
+    await tickWorkflowGraph(graph,input,state,callbacks);assert.equal(brackets.length,0);assert.equal(state.nodes.b.filledSize,undefined);
+    state=JSON.parse(JSON.stringify(state));filled=true;await tickWorkflowGraph(graph,input,state,callbacks);
+    assert.equal(brackets.length,1);assert.equal(brackets[0][0].size,scope==='workflow'?'251':'80');assert.equal(brackets[0][1].size,brackets[0][0].size);assert.equal(brackets[0][0].trigger?.triggerPrice,scope==='workflow'?'111.69':'126');assert.equal(state.nodes.b.filledSize,'80');
+    await tickWorkflowGraph(graph,input,state,callbacks);assert.equal(brackets.length,1);
+  }
+});
+
+test('workflow protection fails safely when an approved entry branch was skipped',async()=>{
+  const graph=workflowGraphSchema.parse({steps:[node('t','trigger'),node('a','market-order',buy),node('c','condition',{conditionType:'price-above',value:200}),node('b','market-order',buy),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:'workflow'})],edges:[edge('t','a'),edge('a','c'),edge('c','b','pass'),edge('a','tp'),edge('b','tp')]});
+  const state=createGraphState(graph,input);let exits=0;
+  await tickWorkflowGraph(graph,input,state,{now:0,active:()=>true,market:async()=>market,save:()=>{},submit:async(id)=>{if(id==='tp')exits++;return {status:'executed',fillSize:'10',fillPrice:'100'};}});
+  assert.equal(state.nodes.b.status,'skipped');assert.equal(state.nodes.tp.status,'failed');assert.match(state.nodes.tp.error??'',/verified fills for every entry/);assert.equal(exits,0);
+});
+
+test('workflow input validation rejects mixed direction and reduce-only before any entry submission',async()=>{
+  for(const reduceOnly of [false,true]){
+    const graph=workflowGraphSchema.parse({steps:[node('t','trigger'),node('a','market-order',{...buy,...(!reduceOnly?{side:'opposite'}:{})}),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',sizeScope:'workflow'})],edges:[edge('t','a'),edge('a','tp')]});
+    let calls=0;await assert.rejects(tickWorkflowGraph(graph,{...input,reduceOnly},createGraphState(graph,input),{now:0,active:()=>true,market:async()=>market,save:()=>{},submit:async()=>{calls++;return {status:'executed',fillSize:'10',fillPrice:'100'};}}),/opening entries|reviewed direction/);assert.equal(calls,0);
+  }
+});

@@ -150,6 +150,59 @@ export class HummingbotExecution implements ExecutionClient {
     const [positions,orders] = await Promise.all([this.allPages('/trading/positions',filters),this.allPages('/trading/orders/active',filters)]);
     return {positions,orders};
   }
+  private async lighterEvidence(order:OrderDraft,orderId:string,exchangeId?:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
+    const schema=z.object({connector_name:z.literal('lighter_perpetual'),trading_pair:z.literal(order.symbol),open_orders:z.array(z.record(z.unknown())),order_history:z.array(z.record(z.unknown())),fills:z.array(z.record(z.unknown())),account:z.object({accounts:z.array(z.record(z.unknown()))}),history_next_cursor:z.string().nullable().optional(),fills_next_cursor:z.string().nullable().optional()});
+    const numeric=(value:unknown):Decimal|undefined=>{
+      if(typeof value!=='string'&&typeof value!=='number')return undefined;
+      if(!/^(?:\d+)(?:\.\d+)?$/.test(String(value)))return undefined;
+      const decimal=new Decimal(value);return decimal.isFinite()&&decimal.gt(0)?decimal:undefined;
+    };
+    const identity=(value:unknown):string|undefined=>typeof value==='string'&&/^\d+$/.test(value)?value:typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?String(value):undefined;
+    const nativePrefix='native:lighter:',clientPrefix='native-client:lighter:';
+    const clientId=orderId.startsWith(clientPrefix)?orderId.slice(clientPrefix.length):orderId.startsWith(nativePrefix)?undefined:orderId;
+    // Hummingbot's Lighter _place_order initially returns the client index as
+    // exchange_order_id. It is not a native ID until account history maps it.
+    let nativeId=(exchangeId!==orderId?exchangeId:undefined)??(orderId.startsWith(nativePrefix)?orderId.slice(nativePrefix.length):undefined);
+    const rows:Record<string,unknown>[]=[],trades:Record<string,unknown>[]=[];
+    let historyCursor:string|undefined,fillsCursor:string|undefined;
+    const historySeen=new Set<string>(),fillsSeen=new Set<string>();
+    let accounts:Record<string,unknown>[]=[];
+    for(let page=0;page<100;page++){
+      const result=schema.parse(await this.post('/quanttrade/trading/snapshot',{account_name:this.config.accountName,connector_name:'lighter_perpetual',trading_pair:order.symbol,...(historyCursor?{history_cursor:historyCursor}:{}),...(fillsCursor?{fills_cursor:fillsCursor}:{})}));
+      accounts=result.account.accounts;rows.push(...result.open_orders,...result.order_history);trades.push(...result.fills);
+      const matches=rows.filter(row=>(nativeId&&identity(row.exchange_order_id)===nativeId)||(clientId&&identity(row.client_order_index)===clientId));
+      const nativeIds=new Set(matches.map(row=>identity(row.exchange_order_id)).filter((id):id is string=>Boolean(id)));
+      if(nativeIds.size>1||(nativeId&&nativeIds.size===1&&!nativeIds.has(nativeId)))return {status:'pending'};
+      if(!nativeId&&nativeIds.size===1)nativeId=[...nativeIds][0];
+      const row=matches.find(item=>String(item.status).toLowerCase()==='filled')??matches.at(-1);
+      const status=String(row?.status??'').toLowerCase();
+      if(status==='failed'||status==='rejected'||status==='canceled'||status==='cancelled'||status.startsWith('canceled-'))return {status:'failed',error:`Reviewed order is ${status}; dependent workflow steps stopped. Check any partial fills before preparing another trade.`};
+      if(status==='filled'){
+        const size=numeric(row?.filled_base_amount),quote=numeric(row?.filled_quote_amount);
+        if(size&&quote&&size.lte(order.size))return {status:'filled',fillSize:size.toFixed(),fillPrice:quote.div(size).toFixed()};
+      }
+      const owner=accounts.length===1?identity(accounts[0]?.index??accounts[0]?.account_index):undefined;
+      const market=identity(row?.market_id??row?.market_index);
+      const seen=new Set<string>();let size=new Decimal(0),notional=new Decimal(0);
+      if(owner&&nativeId){
+        const side=order.side==='buy'?'bid':'ask';
+        for(const trade of trades){
+          if(identity(trade[side+'_account_id'])!==owner||identity(trade[side+'_id_str']??trade[side+'_id'])!==nativeId||(market&&identity(trade.market_id)!==market))continue;
+          const id=identity(trade.trade_id),amount=numeric(trade.size),price=numeric(trade.price);
+          if(!id||!amount||!price)return {status:'pending'};
+          if(seen.has(id))continue;seen.add(id);size=size.plus(amount);notional=notional.plus(amount.mul(price));
+        }
+        const expected=status==='filled'?numeric(row?.filled_base_amount):new Decimal(order.size);
+        if(expected&&size.eq(expected)&&size.gt(0)&&size.lte(order.size)&&(status==='filled'||size.eq(order.size)))return {status:'filled',fillSize:size.toFixed(),fillPrice:notional.div(size).toFixed()};
+      }
+      const nextHistory=result.history_next_cursor??undefined,nextFills=result.fills_next_cursor??undefined;
+      if(!nextHistory&&!nextFills)return {status:'pending'};
+      if((nextHistory&&historySeen.has(nextHistory))||(nextFills&&fillsSeen.has(nextFills)))return {status:'pending'};
+      if(nextHistory)historySeen.add(nextHistory);if(nextFills)fillsSeen.add(nextFills);
+      historyCursor=nextHistory;fillsCursor=nextFills;
+    }
+    return {status:'pending'};
+  }
   async orderEvidence(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
     const connector=order.marketType==='spot'?order.venue:connectors[order.venue];
     const pair=order.venue==='hyperliquid'&&order.marketType!=='spot'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;
@@ -160,12 +213,12 @@ export class HummingbotExecution implements ExecutionClient {
     }
     const history=await this.allPages('/trading/orders/search',{account_names:[this.config.accountName],connector_names:[connector],trading_pairs:[pair],limit:100});
     const row=history.data.find(item=>item.order_id===orderId&&item.account_name===this.config.accountName&&item.connector_name===connector&&item.trading_pair===pair);
-    if(!row)return {status:'pending'};
+    if(!row)return order.venue==='lighter'&&order.marketType!=='spot'?this.lighterEvidence(order,orderId):{status:'pending'};
     const status=String(row.status).toUpperCase();
     if(['FAILED','CANCELED','CANCELLED'].includes(status))return {status:'failed',error:`Reviewed order is ${status.toLowerCase()}; dependent workflow steps stopped`};
-    if(status!=='FILLED')return {status:'pending'};
+    if(status!=='FILLED')return order.venue==='lighter'&&order.marketType!=='spot'?this.lighterEvidence(order,orderId,typeof row.exchange_order_id==='string'?row.exchange_order_id:undefined):{status:'pending'};
     const size=new Decimal(String(row.filled_amount??'0')),price=new Decimal(String(row.average_fill_price??'0'));
-    if(!size.isFinite()||!size.gt(0)||!price.isFinite()||!price.gt(0))throw new Error('Confirmed fill amount or price is unavailable; dependents remain blocked');
+    if(!size.isFinite()||!size.gt(0)||!price.isFinite()||!price.gt(0))return order.venue==='lighter'&&order.marketType!=='spot'?this.lighterEvidence(order,orderId,typeof row.exchange_order_id==='string'?row.exchange_order_id:undefined):{status:'pending'};
     return {status:'filled',fillSize:size.toFixed(),fillPrice:price.toFixed()};
   }
 }

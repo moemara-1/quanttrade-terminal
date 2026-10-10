@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { orderSchema, type TradingDesk } from './trading.ts';
-import {workflowGraphSchema,hyperliquidOcoTopologies,createGraphState,tickWorkflowGraph,type GraphExecutionState,type GraphNodeState,type GraphOrderResult} from './workflow-graph.ts';
+import {workflowGraphSchema,validateWorkflowInput,hyperliquidOcoTopologies,createGraphState,tickWorkflowGraph,type GraphExecutionState,type GraphNodeState,type GraphOrderResult} from './workflow-graph.ts';
 import type {OrderDraft} from '../shared/types.ts';
 
 const positive=z.string().max(40).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).refine(value=>new Decimal(value).gt(0));
@@ -57,6 +57,7 @@ export class WorkflowRuns {
     if(existing){const run=JSON.parse(String(existing.body)) as WorkflowRun;if(run.fingerprint!==fingerprint)throw new Error('Approval ID belongs to a different workflow plan');return run;}
     if(input.proposedAt>this.clock()||this.clock()-input.proposedAt>180000)throw new Error('Workflow approval expired; prepare a fresh plan');
     if(this.desk.status().halted)throw new Error('Execution is halted');
+    if(input.plan.graph&&input.plan.input)validateWorkflowInput(input.plan.graph,input.plan.input);
     if(input.plan.graph?.oco&&input.plan.input?.venue==='hyperliquid')hyperliquidOcoTopologies(input.plan.graph);
     if(input.plan.accountName!==this.desk.status().accountName)throw new Error('Reviewed workflow account no longer matches the execution account');
     if(this.desk.modeFor((input.plan.input??input.plan.steps![0].order).venue)!==input.plan.mode)throw new Error('Reviewed workflow mode no longer matches the exchange');
@@ -82,6 +83,10 @@ export class WorkflowRuns {
     const save=()=>{const current=this.get(run.id);current.graphState=state;current.states=graph.steps.map(step=>({nodeId:step.id,status:state.nodes[step.id].status,orderId:state.nodes[step.id].orderId,error:state.nodes[step.id].error}));if(Object.values(state.nodes).some(node=>node.status==='failed'||node.status==='unverified')){if(current.status==='active')current.status='paused';current.error=Object.values(state.nodes).find(node=>node.error)?.error??'Workflow execution unverified';}this.save(current);};
     const authorization=()=>{if(this.desk.status().halted||run.plan.accountName!==this.desk.status().accountName||run.plan.mode!==this.desk.modeFor(input.venue))throw new Error('Execution halted or reviewed workflow account/mode changed');};
     const budget=async(orders:OrderDraft[])=>{authorization();let total=new Decimal(0);for(const order of orders)total=total.plus((await this.desk.preview(order)).notional);if(new Decimal(this.get(run.id).spent).plus(total).gt(run.plan.maxTotalNotional))throw new Error('Workflow exceeds its approved total notional budget');if(!active())throw new Error('Workflow is no longer active');return total;};
+    const readFill=async(order:OrderDraft,id:string)=>{
+      try{return await this.desk.orderEvidence(order,id,run.plan.mode);}
+      catch{return {status:'pending' as const,error:'Fill verification is temporarily unavailable. Only the read will retry; this order is not resubmitted.'};}
+    };
     const recordSpend=(amount:string)=>{const current=this.get(run.id);current.spent=new Decimal(current.spent).plus(amount).toFixed();this.save(current);};
     try{
       authorization();
@@ -94,13 +99,13 @@ export class WorkflowRuns {
           recordSpend(proposal.estimatedNotional);
           if(!['submitted','paper-open','paper-filled'].includes(proposal.status)||!proposal.orderId)return {status:'unverified',error:proposal.error??'Submission unverified'};
           if(order.trigger)return {status:'executed',orderId:proposal.orderId};
-          const evidence=await this.desk.orderEvidence(order,proposal.orderId,run.plan.mode);
-          return evidence.status==='filled'?{status:'executed',orderId:proposal.orderId,fillPrice:evidence.fillPrice,fillSize:evidence.fillSize}:evidence.status==='failed'?{status:'unverified',orderId:proposal.orderId,error:evidence.error}:{status:'waiting-fill',orderId:proposal.orderId};
+          const evidence=await readFill(order,proposal.orderId);
+          return evidence.status==='filled'?{status:'executed',orderId:proposal.orderId,fillPrice:evidence.fillPrice,fillSize:evidence.fillSize}:evidence.status==='failed'?{status:'unverified',orderId:proposal.orderId,error:evidence.error}:{status:'waiting-fill',orderId:proposal.orderId,error:evidence.error};
         },
         reconcile:async(nodeId,orderId):Promise<GraphOrderResult>=>{
           authorization();const order=this.get(run.id).graphOrders?.[nodeId];if(!order)throw new Error('Persisted workflow order terms missing; do not retry');
-          const evidence=await this.desk.orderEvidence(order,orderId,run.plan.mode);
-          return evidence.status==='filled'?{status:'executed',orderId,fillPrice:evidence.fillPrice,fillSize:evidence.fillSize}:evidence.status==='failed'?{status:'unverified',orderId,error:evidence.error}:{status:'waiting-fill',orderId};
+          const evidence=await readFill(order,orderId);
+          return evidence.status==='filled'?{status:'executed',orderId,fillPrice:evidence.fillPrice,fillSize:evidence.fillSize}:evidence.status==='failed'?{status:'unverified',orderId,error:evidence.error}:{status:'waiting-fill',orderId,error:evidence.error};
         },
         submitBracket:async(nodeIds,orders):Promise<GraphOrderResult>=>{
           await budget(orders);

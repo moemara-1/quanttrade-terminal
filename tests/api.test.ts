@@ -26,7 +26,7 @@ test('agent credential can draft but cannot approve, cancel, halt or impersonate
     assert.equal(created.status,201);
     const proposal=await created.json() as {id:string;source:string};
     assert.equal(proposal.source,'agent');
-    for (const route of [`/api/proposals/${proposal.id}/approve`,`/api/proposals/${proposal.id}/cancel`,'/api/halt','/api/terminal/orders','/api/terminal/operations','/api/terminal/snapshot','/api/workflow-runs','/api/workflow-runs/test/cancel']) {
+    for (const route of [`/api/proposals/${proposal.id}/approve`,`/api/proposals/${proposal.id}/cancel`,'/api/halt','/api/terminal/orders','/api/terminal/operations','/api/terminal/lighter-native-orders','/api/terminal/snapshot','/api/workflow-runs','/api/workflow-runs/test/cancel']) {
       assert.equal((await fetch(`${url}${route}`,{method:'POST',headers,body:'{}'})).status,403);
     }
     const approved=await fetch(`${url}/api/proposals/${proposal.id}/approve`,{method:'POST',headers:{...headers,Authorization:'Bearer operator-token'},body:'{}'});

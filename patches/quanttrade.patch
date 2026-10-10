@@ -8648,22 +8648,28 @@ index d295e08..8afa1df 100644
                  variant="ghost"
                  size="sm"
 diff --git a/apps/terminal/src/components/copilot/copilot-chat-message.tsx b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
-index 8feeacd..cd57740 100644
+index 8feeacd..5a90e41 100644
 --- a/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
-@@ -42,6 +42,8 @@ import {
+@@ -42,6 +42,9 @@ import {
    CopilotPlaceOrderCard,
  } from './copilot-order-card'
  import { asToolPart } from './tool-part'
++import { LighterNativeOrderCard } from './lighter-native-order-card'
 +import { ExchangeOperationCard } from './exchange-operation-card'
 +import { WorkflowRunsCard } from './workflow-runs-card'
  import type { NormalizedToolPart } from './tool-part'
  import type {
    CopilotCancelRequest,
-@@ -257,8 +259,22 @@ function toMessageBlocks(
+@@ -257,8 +260,27 @@ function toMessageBlocks(
      }
  
      const { toolName, output } = tool
++    if (toolName === 'prepare_lighter_native_order' && output?.nativeOrder) {
++      flush(index)
++      blocks.push({ kind: 'node', key: `lighter-native-order-${index}`, node: <LighterNativeOrderCard nativeOrder={output.nativeOrder} /> })
++      return
++    }
 +    if (toolName === 'prepare_exchange_operation' && output?.operation) {
 +      flush(index)
 +      blocks.push({
@@ -12301,7 +12307,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..6835e30 100644
+index ce0d317..a378b1f 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -73,8 +73,16 @@ const WORKING_RULES = [
@@ -12310,15 +12316,15 @@ index ce0d317..6835e30 100644
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
-+  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
++  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A native Lighter receipt includes a transaction hash and nativeClientOrderIds; these client IDs are not exchange order IDs or proof of fills. Match client_order_index in the exact instrument snapshot, then inspect its native exchange ID and fill evidence. Never ask for another confirmation solely because a submitted order is absent from open orders. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
 +  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
-+  'When the user asks to set up, prepare or submit a trade, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
++  'For native Lighter order types and entry-attached OTO/OTOCO use prepare_lighter_native_order. Native TWAP must use that tool, not a scheduled graph. For other single orders or custom scheduled graphs, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
 +  'Server graph trigger is only input metadata and NEVER places an entry or has a fill. An immediate entry requires an explicit market-order or limit-order directly after trigger. Count only actual entry nodes as DCA slices. Old conversation claims that trigger is a buy are incorrect; inspect the current graph and correct those claims. A saved graph may need a freshly reviewed correction rather than executing its unchanged mistaken topology.',
 +  'The manual Workflow ticket and the chat workflow card register through the SAME QuantTrade workflow endpoint. Do not tell the user manual selection bypasses the scheduler or makes trigger submit a buy. Check get_workflow_runs and the exact account snapshot to diagnose missing orders. A balance difference alone is not fill evidence. Public venue research and funding data cannot establish private order outcomes. Tool errors are failed reads, never proof an order was placed or that the exchange connection failed. Report uncertainty precisely, without retrying orders.',
 +  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
-+  'A place_order proposal without workflow submits one order. Independently submitted protective exits are not a bracket or OCO. Only an explicitly reviewed workflow.graph.oco plan authorizes its native grouping: Hyperliquid entry plus paired exits together, Lighter paired exits after confirmed fill. Do not claim filled or protected before exchange evidence. Independent non-OCO workflow TP/SL percentage targets use actual parent fill.',
-+  'Orders are PREPARED, never executed by you. place_order returns an exact account/mode proposal the user confirms on a card, either one order or ALL explicitly listed finite workflow steps. Resolve mode from the requested or exact connected account; never silently switch live to paper. Standing consent never approves AI proposals.',
++  'Explicit sizeScope workflow protective exits total only verified opening fills in the current run; all entries must precede them. Parent scope remains the inherited slice only. Prior holdings are excluded. Disclose protection gaps until exits are accepted, and do not call a plan safe or fully protected without active exchange evidence. Never recreate or manually bypass a waiting-fill run to retry its entries. A place_order proposal without workflow submits one order. Independently submitted protective exits are not a bracket or OCO. Native Lighter grouping requires an explicitly reviewed prepare_lighter_native_order card. The alternative workflow.graph.oco plan authorizes scheduler-controlled grouping: Hyperliquid entry plus paired exits together, Lighter paired exits after confirmed fill. Do not claim filled or protected before exchange evidence. Independent non-OCO workflow TP/SL percentage targets use actual parent fill.',
++  'Orders are PREPARED, never executed by you. prepare_lighter_native_order or place_order returns an exact account/mode proposal the user confirms on a card, either one order or ALL explicitly listed finite workflow steps. Resolve mode from the requested or exact connected account; never silently switch live to paper. Standing consent never approves AI proposals.',
 +  'Never claim an order was placed, filled or cancelled without evidence from the user-confirmed execution result and exchange state.',
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
@@ -12461,10 +12467,10 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..8945962 100644
+index bf4d768..bfc3c75 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
-@@ -17,12 +17,16 @@
+@@ -17,12 +17,18 @@
  
  export const WORKFLOW_GUIDE = [
    '## What a workflow is',
@@ -12475,16 +12481,18 @@ index bf4d768..8945962 100644
 +  '- For buy-now plus four DCA slices, include FOUR explicit entry order nodes: trigger to entry1 immediately, then entry1 to wait1 to entry2, entry2 to wait2 to entry3, and entry3 to wait3 to entry4. Count actual entry nodes and read the paths before describing timing. Trigger to a two-hour wait to an order has no immediate entry. Do not count the trigger as a slice.',
 +  '- Percentage sizing uses the inherited base-unit quantity, not available balance or the eventual total position. Each 100% order repeats that inherited quantity; it does not divide a total budget into equal slices. A filled parent propagates its actual fill size and price to children. Multiple parents do not sum fills or compute the whole-position average entry. Use exact absolute quantities where the requested allocation requires them.',
 +  '- Protective nodes connected directly to trigger target an existing position immediately, using the reviewed input quantity and activation reference price. They do not wait for new DCA entries. For new entries, connect protective nodes to the explicit filled entry they protect. A 40%/30%/30% ladder downstream of one 171-unit entry protects portions of that 171-unit fill, not a later 684-unit DCA position. Never claim all DCA fills are protected unless the actual graph and connector support that coverage. Explain any protection gap, and request clarification if the requested whole-position behavior cannot be expressed accurately.',
++  '- For protective exits covering every entry in this workflow, explicitly set sizeScope to workflow and connect them after ALL opening entries. The server totals only verified same-direction fills from this run and uses their size-weighted actual fill price. sizePercent applies to that combined quantity. Existing positions and other runs are excluded. Default or parent scope protects only the inherited parent fill. Workflow scope does not protect the earlier slices while later entries are pending; disclose that gap. Never label a plan safe or fully protected before verifying accepted active exits and their quantities.',
++  '- A missing fill read stays pending and retries only the read. Never rebuild a plan, submit a manual duplicate, or replay the remaining buys as a workaround. Inspect the exact run and account evidence. Paused old runs remain paused; a new proposal must explicitly account for any already-filled entries.',
 +  '- Maximum total quote notional is the reviewed gross order budget, including entry and protective exit submissions, not the margin deposit. Estimate it from all order quantities and applicable prices; do not silently invent or raise the user budget. Native OCO requires matching TP/SL siblings with the same parents and close percentage; one 100% stop plus three unequal take-profit slices is not that pairing. Only promise connector order types verified by its available tools. Do not invent native TWAP, scale orders or atomic multi-TP support.',
 +  '- A confirmation registers the reviewed graph; registration is not proof of submission or a fill. Read get_workflow_runs for the run ID and individual node errors, exchange order IDs and fill evidence before saying orders were sent or filled. If failed or unverified, report the exact outcome and do not automatically retry. Do not ask the user to confirm again after the card has already registered a run.',
    '- Write the whole graph in one update_workflow call: it replaces steps and edges wholesale, so include everything you want to keep, trigger included.',
    '- Read the validation you get back. "Must have a trigger step", a dangling edge or a cycle means the graph is not runnable, and fixing it is your job rather than the user’s. When a step fails validation the result carries that step type’s `expectedConfig`: use it and fix the call, rather than trying another spelling.',
 -  '- A workflow you build lands as an uncommitted draft. The user reviews and commits it. Say so instead of implying it is live.',
-+  '- For a request to send a trade, DCA entries, or an entry with TP/SL, use place_order with the complete trade plan: one chat confirmation submits due orders and registers future steps on QuantTrade. Never route the user to the manual Workflow ticket or require them to save/edit a workflow first. Use create_workflow only when the user explicitly asks for a reusable workflow template; that template lands as an uncommitted draft to review and save, and saving it does not execute trades.',
++  '- For native Lighter market, limit, conditional, TWAP, OTO, OCO or OTOCO requests, use prepare_lighter_native_order and its one human confirmation card. Do not convert native TWAP or entry-attached protection into a server workflow. Native acceptance is not a fill. Zero OTO/OTOCO children cover the actual entry fill; explicitly approved zero OCO legs follow the whole position, including future size changes. Native TWAP is a single order split by Lighter, not a multi-TP ladder. Advanced randomization/chase options are unavailable unless the tool explicitly supports them. For custom scheduled DCA entries or conditional graphs use place_order with the complete trade plan: one chat confirmation submits due orders and registers future steps on QuantTrade. Never route the user to the manual Workflow ticket or require them to save/edit a workflow first. Use create_workflow only when the user explicitly asks for a reusable workflow template; that template lands as an uncommitted draft to review and save, and saving it does not execute trades.',
  ].join('\n')
  
  export const NOTIFICATION_GUIDE = [
-@@ -39,6 +43,6 @@ export const NOTIFICATION_GUIDE = [
+@@ -39,6 +45,6 @@ export const NOTIFICATION_GUIDE = [
  /** The pointer that stands in for the full SDK guide off the workbench. */
  export const SCRIPT_GUIDE_POINTER = [
    '## Writing indicators and strategies',
@@ -12512,16 +12520,63 @@ index 28659bf..7d7d530 100644
      ...buildContextTools(copilotDeps),
      ...buildPortfolioTools(copilotDeps),
      ...buildChartTools(copilotDeps),
+diff --git a/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts b/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts
+index 5c5f187..6b746c1 100644
+--- a/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts
++++ b/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts
+@@ -116,10 +116,13 @@ describe('get_step_reference', () => {
+       'sizePercent',
+       'orderType',
+       'limitPrice',
++      'sizeScope',
+     ])
+     expect(takeProfit.config[0].options).toEqual(['percent', 'absolute'])
+     // And a complete data object to copy, which validates as-is.
+     expect(Object.keys(takeProfit.defaults)).toContain('sizePercent')
++    expect(takeProfit.defaults.sizeScope).toBe('parent')
++    expect(takeProfit.config.find((field) => field.key === 'sizeScope')?.options).toEqual(['parent', 'workflow'])
+   })
+ 
+   test('a graph built from the reference validates as-is', async () => {
+@@ -175,7 +178,7 @@ describe('get_step_reference', () => {
+         result.steps.map((step) => [step.type, step.config.length]),
+       )
+       for (const def of registry) {
+-        expect(described.get(def.type)).toBe(def.configSchema.length)
++        expect(described.get(def.type)).toBe(def.configSchema.length + (['stop-loss', 'take-profit'].includes(def.type) ? 1 : 0))
+       }
+     }
+   })
 diff --git a/apps/terminal/src/lib/assistant/automation-tools.ts b/apps/terminal/src/lib/assistant/automation-tools.ts
-index 8167a56..e36b2b4 100644
+index 8167a56..aa3be33 100644
 --- a/apps/terminal/src/lib/assistant/automation-tools.ts
 +++ b/apps/terminal/src/lib/assistant/automation-tools.ts
+@@ -135,8 +135,8 @@ function describeStepType(def: AnyStepDefinition) {
+     requires: compat?.requires,
+     // A complete, valid data object to start from: every key the step needs,
+     // spelled the way the runtime spells it.
+-    defaults: def.defaultData(),
+-    config: def.configSchema.map((field) => ({
++    defaults: { ...def.defaultData(), ...(['stop-loss', 'take-profit'].includes(def.type) ? { sizeScope: 'parent' } : {}) },
++    config: [...def.configSchema.map((field) => ({
+       key: field.key,
+       type: field.type,
+       label: field.label,
+@@ -147,7 +147,7 @@ function describeStepType(def: AnyStepDefinition) {
+         'showWhen' in field && field.showWhen
+           ? `${field.showWhen.key} is ${JSON.stringify(field.showWhen.equals)}`
+           : undefined,
+-    })),
++    })), ...(['stop-loss', 'take-profit'].includes(def.type) ? [{ key: 'sizeScope', type: 'select', label: 'Protection quantity scope', options: ['parent', 'workflow'], min: undefined, max: undefined, onlyWhen: undefined }] : [])],
+   }
+ }
+ 
 @@ -319,7 +319,7 @@ export function buildWorkflowTools() {
  
      create_workflow: tool({
        description:
 -        'Create a workflow and lay out its steps. It opens as an UNCOMMITTED draft: the user reviews the diff and presses Commit, which is the only way it becomes real. Every workflow starts from the seeded step with id "trigger" (the order the user places from the trade panel) — include it in your steps and hang everything else off it.',
-+        'Only use when the user explicitly requests a reusable workflow or automation. For setting up a trade to confirm and submit directly, use place_order instead; do not create a workflow. Create a workflow and lay out its steps. It opens as an UNCOMMITTED draft: the user reviews the diff and presses Commit, which is the only way it becomes real. Every workflow starts from the seeded step with id "trigger" (the order the user places from the trade panel) — include it in your steps and hang everything else off it.',
++        'Only use when the user explicitly requests a reusable workflow or automation. For setting up a trade to confirm and submit directly, use place_order instead; do not create a workflow. Create a workflow and lay out its steps. It opens as an UNCOMMITTED draft: the user reviews the diff and presses Commit, which is the only way it becomes real. Every workflow starts from the seeded step with id "trigger" (input metadata only; it never submits an order) — include it in your steps and hang everything else off it.',
        inputSchema: z.object({
          name: z.string().min(1).max(80),
          steps: z.array(stepSchema).min(1).max(30),
@@ -12810,7 +12865,7 @@ index e7631ae..5082a86 100644
        },
      }),
 diff --git a/apps/terminal/src/lib/copilot/tool-labels.ts b/apps/terminal/src/lib/copilot/tool-labels.ts
-index fc621a5..5db9d78 100644
+index fc621a5..dcd596d 100644
 --- a/apps/terminal/src/lib/copilot/tool-labels.ts
 +++ b/apps/terminal/src/lib/copilot/tool-labels.ts
 @@ -84,6 +84,12 @@ export const COPILOT_TOOL_LABELS = {
@@ -12826,24 +12881,28 @@ index fc621a5..5db9d78 100644
    get_risk_limits: ['check', 'risk limits'],
    get_account_settings: ['read', 'account settings'],
  
-@@ -128,6 +134,7 @@ export const COPILOT_TOOL_LABELS = {
+@@ -128,6 +134,10 @@ export const COPILOT_TOOL_LABELS = {
    // ---- Trading (proposals — the user confirms before anything executes) ----
    place_order: ['propose', 'an order'],
    cancel_order: ['propose', 'an order cancellation'],
++  get_trade_submissions: ['read', 'trade submission evidence'],
++  get_workflow_runs: ['read', 'workflow execution status'],
++  prepare_lighter_native_order: ['propose', 'a native Lighter order'],
 +  prepare_exchange_operation: ['propose', 'an exchange operation'],
  
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..02fc5f0 100644
+index 2f8e01a..6dcd655 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,115 @@
+@@ -2,9 +2,116 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
++import { lighterNativeOrderInputSchema, prepareLighterNativeOrder } from './lighter-native-orders'
  import { resolveTarget } from './tool-deps'
 +import {
 +  assistantOrderAccount,
@@ -12955,7 +13014,7 @@ index 2f8e01a..02fc5f0 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +118,57 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +119,69 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -12977,10 +13036,22 @@ index 2f8e01a..02fc5f0 100644
 +  'place_order',
 +  'cancel_order',
 +  'prepare_exchange_operation',
++  'prepare_lighter_native_order',
 +] as const
  
  export function buildTradingTools(deps: CopilotToolDeps) {
    return {
++    prepare_lighter_native_order: tool({
++      description: 'Prepare one exact native Lighter perpetual order or OTO/OCO/OTOCO group for human confirmation in chat. Native types: market, limit, stop-loss market/limit, take-profit market/limit and TWAP. TWAP is single only. A grouped child with zero amount follows its parent entry fill; position OCO zero size protects the whole position dynamically and requires the user-reviewed current positionSize. Always state exact buy/sell, base amount, price bound/limit, trigger, reduce-only, time in force, expiry and TWAP duration. No workflow editor and no order is sent by this tool. Native acceptance is not fill evidence. Do not substitute this for scheduled DCA or claim chase/advanced TWAP support.',
++      inputSchema: lighterNativeOrderInputSchema,
++      execute: async (input) => {
++        try {
++          return { status: 'awaiting_confirmation', nativeOrder: await prepareLighterNativeOrder(input, useCredentialsStore.getState().credentials), message: 'Review every leg, live account and margin settings, then click Confirm native order. Nothing has been submitted. Native transaction acceptance is not a fill.' }
++        } catch (cause) {
++          return { status: 'invalid', error: cause instanceof Error ? cause.message : 'The native order could not be prepared. Nothing was submitted.' }
++        }
++      },
++    }),
 +    prepare_exchange_operation: tool({
 +      description:
 +        'Prepare an exact Hyperliquid/Lighter live account operation for explicit human approval: leverage, isolated margin adjustment, amendment or native cancellation. Never executes on preparation. Use native order IDs from get_exchange_snapshot. No transfers or withdrawals.',
@@ -13021,7 +13092,7 @@ index 2f8e01a..02fc5f0 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +192,10 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +205,10 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -13032,7 +13103,7 @@ index 2f8e01a..02fc5f0 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +211,200 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +224,200 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }

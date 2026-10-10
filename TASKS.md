@@ -155,7 +155,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Workflow ticket usability audit
 - [completed] Audit found unclear required budget, hidden blockers, late graph validation, misleading root-exit protection copy and approval values surviving context changes.
 - [completed] Fix visible required currency input, all-blocker feedback, graph preflight/review and account/pair/workflow approval resets; independent review found no remaining blockers.
-- [completed] 21 native tests/59 assertions and red→green malformed-graph transport regression pass; full native TypeScript, changed-file ESLint and final production build pass. Deployed Hetzner20261010-3, 126 backend tests and all hosted guards pass. No trades, workflow registration, browser automation or paid AI calls. Committing/pushing authorized changes.
+- [completed] 21 native tests/59 assertions and redâ†’green malformed-graph transport regression pass; full native TypeScript, changed-file ESLint and final production build pass. Deployed Hetzner20261010-3, 126 backend tests and all hosted guards pass. No trades, workflow registration, browser automation or paid AI calls. Committing/pushing authorized changes.
 
 ## GRAM execution evidence and native order audit
 - [completed] Read-only evidence confirms buys pending and run paused at credential boundary; no GRAM orders/fills in returned native snapshot. Guide incorrectly treated trigger as entry. Native TWAP/OTOCO integration gap verified.
@@ -170,9 +170,14 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Simplified workflow sizing
 - [completed] User selected total margin: 200 USDC at 5x targets 1000 USDC of entries. Graph sizing/caps traced.
 - [completed] Implemented margin/leverage/workflow/margin-type inputs with derived base size, reserve and schedule review; same-key identity now persisted across bridge restarts.
-- [completed] Native/root TypeScript, lint, 19 focused native tests/58 assertions, 127 backend tests and production build pass. Hetzner20261010-6 deployed; hosted guards and source/bundle build identity pass. No trades or old runs resumed. Native order-type expansion remains unfinished.
+- [completed] Native/root TypeScript, lint, 19 focused native tests/58 assertions, 127 backend tests and production build pass. Hetzner20261010-6 deployed; hosted guards and source/bundle build identity pass. No trades or old runs resumed. Native order-type expansion completed in the subsequent execution repair below.
 
 ## Complete Lighter native order integration
-- [in_progress] Read pinned SDK and official order documentation; trace assistant approval and signer paths.
-- [pending] Expose native TWAP and entry-attached OTO/OTOCO, time-in-force/expiry and supported advanced types with exact account/mode approval.
-- [pending] Verify native payloads, risk checks, reconciliation and cancellation; deploy without executing live trades.
+- [completed] Read pinned SDK and official order documentation; traced assistant approval and signer paths.
+- [completed] Exposed all seven SDK native types, OTO/OCO/OTOCO, time-in-force/expiry and pinned live account/revision approval.
+- [completed] Native payloads, risk guards, account revision, receipt projection and read-only hosted guards verified; no test trades submitted.
+
+## Fill reconciliation and workflow protection repair
+- [completed] Traced exact Lighter fill DTOs, client-ID placeholders, missing-evidence pauses and inherited last-slice protective sizing.
+- [completed] Reconciliation and explicit full-workflow protection implemented; transient reads never resubmit and old immutable runs remain paused.
+- [completed] 156 backend tests, 74 Python tests, 68 focused terminal tests, TypeScript/lint and production build pass. Hetzner20261010-8 hosted guards pass; server/signer hashes and frontend build identity match. Old paused runs remain paused. Commit/push authorized.
