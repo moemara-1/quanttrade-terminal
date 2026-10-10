@@ -161,3 +161,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Read-only evidence confirms buys pending and run paused at credential boundary; no GRAM orders/fills in returned native snapshot. Guide incorrectly treated trigger as entry. Native TWAP/OTOCO integration gap verified.
 - [completed] Correct trigger/size/coverage instructions, exact-run chat outcomes, same-key reconnect false pauses and fresh position proof for reduce-only triggers. 127 backend, 22 native and 63 Python tests pass.
 - [completed] Native/root TypeScript, lint, production build, 127 backend/22 native/63 Python tests pass. Deployed Hetzner20261010-4; refreshed HBot extension and hosted guards pass. No orders, workflow registration or paid model calls made; old paused run not resumed. Native TWAP/entry-attached Lighter OTOCO remain unimplemented and are not claimed supported.
+
+## Stale terminal and assistant instruction audit
+- [completed] Confirmed old tabs cannot detect updates because all overlay releases used the same upstream build ID. Hosted assets are current.
+- [completed] Added source-content build identity and explicit assistant rules against trigger-as-entry, manual-ticket bypass and balance-based fill claims.
+- [completed] Seven identity/updater tests (25 assertions), native TypeScript, changed-file ESLint and production build pass. Hetzner20261010-5 deployed; backend tests and all hosted guards pass. Manifest matches bundled build identity. No trades or paused workflows resumed. Commit/push authorized.

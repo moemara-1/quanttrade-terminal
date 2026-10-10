@@ -12217,10 +12217,10 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..74eb309 100644
+index ce0d317..6835e30 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -73,8 +73,14 @@ const WORKING_RULES = [
+@@ -73,8 +73,16 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -12230,6 +12230,8 @@ index ce0d317..74eb309 100644
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
 +  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
 +  'When the user asks to set up, prepare or submit a trade, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
++  'Server graph trigger is only input metadata and NEVER places an entry or has a fill. An immediate entry requires an explicit market-order or limit-order directly after trigger. Count only actual entry nodes as DCA slices. Old conversation claims that trigger is a buy are incorrect; inspect the current graph and correct those claims. A saved graph may need a freshly reviewed correction rather than executing its unchanged mistaken topology.',
++  'The manual Workflow ticket and the chat workflow card register through the SAME QuantTrade workflow endpoint. Do not tell the user manual selection bypasses the scheduler or makes trigger submit a buy. Check get_workflow_runs and the exact account snapshot to diagnose missing orders. A balance difference alone is not fill evidence. Public venue research and funding data cannot establish private order outcomes. Tool errors are failed reads, never proof an order was placed or that the exchange connection failed. Report uncertainty precisely, without retrying orders.',
 +  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
 +  'A place_order proposal without workflow submits one order. Independently submitted protective exits are not a bracket or OCO. Only an explicitly reviewed workflow.graph.oco plan authorizes its native grouping: Hyperliquid entry plus paired exits together, Lighter paired exits after confirmed fill. Do not claim filled or protected before exchange evidence. Independent non-OCO workflow TP/SL percentage targets use actual parent fill.',
 +  'Orders are PREPARED, never executed by you. place_order returns an exact account/mode proposal the user confirms on a card, either one order or ALL explicitly listed finite workflow steps. Resolve mode from the requested or exact connected account; never silently switch live to paper. Standing consent never approves AI proposals.',
@@ -12237,7 +12239,7 @@ index ce0d317..74eb309 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +100,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +102,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -29124,10 +29126,49 @@ index ed1faf6..27a7cc6 100644
      const store = get()
      const ref = asInstrumentRef(target)
 diff --git a/apps/terminal/vite.config.ts b/apps/terminal/vite.config.ts
-index 944d10d..0103c25 100644
+index 944d10d..ca00cdb 100644
 --- a/apps/terminal/vite.config.ts
 +++ b/apps/terminal/vite.config.ts
-@@ -140,8 +140,14 @@ const config = defineConfig({
+@@ -3,6 +3,7 @@
+ import { execSync } from 'node:child_process'
+ import { readFileSync, writeFileSync } from 'node:fs'
+ import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
+ import { defineConfig } from 'vite'
+ import { devtools } from '@tanstack/devtools-vite'
+ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
+@@ -10,6 +11,7 @@ import viteReact from '@vitejs/plugin-react'
+ import viteTsConfigPaths from 'vite-tsconfig-paths'
+ import tailwindcss from '@tailwindcss/vite'
+ import { copyPyodideAssets } from './scripts/copy-pyodide'
++import { sourceBuildIdentity } from './scripts/build-identity'
+ import type { Plugin } from 'vite'
+ 
+ const terminalPort = Number.parseInt(process.env.TERMINAL_PORT ?? '', 10)
+@@ -44,7 +46,7 @@ function pyodideAssets(): Plugin {
+ // content hash under a number that never changes — and a tab holding the old
+ // hashes had no way to tell.
+ //
+-// It has to be the commit, not a timestamp. TanStack Start loads this config
++// It must be deterministic, not a timestamp. TanStack Start loads this config
+ // once per build environment (client, server, prerender), so anything derived
+ // from the clock produces a different value each time: the id baked into the
+ // bundle would never match the one written to version.json, and every tab
+@@ -69,7 +71,12 @@ function resolveBuildId(): string {
+   }
+ }
+ 
+-const buildId = resolveBuildId()
++// QuantTrade overlays change source while retaining the upstream commit.
++// Include actual source content so those deployments prompt existing tabs.
++const buildId = sourceBuildIdentity(
++  fileURLToPath(new URL('.', import.meta.url)),
++  resolveBuildId(),
++)
+ 
+ // Stage public/version.json (gitignored) carrying the version and build id the
+ // bundle bakes in. Deployed alongside the web terminal, it always reports the
+@@ -140,8 +147,14 @@ const config = defineConfig({
      __APP_BUILD_ID__: JSON.stringify(buildId),
    },
    server: {
