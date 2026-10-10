@@ -8672,10 +8672,10 @@ index 8feeacd..cd57740 100644
        flush(index)
        blocks.push({
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-index 219799a..4ce0107 100644
+index 219799a..80d2484 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-order-card.tsx
-@@ -1,18 +1,17 @@
+@@ -1,18 +1,18 @@
  // Copyright (c) 2026 Juan Ignacio Molina Estrada
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 -import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -8691,6 +8691,7 @@ index 219799a..4ce0107 100644
 -import { useHoldConfirm } from '@/hooks/use-trade-confirm'
 -import { tradeHoldMs } from '@/lib/settings/trade-confirm'
 +import { proposalApprovalError } from '@/lib/copilot/ai-proposal-approval'
++import { workflowRunStatus } from '@/lib/copilot/workflow-run-status'
 +import { workflowOcoReview } from '@/lib/copilot/workflow-review'
 +import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
  import {
@@ -8700,7 +8701,7 @@ index 219799a..4ce0107 100644
    wasProposalExecuted,
  } from '@/stores/trade-consent-store'
  
-@@ -25,14 +24,11 @@ import {
+@@ -25,14 +25,11 @@ import {
  // cancelOrder when the user explicitly confirms. Paper is preselected; live is
  // an explicit second choice.
  //
@@ -8718,7 +8719,7 @@ index 219799a..4ce0107 100644
    market: string
    pair: string
    side: 'buy' | 'sell'
-@@ -40,6 +36,12 @@ export type CopilotOrderRequest = {
+@@ -40,6 +37,12 @@ export type CopilotOrderRequest = {
    size: number
    price?: number | null
    reason?: string | null
@@ -8731,7 +8732,7 @@ index 219799a..4ce0107 100644
  }
  
  export type CopilotCancelRequest = {
-@@ -93,40 +95,45 @@ export function CopilotPlaceOrderCard({
+@@ -93,41 +96,62 @@ export function CopilotPlaceOrderCard({
    const { t } = useTranslation()
    const actions = useCopilotOrderActions()
    const [mode, setMode] = useState<'paper' | 'live'>(
@@ -8750,6 +8751,8 @@ index 219799a..4ce0107 100644
 -  const setPaperAutoApprove = useTradeConsentStore((s) => s.setPaperAutoApprove)
 -  const setLiveAutoApprove = useTradeConsentStore((s) => s.setLiveAutoApprove)
 +  const [workflowStatus, setWorkflowStatus] = useState('')
++  const [executionEvidence, setExecutionEvidence] = useState<{ summary: string; details: Array<string> } | null>(null)
++  const [checkingExecution, setCheckingExecution] = useState(false)
 +  const confirming = useRef(false)
 +  const clientOrderId = useRef(proposalId ?? crypto.randomUUID()).current
  
@@ -8765,6 +8768,19 @@ index 219799a..4ce0107 100644
 -    opts?: { grantConsent?: boolean; auto?: boolean },
 -  ) => {
 -    if (!actions || state !== 'idle') return
++  const checkExecution = async (runId: string) => {
++    setCheckingExecution(true)
++    try {
++      const response = await quantTradeFetch('/_quanttrade/api/workflow-runs', { credentials: 'same-origin', signal: AbortSignal.timeout(15000) })
++      if (!response.ok) throw new Error(`Execution status unverified (HTTP ${response.status}).`)
++      setExecutionEvidence(workflowRunStatus(await response.json(), runId))
++    } catch (cause) {
++      setExecutionEvidence({ summary: cause instanceof Error ? cause.message : 'Execution status unverified.', details: [] })
++    } finally {
++      setCheckingExecution(false)
++    }
++  }
++
 +  const confirm = async (execMode: 'paper' | 'live') => {
 +    if (!actions || state !== 'idle' || confirming.current) return
 +    const approvalError = proposalApprovalError(
@@ -8796,9 +8812,11 @@ index 219799a..4ce0107 100644
 +        execMode,
 +      )
        setOutcome(result)
++      if (order.workflow && result.success && result.orderId) await checkExecution(result.orderId)
      } catch (err) {
        setOutcome({
-@@ -137,38 +144,8 @@ export function CopilotPlaceOrderCard({
+         success: false,
+@@ -137,38 +161,8 @@ export function CopilotPlaceOrderCard({
      setState('done')
    }
  
@@ -8839,7 +8857,7 @@ index 219799a..4ce0107 100644
  
    return (
      <div className="border-border/60 bg-muted/40 elevated-panel rounded-lg border p-3 text-xs">
-@@ -194,27 +171,87 @@ export function CopilotPlaceOrderCard({
+@@ -194,42 +188,106 @@ export function CopilotPlaceOrderCard({
  
        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
          <div className="flex justify-between">
@@ -8922,6 +8940,8 @@ index 219799a..4ce0107 100644
  
 +          {order.workflow && outcome?.success && outcome.orderId && (
 +            <div>
++              <Button variant="outline" size="sm" disabled={checkingExecution} onClick={() => { if (outcome.orderId) void checkExecution(outcome.orderId) }}>{checkingExecution ? 'Checking execution…' : 'Check execution'}</Button>
++              {executionEvidence && <div role="status"><p>{executionEvidence.summary}</p><ol>{executionEvidence.details.map((detail, index) => <li key={index}>{detail}</li>)}</ol></div>}
 +              <Button variant="outline" size="sm" onClick={async () => {
 +                try {
 +                  const response = await quantTradeFetch(`/_quanttrade/api/workflow-runs/${encodeURIComponent(outcome.orderId!)}/cancel`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' })
@@ -8935,7 +8955,13 @@ index 219799a..4ce0107 100644
        {state === 'done' && outcome ? (
          <>
            <div
-@@ -227,9 +264,11 @@ export function CopilotPlaceOrderCard({
+             className={cn(
+               'mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px]',
+-              outcome.success ? 'bg-up/10 text-up' : 'bg-down/10 text-down',
++              outcome.success ? order.workflow ? 'bg-muted text-muted-foreground' : 'bg-up/10 text-up' : 'bg-down/10 text-down',
+             )}
+           >
+             {outcome.success ? (
                <>
                  <CheckCircle2 className="size-3.5" />
                  <span>
@@ -8950,7 +8976,7 @@ index 219799a..4ce0107 100644
                    {outcome.orderId ? ` · ${outcome.orderId}` : ''}
                  </span>
                </>
-@@ -240,43 +279,22 @@ export function CopilotPlaceOrderCard({
+@@ -240,43 +298,22 @@ export function CopilotPlaceOrderCard({
                </>
              )}
            </div>
@@ -9001,7 +9027,7 @@ index 219799a..4ce0107 100644
                  onClick={() => setMode(m)}
                  className={cn(
                    'flex-1 rounded px-2 py-1 text-[11px] font-medium capitalize transition-colors',
-@@ -291,30 +309,26 @@ export function CopilotPlaceOrderCard({
+@@ -291,30 +328,26 @@ export function CopilotPlaceOrderCard({
                </button>
              ))}
            </div>
@@ -9040,7 +9066,7 @@ index 219799a..4ce0107 100644
                <span className="relative">
                  {state === 'placing'
                    ? t('copilot.placing')
-@@ -344,11 +358,7 @@ export function CopilotPlaceOrderCard({
+@@ -344,11 +377,7 @@ export function CopilotPlaceOrderCard({
                {t('common.dismiss')}
              </Button>
            </div>
@@ -12349,11 +12375,22 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..2e245e9 100644
+index bf4d768..8945962 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
-@@ -22,7 +22,7 @@ export const WORKFLOW_GUIDE = [
-   '- Sizes downstream are usually percentages of what the trigger filled, which is what makes one workflow work at any order size.',
+@@ -17,12 +17,16 @@
+ 
+ export const WORKFLOW_GUIDE = [
+   '## What a workflow is',
+-  'A workflow is an order plan that hangs off a trade the USER places. The step with id "trigger" is that order, arriving from the trade panel with its side, size, pair and market; every other step reacts to it. So workflows are brackets, ladders, scale-outs and timed follow-ups, never price watchers. A rule that should fire on its own is an alert, and belongs on the Notifications page.',
++  'A QuantTrade server workflow is an explicitly approved order graph. The step with id "trigger" only seeds the reviewed side, base-unit size, pair and market. It NEVER submits an order and has no fill. The surrounding place_order input also does not submit a separate entry when a graph is supplied. Only explicit market-order, limit-order, stop-loss and take-profit nodes submit orders. A rule that should watch prices continuously is an alert, and belongs on the Notifications page.',
+   '- Steps come from the installed plugins. Call get_step_reference first, then build each step by copying its `defaults` object and changing only the keys you mean to change. Type ids and config keys are exact, and they are NOT the display labels ("Close %" is the label, `sizePercent` is the key). Inventing either is how a graph ends up invalid.',
+-  '- Sizes downstream are usually percentages of what the trigger filled, which is what makes one workflow work at any order size.',
++  '- For buy-now plus four DCA slices, include FOUR explicit entry order nodes: trigger to entry1 immediately, then entry1 to wait1 to entry2, entry2 to wait2 to entry3, and entry3 to wait3 to entry4. Count actual entry nodes and read the paths before describing timing. Trigger to a two-hour wait to an order has no immediate entry. Do not count the trigger as a slice.',
++  '- Percentage sizing uses the inherited base-unit quantity, not available balance or the eventual total position. Each 100% order repeats that inherited quantity; it does not divide a total budget into equal slices. A filled parent propagates its actual fill size and price to children. Multiple parents do not sum fills or compute the whole-position average entry. Use exact absolute quantities where the requested allocation requires them.',
++  '- Protective nodes connected directly to trigger target an existing position immediately, using the reviewed input quantity and activation reference price. They do not wait for new DCA entries. For new entries, connect protective nodes to the explicit filled entry they protect. A 40%/30%/30% ladder downstream of one 171-unit entry protects portions of that 171-unit fill, not a later 684-unit DCA position. Never claim all DCA fills are protected unless the actual graph and connector support that coverage. Explain any protection gap, and request clarification if the requested whole-position behavior cannot be expressed accurately.',
++  '- Maximum total quote notional is the reviewed gross order budget, including entry and protective exit submissions, not the margin deposit. Estimate it from all order quantities and applicable prices; do not silently invent or raise the user budget. Native OCO requires matching TP/SL siblings with the same parents and close percentage; one 100% stop plus three unequal take-profit slices is not that pairing. Only promise connector order types verified by its available tools. Do not invent native TWAP, scale orders or atomic multi-TP support.',
++  '- A confirmation registers the reviewed graph; registration is not proof of submission or a fill. Read get_workflow_runs for the run ID and individual node errors, exchange order IDs and fill evidence before saying orders were sent or filled. If failed or unverified, report the exact outcome and do not automatically retry. Do not ask the user to confirm again after the card has already registered a run.',
    '- Write the whole graph in one update_workflow call: it replaces steps and edges wholesale, so include everything you want to keep, trigger included.',
    '- Read the validation you get back. "Must have a trigger step", a dangling edge or a cycle means the graph is not runnable, and fixing it is your job rather than the user’s. When a step fails validation the result carries that step type’s `expectedConfig`: use it and fix the call, rather than trying another spelling.',
 -  '- A workflow you build lands as an uncommitted draft. The user reviews and commits it. Say so instead of implying it is live.',
@@ -12361,7 +12398,7 @@ index bf4d768..2e245e9 100644
  ].join('\n')
  
  export const NOTIFICATION_GUIDE = [
-@@ -39,6 +39,6 @@ export const NOTIFICATION_GUIDE = [
+@@ -39,6 +43,6 @@ export const NOTIFICATION_GUIDE = [
  /** The pointer that stands in for the full SDK guide off the workbench. */
  export const SCRIPT_GUIDE_POINTER = [
    '## Writing indicators and strategies',
@@ -12712,7 +12749,7 @@ index fc621a5..5db9d78 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..8171e5a 100644
+index 2f8e01a..02fc5f0 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
 @@ -2,9 +2,115 @@
@@ -12878,7 +12915,7 @@ index 2f8e01a..8171e5a 100644
 -        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order — it returns a proposal that the user must explicitly approve (paper or live) in the chat. Every order is enforced against the user’s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
 +        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order. It returns an exact account and mode proposal for human approval in the chat. Omit mode to use the exact connected account or the venue\'s only connected account; ask when ambiguous. Use paper only for requested simulation, never as a fallback for unavailable live execution. Every order is enforced against the user\'s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
        inputSchema: z.object({
-+        workflow: approvedWorkflowSchema.optional().describe('For a requested workflow on Hyperliquid/Lighter: pass the complete original graph with every node data and edge, or ALL exact scheduled orders and offsets. Include user-reviewed maximum total quote notional. One card approves the entire plan. Preserve dynamic conditions, branching, percentage sizes, relative prices and protective orders verbatim. Never omit branches, invent budget or leverage, or imply saving a definition starts execution.'),
++        workflow: approvedWorkflowSchema.optional().describe('For a requested workflow on Hyperliquid/Lighter: pass the complete original graph with every node data and edge, or ALL exact scheduled orders and offsets. Include user-reviewed maximum total quote notional. One card approves the entire plan. The graph trigger only seeds input and never submits an order; the outer order is not an extra entry. Include an explicit immediate entry node when requested, and count every requested DCA slice as an entry node. Protective percentages apply to inherited quantity, not the eventual total position; connect new-entry protection to its filled parent. Gross notional budget includes protective exits. Preserve dynamic conditions, branching, percentage sizes, relative prices and protective orders verbatim. Never omit branches, invent budget or leverage, or imply saving a definition starts execution.'),
 +        ...venueOrderControlsSchema.shape,
          pair: z.string().optional(),
          market: z.string().optional(),
@@ -13037,7 +13074,7 @@ index 2f8e01a..8171e5a 100644
 -              ? `Order prepared. The user has standing auto-approval (paper: ${paperAuto}, live on ${target.market}: ${liveAuto}) — the card executes automatically when the user's default trading mode is covered; otherwise it waits for their confirmation. Verify the outcome with get_open_orders before claiming the order was placed.`
 -              : 'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
 +            args.workflow
-+              ? 'Complete trade plan prepared for confirmation here in chat. Confirm starts ALL reviewed orders through QuantTrade on the selected exchange account; due orders are submitted and future steps run on the server. No manual ticket or workflow editor is required. Read get_workflow_runs for actual results; scheduled is not filled. Nothing has been submitted yet.'
++              ? 'Complete trade plan prepared for confirmation here in chat. Confirm registers the exact reviewed graph through QuantTrade on the selected exchange account. Explicit order nodes are attempted when their dependencies become ready; trigger is not an entry order and future steps run on the server. No manual ticket or workflow editor is required. Read get_workflow_runs for actual results; scheduled is not filled. Nothing has been submitted yet.'
 +              : mode === 'live'
 +              ? 'Live order prepared for the reviewed exchange account. It will NOT be placed until the user confirms it on the confirmation card. Confirmation submits this exact live order directly. Nothing has been submitted yet.'
 +              : 'Paper simulation prepared. It will NOT run until the user confirms it on the confirmation card. This simulates the trade and never submits it to the live exchange.',

@@ -224,6 +224,11 @@ async def margin(connector, name, pair, amount, direction):
 async def trigger(connector, name, pair, side, amount, trigger_price, execution_price, kind, is_market, reduce_only, request_id):
     for value in [amount, trigger_price, execution_price]:
         positive_decimal(value)
+    if reduce_only:
+        # An accepted conditional transaction does not prove it protects a
+        # position. Reject exits until fresh account-scoped position evidence
+        # proves the reviewed side and amount can actually reduce that market.
+        await verify_exit_position(connector, name, pair, side, amount)
     if name == 'hyperliquid_perpetual':
         # Use decimal wire strings rather than float conversion. Exchange checks
         # remaining venue-specific significant digits/minimums.
@@ -261,7 +266,7 @@ async def verify_exit_position(connector, name, pair, side, amount):
         state = await connector._api_post(path_url='/info', data={'type': 'clearinghouseState',
             'user': connector._auth._api_address, 'dex': symbol.split(':', 1)[0] if ':' in symbol else ''}, is_auth_required=False)
         if not isinstance(state, dict) or not isinstance(state.get('assetPositions'), list):
-            raise ActionRejected('Cannot verify existing position for OCO exits')
+            raise ActionRejected('Cannot verify existing position for reduce-only exits')
         matches = [row.get('position', {}) for row in state['assetPositions'] if row.get('position', {}).get('coin') == symbol]
         signed = Decimal(matches[0]['szi']) if len(matches) == 1 else Decimal(0)
     else:
@@ -270,14 +275,14 @@ async def verify_exit_position(connector, name, pair, side, amount):
         state = await connector._api_get(path_url='/api/v1/account', params={'by': 'index', 'value': connector._account_index}, is_auth_required=True)
         accounts = state.get('accounts') if isinstance(state, dict) and state.get('code') == 200 else None
         if not isinstance(accounts, list):
-            raise ActionRejected('Cannot verify existing position for OCO exits')
+            raise ActionRejected('Cannot verify existing position for reduce-only exits')
         account = [row for row in accounts if str(row.get('index')) == str(connector._account_index)]
         if len(account) != 1 or not isinstance(account[0].get('positions'), list):
-            raise ActionRejected('Cannot verify account-scoped position for OCO exits')
+            raise ActionRejected('Cannot verify account-scoped position for reduce-only exits')
         matches = [row for row in account[0]['positions'] if row.get('market_id') == market.market_id]
         signed = Decimal(matches[0]['position']) * Decimal(matches[0]['sign']) if len(matches) == 1 else Decimal(0)
     if not signed.is_finite() or signed == 0 or (side == 'sell' and signed < 0) or (side == 'buy' and signed > 0) or Decimal(amount) > abs(signed):
-        raise ActionRejected('OCO exits must reduce an existing same-market position within its current size')
+        raise ActionRejected('Reduce-only exits require an existing same-market position, an opposite closing side and an amount within its current size')
 
 
 async def bracket(connector, name, pair, side, amount, take_profit, stop_loss, request_id, order_factory=None):

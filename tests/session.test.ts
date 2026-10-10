@@ -36,7 +36,7 @@ test('hosted operator session requires trusted proxy and exact origin; agents ca
     assert.deepEqual(await connected.json(),[{venue:'hyperliquid',connected:false,mode:'paper',accountName:'desk'},{venue:'lighter',connected:true,mode:'paper',accountName:'desk'}]);
     assert.equal((await fetch(base+'/api/connections',{...post,headers:{...headers,Authorization:'Bearer agent'},body:JSON.stringify({venue:'lighter',credentials:{}})})).status,403);
     assert.equal((await fetch(base+'/api/connections',{...post,headers:{'Content-Type':'application/json',Cookie:cookie.split(';')[0]},body:JSON.stringify({venue:'lighter',credentials:{}})})).status,403);
-    const result=await fetch(base+'/api/connections',{...post,headers,body:JSON.stringify({venue:'lighter',credentials:{}})});
+    const result=await fetch(base+'/api/connections',{...post,headers,body:JSON.stringify({venue:'lighter',credentials:{lighter_perpetual_l1_address:'0x'+'1'.repeat(40),lighter_perpetual_api_key_index:4,lighter_perpetual_api_private_key:'2'.repeat(64),lighter_perpetual_account_limit:'Standard'}})});
     assert.equal(result.status,200);assert.equal(saved,1);
     assert.equal((await fetch(base+'/api/status',{headers:{Cookie:'qt_operator=forged'}})).status,401);
   } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));store.close();}

@@ -181,6 +181,9 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_hl_trigger_preserves_price_size_and_reduce_only(self):
         c = self.hl({'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [{'resting': {'oid': 456}}]}}})
+        c._auth._api_address = 'account'
+        acknowledgment = c._api_post.return_value
+        c._api_post.side_effect = lambda **kwargs: {'assetPositions': [{'position': {'coin': 'BTC', 'szi': '1'}}]} if kwargs['path_url'] == '/info' else acknowledgment
         result = await module.trigger(c, 'hyperliquid_perpetual', 'BTC-USD', 'sell', '0.1', '90000', '89900', 'sl', True, True, 'a' * 32)
         order = c._api_post.call_args.kwargs['data']['action']['orders'][0]
         self.assertEqual(order['p'], '89900')
@@ -190,6 +193,8 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lighter_trigger_precision_and_enum(self):
         c = self.lighter()
+        c._account_index = 1
+        c._api_get = AsyncMock(return_value={'code': 200, 'accounts': [{'index': 1, 'positions': [{'market_id': 0, 'position': '1', 'sign': 1}]}]})
         result = await module.trigger(c, 'lighter_perpetual', 'BTC-USDC', 'sell', '0.123', '90000.01', '89900', 'tp', False, True, 'a' * 32)
         args = c._signer_client.create_order.call_args.kwargs
         self.assertEqual(args['base_amount'], 123)
@@ -199,6 +204,33 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['client_order_id'], '123')
         with self.assertRaises(ValueError):
             await module.trigger(c, 'lighter_perpetual', 'BTC-USDC', 'sell', '0.1234', '90000', '89900', 'sl', True, True, 'a' * 32)
+
+    async def test_individual_reduce_only_triggers_reject_flat_wrong_side_and_oversize_before_signing(self):
+        for positions, side, amount in [([], 'sell', '1'), ([{'market_id': 0, 'position': '1', 'sign': -1}], 'sell', '1'), ([{'market_id': 0, 'position': '1', 'sign': 1}], 'sell', '2'), ([{'market_id': 99, 'position': '10', 'sign': 1}], 'sell', '1')]:
+            with self.subTest(positions=positions, side=side, amount=amount):
+                c = self.lighter()
+                c._account_index = 1
+                c._api_get = AsyncMock(return_value={'code': 200, 'accounts': [{'index': 1, 'positions': positions}]})
+                with self.assertRaises(module.ActionRejected):
+                    await module.trigger(c, 'lighter_perpetual', 'BTC-USDC', side, amount, '90000', '89900', 'sl', True, True, 'a' * 32)
+                c._signer_client.create_order.assert_not_called()
+                c._api_get.assert_awaited_once_with(path_url='/api/v1/account', params={'by': 'index', 'value': 1}, is_auth_required=True)
+
+    async def test_hl_individual_reduce_only_trigger_rejects_flat_without_signed_action(self):
+        for positions, amount in [([], '1'), ([{'position': {'coin': 'BTC', 'szi': '-1'}}], '1'), ([{'position': {'coin': 'BTC', 'szi': '1'}}], '2'), ([{'position': {'coin': 'ETH', 'szi': '10'}}], '1')]:
+            with self.subTest(positions=positions, amount=amount):
+                c = self.hl({'assetPositions': positions})
+                c._auth._api_address = 'account'
+                with self.assertRaises(module.ActionRejected):
+                    await module.trigger(c, 'hyperliquid_perpetual', 'BTC-USD', 'sell', amount, '90000', '89900', 'sl', True, True, 'a' * 32)
+                c._auth.sign_l1_action.assert_not_called()
+                c._api_post.assert_awaited_once_with(path_url='/info', data={'type': 'clearinghouseState', 'user': 'account', 'dex': ''}, is_auth_required=False)
+
+    async def test_non_reduce_only_trigger_does_not_require_existing_position(self):
+        c = self.lighter()
+        result = await module.trigger(c, 'lighter_perpetual', 'BTC-USDC', 'buy', '1', '90000', '90100', 'sl', True, False, 'a' * 32)
+        self.assertEqual(result['status'], 'accepted')
+        c._signer_client.create_order.assert_awaited_once()
 
     async def test_cancel_requires_exchange_id_and_ack(self):
         c = self.hl({'status': 'ok', 'response': {'type': 'cancel', 'data': {'statuses': ['success']}}})
