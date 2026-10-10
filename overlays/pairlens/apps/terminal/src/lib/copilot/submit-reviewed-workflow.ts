@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { approvedWorkflowSchema, confirmedOrderFields } from './trading-tools'
+import { workflowGraphReviewError } from './workflow-review'
 import type { CopilotOrderRequest, OrderOutcome } from '@/components/copilot/copilot-order-card'
 import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
 
@@ -12,6 +13,10 @@ export async function submitReviewedWorkflow(request: CopilotOrderRequest, mode:
     throw new Error('Workflow approval expired; prepare a fresh plan.')
   if (!['lighter', 'lighter-spot', 'hyperliquid', 'hyperliquid-spot'].includes(request.market))
     throw new Error('This venue does not support approved server workflows.')
+  if ('graph' in workflow) {
+    const graphError = workflowGraphReviewError(request.market, workflow.graph)
+    if (graphError) throw new Error(graphError)
+  }
   const statusResponse = await quantTradeFetch('/_quanttrade/api/status', { credentials: 'same-origin' })
   if (!statusResponse.ok) throw new Error(`Cannot verify workflow execution account (HTTP ${statusResponse.status}).`)
   const status = z.object({ accountName: z.string().min(1) }).parse(await statusResponse.json())

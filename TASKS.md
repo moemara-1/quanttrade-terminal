@@ -151,3 +151,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Audit chat confirmation, Lighter balance/notional sizing and empty execution plans.
 - [completed] Fix single-click AI approval, spendable collateral and fresh pair prices; separate notional from initial margin and reject plans without orders.
 - [completed] Verified 126 backend tests, focused native balance/approval tests, full terminal TypeScript/lint and production build. Deployed Hetzner20261010-2; login, catalogs, PRL3x cap, feeds, sync and ticket guards pass. Read-only live balance confirms available differs from total collateral. No trades or old-plan replay.
+
+## Workflow ticket usability audit
+- [completed] Audit found unclear required budget, hidden blockers, late graph validation, misleading root-exit protection copy and approval values surviving context changes.
+- [completed] Fix visible required currency input, all-blocker feedback, graph preflight/review and account/pair/workflow approval resets; independent review found no remaining blockers.
+- [completed] 21 native tests/59 assertions and red→green malformed-graph transport regression pass; full native TypeScript, changed-file ESLint and final production build pass. Deployed Hetzner20261010-3, 126 backend tests and all hosted guards pass. No trades, workflow registration, browser automation or paid AI calls. Committing/pushing authorized changes.

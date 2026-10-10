@@ -33,7 +33,7 @@ test('workflow schema refuses unordered, missing-price and incompatible margin s
 })
 
 test('graph approval preserves dynamic branches and exact input without flattening', async () => {
-  const graph = { oco: true, steps: [{ id: 'start', type: 'trigger', data: {} }, { id: 'condition', type: 'condition', data: { conditionType: 'price-above', value: 2 } }, { id: 'entry', type: 'market-order', data: { sizePercent: 100 } }], edges: [{ id: 'edge', source: 'start', target: 'condition' }, { id: 'execute', source: 'condition', sourceHandle: 'pass', target: 'entry' }] }
+  const graph = { oco: false, steps: [{ id: 'start', type: 'trigger', data: {} }, { id: 'condition', type: 'condition', data: { conditionType: 'price-above', value: 2 } }, { id: 'entry', type: 'market-order', data: { side: 'inherit', sizeMode: 'percent', size: 100 } }], edges: [{ id: 'edge', source: 'start', target: 'condition' }, { id: 'execute', source: 'condition', sourceHandle: 'pass', target: 'entry' }] }
   let sent: unknown
   globalThis.fetch = (async (input, init) => {
     if (String(input).endsWith('/status')) return Response.json({ accountName: 'desk' })
@@ -50,6 +50,14 @@ test('schedules are not restricted to twenty orders or forty-eight hours', () =>
 test('trade-plan approval rejects a saved graph with no executable order', () => {
   const graph = { steps: [{ id: 'start', type: 'trigger', data: {} }], edges: [] }
   expect(approvedWorkflowSchema.safeParse({ name: 'Empty saved plan', maxTotalNotional: '600', graph }).success).toBe(false)
+})
+
+test('malformed graph approval fails locally before account or registration requests', async () => {
+  let calls = 0
+  globalThis.fetch = (() => { calls++; throw new Error('No requests allowed') }) as typeof fetch
+  const graph = { steps: [{ id: 'start', type: 'trigger', data: {} }, { id: 'entry', type: 'market-order', data: { side: 'inherit', sizeMode: 'percent', size: 0 } }], edges: [{ id: 'edge', source: 'start', target: 'entry' }] }
+  await expect(submitReviewedWorkflow({ ...request(), workflow: { name: 'Invalid', maxTotalNotional: '600', graph } }, 'live')).rejects.toThrow('Invalid market-order')
+  expect(calls).toBe(0)
 })
 
 test('the chat order confirmation submits a complete plan directly without placing a separate entry', async () => {

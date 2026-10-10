@@ -64,6 +64,8 @@
   "apps/terminal/src/lib/sync/hosted-sync.ts",
   "apps/terminal/src/lib/sync/hosted-watchlists.ts",
   "apps/terminal/src/lib/trading-scope.ts",
+  "apps/terminal/src/lib/trading/__tests__/workflow-ticket.test.ts",
+  "apps/terminal/src/lib/trading/workflow-ticket.ts",
   "apps/terminal/src/lib/venue-instrument.ts",
   "packages/plugin-sdk/src/hooks/use-plugin-fetch.test.ts",
   "packages/plugins/src/nanogpt-inference/index.test.ts",
