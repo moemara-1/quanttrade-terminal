@@ -23,6 +23,7 @@ export const workflowGraphSchema=z.object({oco:z.boolean().optional(),steps:z.ar
   if(new Set(graph.edges.map(edge=>edge.id)).size!==graph.edges.length)issue('Duplicate workflow edge IDs');
   const triggers=graph.steps.filter(step=>step.type==='trigger');
   if(triggers.length!==1)issue('Workflow requires exactly one trigger');
+  if(!graph.steps.some(step=>['market-order','limit-order','take-profit','stop-loss'].includes(step.type)))issue('Trade plan has no orders. Prepare a complete trade proposal in the assistant; a saved trigger or wait is not an executable trade.');
   for(const step of graph.steps){
     if(!dataSchemas[step.type].safeParse(step.data).success)issue(`Invalid ${step.type} configuration: ${step.id}`);
     if(step.type==='condition'&&(step.data.conditionType==='percent-change'?step.data.value===0:Number(step.data.value)<=0))issue('Condition value is invalid');

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   contractLeverageLimit,
+  tradingAvailableBalance,
   tradingBalanceMap,
   validateNativeOrder,
 } from '../trading-scope'
@@ -97,4 +98,14 @@ test('contract minimums and precision reject invalid drafts without rounding', (
   expect(
     validateNativeOrder(limits, { size: '10', price: '2', quoteSized: true }),
   ).toBeNull()
+})
+
+test('available funds never include locked margin or an unverified balance', () => {
+  expect(tradingAvailableBalance({ available: '316.598942' })).toBe(
+    '316.598942',
+  )
+  expect(tradingAvailableBalance({ available: '0' })).toBe('0')
+  expect(tradingAvailableBalance(undefined)).toBeNull()
+  expect(tradingAvailableBalance({ available: 'NaN' })).toBeNull()
+  expect(tradingAvailableBalance({ available: '-1' })).toBeNull()
 })

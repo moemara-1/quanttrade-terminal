@@ -14,6 +14,10 @@ for marker in (
     'Choose Cross or Isolated when changing leverage',
     'Multiple live accounts are connected for this exchange',
     'This proposal expired',
+    'Est. initial margin',
+    'Workflow input notional',
+    'Unavailable · refresh account connection',
+    'This workflow has no order nodes',
 ):
     assert any(marker in script for script in scripts), marker
 assert "order.marginMode??'cross'" not in (root / 'src/server/execution.ts').read_text()

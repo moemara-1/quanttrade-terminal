@@ -7,6 +7,12 @@ const market:Market={venue:'lighter',symbol:'PRL-USDC',base:'PRL',price:'100',ch
 const node=(id:string,type:WorkflowGraph['steps'][number]['type'],data:Record<string,unknown>={})=>({id,type,data});
 const edge=(source:string,target:string,sourceHandle?:string)=>({id:source+target,source,target,...(sourceHandle?{sourceHandle}:{})});
 const buy={side:'inherit',sizeMode:'percent',size:100};
+
+test('a trigger or wait-only draft cannot be approved as an executable trade plan',()=>{
+  for(const graph of [{steps:[node('t','trigger')],edges:[]},{steps:[node('t','trigger'),node('w','wait',{duration:1,unit:'seconds'})],edges:[edge('t','w')]}]){
+    assert.equal(workflowGraphSchema.safeParse(graph).success,false);
+  }
+});
 test('saved original core defaults remain compatible including inactive zero protective limit prices',()=>{
   const defaults=[node('t','trigger'),node('m','market-order',{side:'inherit',sizeMode:'percent',size:100}),node('l','limit-order',{side:'inherit',sizeMode:'percent',size:100,priceMode:'offset-percent',priceValue:0}),node('tp','take-profit',{triggerMode:'percent',triggerValue:5,sizePercent:100,orderType:'market',limitPrice:0}),node('sl','stop-loss',{triggerMode:'percent',triggerValue:3,sizePercent:100,orderType:'market',limitPrice:0}),node('c','condition',{conditionType:'price-above',value:100}),node('b','split',{branches:2}),node('w','wait',{duration:5,unit:'seconds'})];
   const graph={steps:defaults,edges:[edge('t','m'),edge('m','l'),edge('l','tp'),edge('l','sl'),edge('m','c'),edge('c','b','pass'),edge('b','w','branch-0')]};assert.equal(workflowGraphSchema.safeParse(graph).success,true);

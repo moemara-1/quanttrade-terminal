@@ -89,3 +89,11 @@ export function validateNativeOrder(
     return `Minimum notional: ${limits.minNotional} USDC`
   return null
 }
+
+/** Spendable funds only; a missing balance is unknown, never invented zero. */
+export function tradingAvailableBalance(
+  balance: Pick<BalanceRecord, 'available'> | undefined,
+): string | null {
+  if (!balance || !/^\d+(?:\.\d+)?$/.test(balance.available)) return null
+  return Number.isFinite(Number(balance.available)) ? balance.available : null
+}

@@ -146,3 +146,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Confirmed UI masks all provider failures. Public NanoGPT catalog/tool support and CORS pass; actual SDK offline thinking/tool-followup test passes. Browser failure cause remains unobserved; no speculative adapter changes.
 - [completed] Safe actionable error categories and HTTP diagnostics deployed Hetzner20261010-1; billing notices retained. 14 offline tests/31 assertions, full native TypeScript/lint/build, 125 hosted backend tests and all hosted guards pass. No paid AI calls or trades.
 - [pending] User to retry once and provide QT-AI code; original browser provider failure not reproduced or claimed fixed.
+
+## Direct AI trade confirmation and Lighter ticket values
+- [completed] Audit chat confirmation, Lighter balance/notional sizing and empty execution plans.
+- [completed] Fix single-click AI approval, spendable collateral and fresh pair prices; separate notional from initial margin and reject plans without orders.
+- [completed] Verified 126 backend tests, focused native balance/approval tests, full terminal TypeScript/lint and production build. Deployed Hetzner20261010-2; login, catalogs, PRL3x cap, feeds, sync and ticket guards pass. Read-only live balance confirms available differs from total collateral. No trades or old-plan replay.
