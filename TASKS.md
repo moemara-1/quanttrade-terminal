@@ -141,3 +141,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Match login to QuantTrade brand
 - [completed] Adapted login to real QuantTrade logos, Hanken Grotesk, Graphite colors/mint accent and responsive terminal composition.
 - [completed] Form hooks, JS syntax and structural checks passed; deployed login HTML/CSS and public brand aliases. Live asset hashes, HTML/JS/CSS/font types, login/logout, protected terminal and operator/agent guards passed. Committing/pushing authorized design.
+
+## NanoGPT assistant error
+- [completed] Confirmed UI masks all provider failures. Public NanoGPT catalog/tool support and CORS pass; actual SDK offline thinking/tool-followup test passes. Browser failure cause remains unobserved; no speculative adapter changes.
+- [completed] Safe actionable error categories and HTTP diagnostics deployed Hetzner20261010-1; billing notices retained. 14 offline tests/31 assertions, full native TypeScript/lint/build, 125 hosted backend tests and all hosted guards pass. No paid AI calls or trades.
+- [pending] User to retry once and provide QT-AI code; original browser provider failure not reproduced or claimed fixed.

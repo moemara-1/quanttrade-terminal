@@ -8543,7 +8543,7 @@ index 553652d..ed08af2 100644
  
              {error && <p className="text-destructive text-xs">{error}</p>}
 diff --git a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-index d295e08..3c63574 100644
+index d295e08..8afa1df 100644
 --- a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 +++ b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 @@ -66,6 +66,7 @@ import { track } from '@/lib/analytics-events'
@@ -8554,7 +8554,15 @@ index d295e08..3c63574 100644
  import { useMarketRefWithPreferred } from '@/lib/market-ref/use-market-ref'
  import { credentialMarketFor } from '@/lib/venues/credential-alias'
  import { useCredentialsStore } from '@/stores/credentials-store'
-@@ -590,37 +591,20 @@ function AssistantConversationInner({
+@@ -90,6 +91,7 @@ import {
+ } from '@/components/assistant/assistant-question-card'
+ 
+ import { AssistantTransport } from '@/lib/assistant-core/assistant-transport'
++import { describeAssistantError } from '@/lib/assistant-core/assistant-error'
+ import { useAssistantDeps } from '@/lib/assistant-core/assistant-provider'
+ import { executeClientTool } from '@/lib/assistant-core/client-tools'
+ import { ASSISTANT_ALL_TOOL_LABELS } from '@/lib/assistant-core/tool-labels'
+@@ -590,37 +592,20 @@ function AssistantConversationInner({
              error: i18n.t('security.vault.orderBlocked'),
            }
          }
@@ -8605,6 +8613,28 @@ index d295e08..3c63574 100644
          } catch (err) {
            return {
              success: false,
+@@ -771,6 +756,10 @@ function AssistantConversationInner({
+   }, [chart, t])
+ 
+   const billingErrorCode = parseBillingErrorCode(error?.message)
++  const assistantError = describeAssistantError(
++    error,
++    deps.pluginManager.getPluginForCapability('ai:inference')?.manifest.id,
++  )
+   const trackedErrorRef = useRef<unknown>(null)
+   useEffect(() => {
+     if (!error || trackedErrorRef.current === error) return
+@@ -807,9 +796,7 @@ function AssistantConversationInner({
+             // A failed run used to be a dead end: the prompt was gone and
+             // the only way forward was to type it again.
+             <div className="text-destructive bg-destructive/10 flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs">
+-              <span className="min-w-0 flex-1">
+-                {t('assistantDock.genericError')}
+-              </span>
++              <span className="min-w-0 flex-1">{assistantError.message} Diagnostic: QT-AI/{assistantError.code}{assistantError.status ? `/${assistantError.status}` : ''}.</span>
+               <Button
+                 variant="ghost"
+                 size="sm"
 diff --git a/apps/terminal/src/components/copilot/copilot-chat-message.tsx b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 index 8feeacd..cd57740 100644
 --- a/apps/terminal/src/components/copilot/copilot-chat-message.tsx
@@ -11834,10 +11864,18 @@ index ce0d317..74eb309 100644
      `Today's date: ${today} (UTC).`,
      '',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..0d208fb 100644
+index 26e075b..752fe35 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -36,6 +36,7 @@ import type {
+@@ -14,6 +14,7 @@
+ import { convertToModelMessages, stepCountIs, streamText } from 'ai'
+ 
+ import { buildAssistantSystemPrompt } from './assistant-brain'
++import { encodeAssistantError } from './assistant-error'
+ import {
+   NOTIFICATION_GUIDE,
+   SCRIPT_GUIDE_POINTER,
+@@ -36,6 +37,7 @@ import type {
    UIMessage,
    UIMessageChunk,
  } from 'ai'
@@ -11845,7 +11883,7 @@ index 26e075b..0d208fb 100644
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -101,7 +102,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -101,7 +103,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
          venues: deps
            .getMarketData()
            ?.availableMarkets.map((market) => market.marketId),
@@ -11857,6 +11895,16 @@ index 26e075b..0d208fb 100644
        }),
        messages: await convertToModelMessages(options.messages),
        tools,
+@@ -124,8 +129,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+     })
+ 
+     return result.toUIMessageStream({
+-      onError: (error) =>
+-        error instanceof Error ? error.message : String(error),
++      onError: (error) => encodeAssistantError(error, provider.manifest.id),
+     }) as ReadableStream<UIMessageChunk>
+   }
+ 
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
 index 74cf26a..5fbf941 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
