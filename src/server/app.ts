@@ -167,9 +167,8 @@ export function createApp(services: Services) {
     res.json(await services.execution.balances(venueSchema.parse(req.params.venue),marketTypeSchema.parse(req.query.marketType)));
   });
   const connecting=new Set<string>();
-  // Retain only hashes of successfully verified credentials. Unknown credentials
-  // after a restart remain a conservative account-change boundary.
-  const verifiedCredentials=new Map<string,string>();
+  // Persist only hashes after verification, scoped to this execution account.
+  // Identical reconnects after a bridge restart are not credential changes.
   app.post('/api/connections',operator,async(req,res)=>{
     if (!services.execution) {res.status(503).json({error:'Exchange service is unavailable'});return;}
     const input=z.object({venue:venueSchema,credentials:z.unknown(),mode:z.enum(['paper','live']).optional()}).strict().parse(req.body);
@@ -178,12 +177,12 @@ export function createApp(services: Services) {
     if (connecting.size) {res.status(409).json({error:'An exchange connection is already being updated'});return;}
     connecting.add(input.venue);
     try {
-      const unchanged=verifiedCredentials.get(input.venue)===fingerprint && (await services.execution.connections()).includes(input.venue);
+      const unchanged=desk.store.connectionFingerprint(desk.status().accountName,input.venue)===fingerprint && (await services.execution.connections()).includes(input.venue);
       if (!unchanged || (input.mode && input.mode!==desk.modeFor(input.venue))) services.workflows?.pauseVenue(input.venue);
       if (!unchanged) {
-        verifiedCredentials.delete(input.venue);
+        desk.store.setConnectionFingerprint(desk.status().accountName,input.venue,null);
         await services.execution.connect(input.venue,credentials);
-        verifiedCredentials.set(input.venue,fingerprint);
+        desk.store.setConnectionFingerprint(desk.status().accountName,input.venue,fingerprint);
       }
       if (input.mode) desk.setVenueMode(input.venue,input.mode);
       res.json({venue:input.venue,connected:true,spotConnected:true,mode:desk.modeFor(input.venue),accountName:desk.status().accountName});
@@ -194,7 +193,7 @@ export function createApp(services: Services) {
     const venue=venueSchema.parse(req.params.venue);
     if (connecting.size) {res.status(409).json({error:'An exchange connection is already being updated'});return;}
     connecting.add(venue);
-    verifiedCredentials.delete(venue);
+    desk.store.setConnectionFingerprint(desk.status().accountName,venue,null);
     services.workflows?.pauseVenue(venue);
     try {await services.execution.disconnect(venue);res.json({venue,connected:false,mode:desk.status().mode,accountName:desk.status().accountName});}
     finally {connecting.delete(venue);}

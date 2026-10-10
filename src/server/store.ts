@@ -27,6 +27,16 @@ export class DeskStore {
   }
 
   close(): void { this.db.close(); }
+  connectionFingerprint(account:string,venue:Venue):string|null {
+    const value=this.db.prepare('SELECT value FROM settings WHERE key=?').get('connection-fingerprint:'+account+':'+venue)?.value;
+    return typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)?value:null;
+  }
+  setConnectionFingerprint(account:string,venue:Venue,value:string|null):void {
+    const key='connection-fingerprint:'+account+':'+venue;
+    if(value===null){this.db.prepare('DELETE FROM settings WHERE key=?').run(key);return;}
+    if(!/^[a-f0-9]{64}$/.test(value))throw new Error('Invalid verified connection fingerprint');
+    this.db.prepare('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,value);
+  }
   syncEntries():SyncEntries {
     return Object.fromEntries(this.db.prepare('SELECT key,value,updatedAt FROM sync_state').all().map(row=>[String(row.key),{value:JSON.parse(String(row.value)),updatedAt:Number(row.updatedAt)}]));
   }

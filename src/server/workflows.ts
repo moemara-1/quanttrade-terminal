@@ -75,7 +75,7 @@ export class WorkflowRuns {
     this.save(run);return run;
   }
   cancel(id:string):WorkflowRun {const run=this.get(id);run.status='cancelled';run.error='Future workflow steps cancelled. Existing exchange orders and positions are unchanged.';this.save(run);return run;}
-  pauseVenue(venue:string):void {this.connectionRevision++;for(const run of this.list().filter(item=>item.status==='active'&&(item.plan.input??item.plan.steps![0].order).venue===venue)){run.status='paused';run.error='Exchange credentials changed; prepare and approve a fresh plan.';this.save(run);}}
+  pauseVenue(venue:string):void {this.connectionRevision++;for(const run of this.list().filter(item=>item.status==='active'&&(item.plan.input??item.plan.steps![0].order).venue===venue)){run.status='paused';run.error='Exchange connection was disconnected, reconfigured, or its trading mode changed. This does not prove your API keys changed. Check the account and approve a fresh plan.';this.save(run);}}
   private async tickGraph(run:WorkflowRun):Promise<void>{
     const graph=run.plan.graph!,input=run.plan.input!,state=run.graphState!;
     const active=()=>!this.closing&&this.get(run.id).status==='active';

@@ -14,6 +14,6 @@ for path in ('/api/workflow-runs','/api/workflow-runs/not-a-real-run/cancel'):
         raise AssertionError('Unauthenticated workflow write allowed')
     except urllib.error.HTTPError as error: assert error.code==401
 scripts=[path.read_text(errors='replace') for path in Path('/opt/quanttrade/current/frontend/assets').glob('*.js')]
-for marker in ('Prepare with AI','Stop future workflow steps','get_workflow_runs','Workflow registered on server','Pair sibling TP/SL exits as exchange-native OCO','Before you can submit','Total workflow order budget','protective exits','before the scheduled entries','Check execution','entry fills verified','protective submission recorded; fill not verified'):
+for marker in ('Prepare with AI','Stop future workflow steps','get_workflow_runs','Workflow registered on server','Native OCO pairing is off','Before you can submit','Total workflow ','protective exits','No entry is due immediately','Check execution','entry fills verified','protective submission recorded; fill not verified'):
     assert any(marker in script for script in scripts),marker
 print('Persistent workflow reads, private write guards and approval/run controls verified; no workflows started.')

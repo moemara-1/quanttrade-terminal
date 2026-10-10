@@ -12,8 +12,8 @@ test('unchanged credential reprovision does not pause runs; mode/key changes and
   const desk=new TradingDesk(store,markets,{configured:false,place:async()=>{throw new Error('no trading');},cancel:async()=>undefined},{mode:'paper',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'5000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'https://quanttrade.example'});
   let connects=0,pauses=0,connected=false,fail=false;
   let hold:Promise<void>|undefined,release:(()=>void)|undefined,entered:(()=>void)|undefined;
-  const app=createApp({desk,markets,agent:{prepare:async()=>({summary:'',proposal:null})},execution:{account:async()=>({positions:{data:[],pagination:{has_more:false,next_cursor:null}},orders:{data:[],pagination:{has_more:false,next_cursor:null}}}),connect:async()=>{connects++;entered?.();await hold;if(fail)throw new Error('verification failed');connected=true;},disconnect:async()=>{connected=false;},connections:async()=>connected?['lighter']:[],balances:async()=>[]},workflows:{start:async()=>{throw new Error('no workflow registration');},list:()=>[],cancel:()=>{throw new Error('no cancellation');},pauseVenue:()=>{pauses++;}},operatorToken:'operator',agentToken:'agent',allowedOrigins:['https://quanttrade.example']});
-  const server=app.listen(0,'127.0.0.1');await once(server,'listening');
+  const makeApp=()=>createApp({desk,markets,agent:{prepare:async()=>({summary:'',proposal:null})},execution:{account:async()=>({positions:{data:[],pagination:{has_more:false,next_cursor:null}},orders:{data:[],pagination:{has_more:false,next_cursor:null}}}),connect:async()=>{connects++;entered?.();await hold;if(fail)throw new Error('verification failed');connected=true;},disconnect:async()=>{connected=false;},connections:async()=>connected?['lighter']:[],balances:async()=>[]},workflows:{start:async()=>{throw new Error('no workflow registration');},list:()=>[],cancel:()=>{throw new Error('no cancellation');},pauseVenue:()=>{pauses++;}},operatorToken:'operator',agentToken:'agent',allowedOrigins:['https://quanttrade.example']});
+  const server=makeApp().listen(0,'127.0.0.1');await once(server,'listening');
   const address=server.address();if(!address||typeof address==='string')throw new Error('No address');
   const base=`http://127.0.0.1:${address.port}`;
   const credentials={lighter_perpetual_l1_address:'0x'+'1'.repeat(40),lighter_perpetual_api_key_index:4,lighter_perpetual_api_private_key:'2'.repeat(64),lighter_perpetual_account_limit:'Standard'};
@@ -21,6 +21,13 @@ test('unchanged credential reprovision does not pause runs; mode/key changes and
   const connect=async(mode='live',key=credentials.lighter_perpetual_api_private_key)=>fetch(base+'/api/connections',{method:'POST',headers,body:JSON.stringify({venue:'lighter',credentials:{...credentials,lighter_perpetual_api_private_key:key},mode})});
   try{
     assert.equal((await connect()).status,200);assert.equal(pauses,1);assert.equal(connects,1);
+    assert.equal(store.connectionFingerprint('desk','lighter')?.length,64);
+    const restarted=makeApp().listen(0,'127.0.0.1');await once(restarted,'listening');
+    try {
+      const reopened=restarted.address();if(!reopened||typeof reopened==='string')throw new Error('No restarted address');
+      const response=await fetch(`http://127.0.0.1:${reopened.port}/api/connections`,{method:'POST',headers,body:JSON.stringify({venue:'lighter',credentials,mode:'live'})});
+      assert.equal(response.status,200);assert.equal(pauses,1);assert.equal(connects,1);
+    }finally{restarted.closeAllConnections();await new Promise<void>(resolve=>restarted.close(()=>resolve()));}
     assert.equal((await connect()).status,200);assert.equal(pauses,1);assert.equal(connects,1);
     assert.equal((await connect('paper')).status,200);assert.equal(pauses,2);assert.equal(connects,1);
     assert.equal((await connect('paper','3'.repeat(64))).status,200);assert.equal(pauses,3);assert.equal(connects,2);

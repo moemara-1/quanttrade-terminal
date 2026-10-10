@@ -166,3 +166,13 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Confirmed old tabs cannot detect updates because all overlay releases used the same upstream build ID. Hosted assets are current.
 - [completed] Added source-content build identity and explicit assistant rules against trigger-as-entry, manual-ticket bypass and balance-based fill claims.
 - [completed] Seven identity/updater tests (25 assertions), native TypeScript, changed-file ESLint and production build pass. Hetzner20261010-5 deployed; backend tests and all hosted guards pass. Manifest matches bundled build identity. No trades or paused workflows resumed. Commit/push authorized.
+
+## Simplified workflow sizing
+- [completed] User selected total margin: 200 USDC at 5x targets 1000 USDC of entries. Graph sizing/caps traced.
+- [completed] Implemented margin/leverage/workflow/margin-type inputs with derived base size, reserve and schedule review; same-key identity now persisted across bridge restarts.
+- [completed] Native/root TypeScript, lint, 19 focused native tests/58 assertions, 127 backend tests and production build pass. Hetzner20261010-6 deployed; hosted guards and source/bundle build identity pass. No trades or old runs resumed. Native order-type expansion remains unfinished.
+
+## Complete Lighter native order integration
+- [in_progress] Read pinned SDK and official order documentation; trace assistant approval and signer paths.
+- [pending] Expose native TWAP and entry-attached OTO/OTOCO, time-in-force/expiry and supported advanced types with exact account/mode approval.
+- [pending] Verify native payloads, risk checks, reconciliation and cancellation; deploy without executing live trades.
