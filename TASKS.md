@@ -195,6 +195,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Native Hyperliquid TWAP and bounded managed Chase completed in the final integration below. Atomic remains unavailable without a verified all-or-none native signing contract.
 
 ## Finish native TWAP, Chase and Atomic
+- [completed] Account-pinned evidence, fresh TWAP admission, explicit native risk permission and direct status/reviewed cancellation controls shipped Hetzner20261011-4. 3,920 terminal/190 backend/90 signer tests, TypeScript/lint/build and hosted guards pass; no live trades.
+- [in_progress] Add explicitly reviewed fill-aware protection to native Hyperliquid TWAP and managed Chase; current cards disclose entry-only scope. Managed entry-plus-protection plans are supported separately.
 - [completed] Implement native Hyperliquid TWAP create/cancel/evidence and durable managed Chase with fresh bid/ask, partial-fill reconciliation, owned cancellation, one approval and account/revision guards.
 - [completed] 3,911 terminal, 183 backend and 90 signer tests; native/root TypeScript, changed-file ESLint and production build pass. Hetzner 20261011-3 hosted guards, signer runtime SHA and build identity pass. No live test trades/cancellations or old-plan resumes. Commit/push authorized.
 - [blocked] Atomic: official Lighter signer/prover expose no verified multi-market all-or-none signing contract; Hyperliquid ordinary batches allow independent leg outcomes. Capability discovery explicitly reports unavailable; no fake batch fallback. Verified primary sources recorded in docs/advanced-order-plan.md.

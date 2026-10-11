@@ -100,6 +100,7 @@ const statusSchema = z.object({
   connectionRevisions: z.record(z.string(), z.string().nullable()),
   venueModes: z.record(z.string(), z.string()),
   maxPriceDeviationBps: z.number().optional(),
+  nativeTwapRiskAllowed: z.boolean().optional(),
 })
 async function readStatus(request: Request, venue: string) {
   const response = await quantTradeFetch(
@@ -161,10 +162,11 @@ export async function prepareAdvancedExecution(
   const status = await readStatus(request, venue)
   if (
     input.kind === 'hyperliquid-twap' &&
+    status.nativeTwapRiskAllowed !== true &&
     (status.maxPriceDeviationBps ?? 0) < 300
   )
     throw new Error(
-      'Native Hyperliquid TWAP requires a configured risk band of at least 3%. Use managed TWAP, or explicitly review and change that risk limit first. Nothing submitted.',
+      'Native Hyperliquid TWAP requires permission for at least 3% slice slippage. Review Allow native TWAP 3% in Manage position and orders, or use managed TWAP. Nothing submitted.',
     )
   return proposalSchema.parse({
     ...input,

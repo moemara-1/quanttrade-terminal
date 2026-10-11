@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { NativeTwapPermission } from './native-twap-permission'
 import {
   OperationKeys,
   nativeField,
@@ -104,6 +105,11 @@ export function ExchangeTools({
         {marketType}
       </summary>
       <div className="mt-3 space-y-3">
+        {venue === 'hyperliquid' && marketType === 'perpetual' && live && (
+          <NativeTwapPermission
+            key={`${market}:${pair}:${credentialId}:${mode}`}
+          />
+        )}
         {!live && (
           <p className="text-muted-foreground">
             Select a live exchange account to manage native orders and margin.

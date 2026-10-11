@@ -59,6 +59,7 @@ export interface Proposal {
 }
 export interface AuditEvent { id: number; timestamp: number; action: string; proposalId: string | null; detail: string }
 export interface DeskStatus {
+  nativeTwapRiskAllowed?: boolean;
   mode: TradingMode;
   venueModes?:Record<Venue,TradingMode>;
   halted: boolean;

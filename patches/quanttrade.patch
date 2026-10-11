@@ -12972,7 +12972,7 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..7633823 100644
+index bf4d768..38be7bc 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
 @@ -17,12 +17,19 @@
@@ -12990,7 +12990,7 @@ index bf4d768..7633823 100644
 +  '- A missing fill read stays pending and retries only the read. Never rebuild a plan, submit a manual duplicate, or replay the remaining buys as a workaround. Inspect the exact run and account evidence. Paused old runs remain paused; a new proposal must explicitly account for any already-filled entries.',
 +  '- Maximum total quote notional is the reviewed gross order budget, including entry and protective exit submissions, not the margin deposit. Estimate it from all order quantities and applicable prices; do not silently invent or raise the user budget. Native OCO requires matching TP/SL siblings with the same parents and close percentage; one 100% stop plus three unequal take-profit slices is not that pairing. Only promise connector order types verified by its available tools. Do not invent native TWAP, scale orders or atomic multi-TP support.',
 +  '- A confirmation registers the reviewed graph; registration is not proof of submission or a fill. Read get_workflow_runs for the run ID and individual node errors, exchange order IDs and fill evidence before saying orders were sent or filled. If failed or unverified, report the exact outcome and do not automatically retry. Do not ask the user to confirm again after the card has already registered a run.',
-+  '- prepare_position_plan builds a complete Scale, Iceberg or explicitly Managed TWAP plan on Lighter/Hyperliquid and returns one chat confirmation card for every child. Scale places native child limits; managed Iceberg waits for verified fills before exposing the next display slice; managed TWAP has explicit immediate and scheduled market entries with an enforced gross cap. Optional multi-TP allocations partition exact new-entry size into paired SL/TP brackets. These are managed plans, not atomic baskets or exchange-hidden quantities. Protective exits do not cancel other entry slices. Do not require individual child confirmations, a manual ticket or a saved workflow. prepare_advanced_execution exposes native Hyperliquid TWAP with explicit fixed 3% slice slippage and unbounded future quote risk acceptance, or managed Chase Limit with bounded prices/duration/attempts and verified cancel/reconcile/replace. One card approves the plan, with no protective exits included. Use prepare_advanced_execution kind chase-cancel for explicit one-card cancellation of a reviewed owned run; never cancel from a read tool. Native TWAP slice evidence is available through get_native_twap_evidence; truncated history or observed fills do not prove completion or active status. Read get_chase_runs for actual progress. Use prepare_advanced_execution kind hyperliquid-twap-cancel only for an explicitly reviewed native TWAP ID from venue acknowledgment or user-provided ID; cancellation leaves prior fills in the position. Read get_advanced_order_capabilities before proposing native execution. Native Atomic all-or-none baskets remain unavailable; never claim a sequential batch is atomic.',
++  '- prepare_position_plan builds a complete Scale, Iceberg or explicitly Managed TWAP plan on Lighter/Hyperliquid and returns one chat confirmation card for every child. Scale places native child limits; managed Iceberg waits for verified fills before exposing the next display slice; managed TWAP has explicit immediate and scheduled market entries with an enforced gross cap. Optional multi-TP allocations partition exact new-entry size into paired SL/TP brackets. These are managed plans, not atomic baskets or exchange-hidden quantities. Protective exits do not cancel other entry slices. Do not require individual child confirmations, a manual ticket or a saved workflow. prepare_advanced_execution exposes native Hyperliquid TWAP with explicit fixed 3% slice slippage and unbounded future quote risk acceptance, or managed Chase Limit with bounded prices/duration/attempts and verified cancel/reconcile/replace. One card approves the plan, with no protective exits included. Use prepare_advanced_execution kind chase-cancel for explicit one-card cancellation of a reviewed owned run; never cancel from a read tool. Native TWAP slice evidence is available through get_native_twap_evidence using the exact accountName, connectionRevision, symbol, side, size and TWAP ID from the original accepted proposal or run, plus its accepted requestId when available. Never replace those historical account fields with current status; truncated history or observed fills do not prove completion or active status. Read get_chase_runs for actual progress. Use prepare_advanced_execution kind hyperliquid-twap-cancel only for an explicitly reviewed native TWAP ID from venue acknowledgment or user-provided ID; cancellation leaves prior fills in the position. Read get_advanced_order_capabilities before proposing native execution. If native Hyperliquid TWAP is blocked by ordinary risk limits, direct the user to Manage position and orders → Allow native TWAP 3% for explicit account-scoped permission. Never enable that permission through an assistant tool or widen standard order risk limits. Native Atomic all-or-none baskets remain unavailable; never claim a sequential batch is atomic.',
    '- Write the whole graph in one update_workflow call: it replaces steps and edges wholesale, so include everything you want to keep, trigger included.',
    '- Read the validation you get back. "Must have a trigger step", a dangling edge or a cycle means the graph is not runnable, and fixing it is your job rather than the user’s. When a step fails validation the result carries that step type’s `expectedConfig`: use it and fix the call, rather than trying another spelling.',
 -  '- A workflow you build lands as an uncommitted draft. The user reviews and commits it. Say so instead of implying it is live.',
@@ -13428,7 +13428,7 @@ index fc621a5..c068b08 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..a894dac 100644
+index 2f8e01a..327bb1f 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
 @@ -2,9 +2,196 @@
@@ -13629,7 +13629,7 @@ index 2f8e01a..a894dac 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +199,204 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +199,212 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -13703,7 +13703,10 @@ index 2f8e01a..a894dac 100644
 +        if (!response.ok)
 +          return { error: 'Capabilities could not be verified.' }
 +        const parsed = z
-+          .object({ maxPriceDeviationBps: z.number() })
++          .object({
++            maxPriceDeviationBps: z.number(),
++            nativeTwapRiskAllowed: z.boolean().optional(),
++          })
 +          .safeParse(await response.json())
 +        return {
 +          atomic: {
@@ -13718,7 +13721,9 @@ index 2f8e01a..a894dac 100644
 +          },
 +          hyperliquidNativeTwap: {
 +            available:
-+              parsed.success && parsed.data.maxPriceDeviationBps >= 300,
++              parsed.success &&
++              (parsed.data.nativeTwapRiskAllowed === true ||
++                parsed.data.maxPriceDeviationBps >= 300),
 +            minimumRiskBandBps: 300,
 +            risk: 'Fixed 3% slice slippage; no absolute future price or quote cap; explicit user acceptance required.',
 +          },
@@ -13727,13 +13732,16 @@ index 2f8e01a..a894dac 100644
 +    }),
 +    get_native_twap_evidence: tool({
 +      description:
-+        'Read native Hyperliquid TWAP slice fill evidence for an exact reported TWAP ID and reviewed symbol/side/size. Observed fills are not active/completion proof; history may be truncated. Zero observed fills is not proof that no order exists.',
++        'Read native Hyperliquid TWAP slice fill evidence for an exact reported TWAP ID and reviewed symbol/side/size, accountName and connectionRevision from its original accepted proposal or run. Include the original accepted requestId when available. Never substitute the current account or revision for a historical proposal. Observed fills are not active/completion proof; history may be truncated. Zero observed fills is not proof that no order exists.',
 +      inputSchema: z
 +        .object({
 +          symbol: z.string().regex(/^[A-Za-z0-9:_.]+-USDC$/),
 +          twapId: z.string().regex(/^[1-9]\d*$/),
 +          side: z.enum(['buy', 'sell']),
 +          size: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/),
++          accountName: z.string().min(1),
++          connectionRevision: z.string().regex(/^[a-f0-9]{64}$/),
++          requestId: z.string().uuid().optional(),
 +        })
 +        .strict(),
 +      execute: async (input) => {
@@ -13843,7 +13851,7 @@ index 2f8e01a..a894dac 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +420,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +428,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -13855,7 +13863,7 @@ index 2f8e01a..a894dac 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +440,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +448,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -14078,7 +14086,7 @@ index 2f8e01a..a894dac 100644
      cancel_order: tool({
        description:
          'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. Use get_open_orders to find the order id.',
-@@ -135,4 +678,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -135,4 +686,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
        },
      }),
    }

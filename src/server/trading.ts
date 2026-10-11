@@ -58,7 +58,7 @@ export class TradingDesk {
   private scoped(mode:TradingMode):TradingDesk {return new TradingDesk(this.store,this.markets,this.execution,{...this.config,mode},this.clock);}
   status(): DeskStatus {
     return { ...this.config,venueModes:{hyperliquid:this.modeFor('hyperliquid'),lighter:this.modeFor('lighter')}, halted: this.store.halted, executionConfigured: this.execution.configured,
-      agentConfigured: this.agentConfigured, dailyNotionalUsed: this.store.used(this.config.mode, this.day()) };
+      nativeTwapRiskAllowed:this.store.nativeTwapRiskAllowed(this.config.accountName,this.store.connectionFingerprint(this.config.accountName,'hyperliquid')),agentConfigured: this.agentConfigured, dailyNotionalUsed: this.store.used(this.config.mode, this.day()) };
   }
   setHalted(halted: boolean): DeskStatus { this.store.halted = halted; return this.status(); }
 

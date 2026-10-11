@@ -186,6 +186,20 @@ test('native creation refuses a narrower configured risk band without changing i
     ),
   ).rejects.toThrow('at least 3%')
 })
+test('explicit account native permission allows preparation without widening ordinary risk', async () => {
+  const proposal = await prepareAdvancedExecution(
+    input,
+    credentials,
+    async () =>
+      Response.json({
+        ...status,
+        maxPriceDeviationBps: 100,
+        nativeTwapRiskAllowed: true,
+      }),
+    () => 1000,
+  )
+  expect(proposal.kind).toBe('hyperliquid-twap')
+})
 
 test('native cancellation is explicitly scoped and does not require creation risk acceptance', async () => {
   const proposal = await prepareAdvancedExecution(

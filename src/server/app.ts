@@ -249,6 +249,19 @@ export function createApp(services: Services) {
     try{res.json(await services.hyperliquidNativeTwap.execute(req.body));}
     catch(error){res.status(400).json({error:error instanceof Error?error.message:'Native TWAP validation failed',submissionAttempted:false});}
   });
+  app.put('/api/terminal/native-twap-policy',operator,(req,res)=>{
+    if(connecting.size){res.status(409).json({error:'Exchange connection is being updated'});return;}
+    try{
+      const plan=z.object({requestId:z.string().uuid(),proposedAt:z.number().int(),accountName:z.string().min(1),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/),mode:z.literal('live'),venue:z.literal('hyperliquid'),enabled:z.boolean(),acceptFixedSlippageBps:z.literal(300)}).strict().parse(req.body);
+      if(plan.proposedAt>Date.now()+5000||Date.now()-plan.proposedAt>180000)throw new Error('Permission review expired');
+      if(desk.status().accountName!==plan.accountName||desk.modeFor('hyperliquid')!=='live'||!desk.status().executionConfigured||desk.store.connectionFingerprint(plan.accountName,'hyperliquid')!==plan.connectionRevision)throw new Error('Reviewed account or connection changed');
+      const previous=desk.store.claimOperation(plan.requestId,createHash('sha256').update(JSON.stringify(plan)).digest('hex'));
+      if(previous){if(previous.state!=='completed')throw new Error('Permission update interrupted; refresh permission');res.json(previous.result);return;}
+      desk.store.setNativeTwapRiskAllowed(plan.accountName,plan.connectionRevision,plan.enabled);
+      const result={enabled:plan.enabled,accountName:plan.accountName,connectionRevision:plan.connectionRevision};
+      desk.store.finishOperation(plan.requestId,'completed',result);res.json(result);
+    }catch(error){res.status(400).json({error:error instanceof Error?error.message:'Invalid permission review'});}
+  });
   app.post('/api/terminal/chase-plans',operator,async(req,res)=>{
     if(!services.chasePlans){res.status(503).json({error:'Managed Chase is unavailable',submissionAttempted:false});return;}
     if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh plan afterwards',submissionAttempted:false});return;}

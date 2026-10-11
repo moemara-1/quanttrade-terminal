@@ -1,6 +1,11 @@
 import { useRef, useState } from 'react'
 import { Button } from '@pairlens/ui/components/ui/button'
 import { AdvancedExecutionApproval } from '@/lib/copilot/advanced-execution-orders'
+import {
+  prepareAdvancedCancellation,
+  readAdvancedExecutionStatus,
+} from '@/lib/copilot/advanced-execution-status'
+import { useCredentialsStore } from '@/stores/credentials-store'
 
 export function AdvancedExecutionCard({
   advancedOrder,
@@ -11,6 +16,11 @@ export function AdvancedExecutionCard({
   const [state, setState] = useState<
     AdvancedExecutionApproval['status'] | 'rejected'
   >('idle')
+  const [inspection, setInspection] = useState<string | null>(null)
+  const [inspectionError, setInspectionError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [cancellation, setCancellation] = useState<unknown>(null)
+  const actionBusy = useRef(false)
   if (!controller.current) {
     try {
       controller.current = new AdvancedExecutionApproval(advancedOrder)
@@ -26,6 +36,40 @@ export function AdvancedExecutionCard({
     if (state !== 'idle' || approval.status !== 'idle') return
     setState('pending')
     setState(await approval.approve())
+  }
+  async function inspect(cancel: boolean) {
+    if (actionBusy.current) return
+    actionBusy.current = true
+    setBusy(true)
+    setInspectionError(null)
+    try {
+      const credentials = useCredentialsStore.getState().credentials
+      if (cancel) {
+        setCancellation(
+          await prepareAdvancedCancellation(
+            plan,
+            approval.evidence,
+            credentials,
+          ),
+        )
+      } else {
+        const result = await readAdvancedExecutionStatus(
+          plan,
+          approval.evidence,
+          credentials,
+        )
+        setInspection(JSON.stringify(result, null, 2))
+      }
+    } catch (error) {
+      setInspectionError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to verify this plan. Nothing submitted.',
+      )
+    } finally {
+      actionBusy.current = false
+      setBusy(false)
+    }
   }
   return (
     <div className="my-2 rounded-lg border border-border bg-muted/30 p-3 text-xs">
@@ -140,6 +184,37 @@ export function AdvancedExecutionCard({
               : 'Managed Chase registered. Read Chase runs for actual orders, fills and pauses.'}{' '}
           {approval.evidence}
         </p>
+      )}
+      {(state === 'accepted' || state === 'registered') &&
+        (plan.kind === 'chase' || plan.kind === 'hyperliquid-twap') && (
+          <div className="mt-2 flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void inspect(false)}
+            >
+              Refresh status
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || cancellation !== null}
+              onClick={() => void inspect(true)}
+            >
+              Prepare cancellation
+            </Button>
+          </div>
+        )}
+      {busy && <p role="status">Verifying reviewed account…</p>}
+      {inspection && (
+        <pre role="status" className="mt-2 whitespace-pre-wrap break-all">
+          {inspection}
+        </pre>
+      )}
+      {inspectionError && <p role="alert">{inspectionError}</p>}
+      {cancellation !== null && (
+        <AdvancedExecutionCard advancedOrder={cancellation} />
       )}
       {(state === 'blocked' || state === 'unknown') && (
         <p role="alert" className="mt-2 text-amber-500">

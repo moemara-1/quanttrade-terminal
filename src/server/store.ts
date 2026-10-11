@@ -27,6 +27,15 @@ export class DeskStore {
   }
 
   close(): void { this.db.close(); }
+  nativeTwapRiskAllowed(account:string,revision:string|null):boolean {
+    if(!revision||this.connectionFingerprint(account,'hyperliquid')!==revision)return false;
+    return this.db.prepare('SELECT value FROM settings WHERE key=?').get('native-twap-risk:'+account+':'+revision)?.value==='true';
+  }
+  setNativeTwapRiskAllowed(account:string,revision:string,enabled:boolean):void {
+    if(this.connectionFingerprint(account,'hyperliquid')!==revision)throw new Error('Reviewed connection changed');
+    this.db.prepare('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('native-twap-risk:'+account+':'+revision,String(enabled));
+    this.record('native-twap-risk-updated',null,account+':'+enabled);
+  }
   connectionFingerprint(account:string,venue:Venue):string|null {
     const value=this.db.prepare('SELECT value FROM settings WHERE key=?').get('connection-fingerprint:'+account+':'+venue)?.value;
     return typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)?value:null;
@@ -51,6 +60,10 @@ export class DeskStore {
       this.db.exec('COMMIT');
     } catch(error) {this.db.exec('ROLLBACK');throw error;}
     return this.syncEntries();
+  }
+  operation(id:string): {state:string;result:unknown}|null {
+    const row=this.db.prepare('SELECT state,result FROM venue_operations WHERE id = ?').get(id);
+    return row?{state:String(row.state),result:typeof row.result==='string'?JSON.parse(row.result):null}:null;
   }
   claimOperation(id:string,fingerprint:string): {state:string;result:unknown}|null {
     const row=this.db.prepare('SELECT fingerprint,state,result FROM venue_operations WHERE id = ?').get(id);

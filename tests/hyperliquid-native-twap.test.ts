@@ -35,3 +35,54 @@ test('native TWAP rejects changed keys after awaited market reads and mismatched
   assert.equal((await bad.execute(s.plan)).status,'unknown');assert.equal((await bad.execute(s.plan)).status,'unknown');assert.equal(calls,1);
  }finally{s.store.close();}
 });
+
+test('native TWAP admission uses the latest validated quote rather than the first market read',async()=>{
+ const s=setup();try{
+  let reads=0,calls=0;
+  const moving={list:async()=>{reads++;return (await s.markets.list()).map(market=>({...market,price:reads===1?'2':'3'}));}};
+  const desk=new TradingDesk(s.store,moving,{configured:true,place:async()=>'',cancel:async()=>{}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:300,proposalTtlSeconds:180,pairlensUrl:'http://localhost'},()=>s.now);
+  const service=new HyperliquidNativeTwap(desk,{perform:async()=>{calls++;return {status:'accepted',connector_name:'hyperliquid_perpetual',trading_pair:'GRAM-USD',twap_id:'123'};}},moving,()=>s.now);
+  await assert.rejects(service.execute(s.plan),/admission estimate/);assert.equal(calls,0);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'0');
+  reads=0;await service.execute({...s.plan,referenceNotionalBudget:'186'});assert.equal(calls,1);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'185.4');
+ }finally{s.store.close();}
+});
+
+test('native TWAP minimum reference amount is checked against the latest quote',async()=>{
+ const s=setup();try{
+  let reads=0,calls=0;
+  const moving={list:async()=>{reads++;return (await s.markets.list()).map(market=>({...market,price:reads===1?'2':'1'}));}};
+  const desk=new TradingDesk(s.store,moving,{configured:true,place:async()=>'',cancel:async()=>{}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:300,proposalTtlSeconds:180,pairlensUrl:'http://localhost'},()=>s.now);
+  const service=new HyperliquidNativeTwap(desk,{perform:async()=>{calls++;return {};}},moving,()=>s.now);
+  await assert.rejects(service.execute(s.plan),/100 USDC/);assert.equal(calls,0);
+ }finally{s.store.close();}
+});
+
+test('native TWAP evidence is pinned to account and connection and can verify an owned accepted receipt',async()=>{
+ const s=setup();try{
+  await s.service.execute(s.plan);
+  const request={accountName:'desk',connectionRevision:'a'.repeat(64),requestId:s.plan.requestId,symbol:'GRAM-USDC',twapId:'123',side:'buy',size:'60'};
+  await s.service.evidence(request);assert.equal(s.payload().account_name,'desk');
+  for(const patch of [{accountName:'other'},{connectionRevision:'b'.repeat(64)},{requestId:randomUUID()},{twapId:'124'},{symbol:'BTC-USDC'},{side:'sell'},{size:'59'}])await assert.rejects(s.service.evidence({...request,...patch}));
+  assert.equal(s.calls(),2);
+  const receipt=s.store.operation(s.plan.requestId);assert.equal(receipt?.state,'completed');assert.equal(s.store.operation(randomUUID()),null);
+ }finally{s.store.close();}
+});
+
+test('native TWAP evidence rejects a connection change during its awaited exchange read',async()=>{
+ const s=setup();try{
+  const service=new HyperliquidNativeTwap(s.desk,{perform:async()=>{s.store.setConnectionFingerprint('desk','hyperliquid','b'.repeat(64));return {status:'fills-observed'};}},s.markets,()=>s.now);
+  await assert.rejects(service.evidence({accountName:'desk',connectionRevision:'a'.repeat(64),symbol:'GRAM-USDC',twapId:'123',side:'buy',size:'60'}),/account or connection/);
+ }finally{s.store.close();}
+});
+
+test('native TWAP permission allows 3% slices without widening ordinary risk and revocation during reads blocks submission',async()=>{
+ const s=setup(100);try{
+  s.store.setNativeTwapRiskAllowed('desk','a'.repeat(64),true);
+  assert.equal((await s.service.execute(s.plan)).status,'accepted');assert.equal(s.desk.status().maxPriceDeviationBps,100);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'123.6');
+ }finally{s.store.close();}
+ const revoked=setup(100);try{
+  revoked.store.setNativeTwapRiskAllowed('desk','a'.repeat(64),true);let calls=0;
+  const service=new HyperliquidNativeTwap(revoked.desk,{perform:async()=>{calls++;return {};}},{list:async()=>{revoked.store.setNativeTwapRiskAllowed('desk','a'.repeat(64),false);return revoked.markets.list();}},()=>revoked.now);
+  await assert.rejects(service.execute(revoked.plan),/3%/);assert.equal(calls,0);
+ }finally{revoked.store.close();}
+});
