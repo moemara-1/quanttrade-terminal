@@ -86,3 +86,4 @@ test('native TWAP permission allows 3% slices without widening ordinary risk and
   await assert.rejects(service.execute(revoked.plan),/3%/);assert.equal(calls,0);
  }finally{revoked.store.close();}
 });
+test('native TWAP rejects protection already crossed at the latest admission reference price',async()=>{const x=setup();try{await assert.rejects(x.service.execute({...x.plan,protection:{activation:'after-full-entry-fill',management:'managed',stopLossPrice:'2',takeProfits:[{price:'3',sizePercent:'100'}],maxExitNotional:'1000'}}),/admission reference/);assert.equal(x.calls(),0);}finally{x.store.close();}});

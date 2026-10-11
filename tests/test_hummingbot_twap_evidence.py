@@ -20,12 +20,12 @@ class TwapEvidenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_exact_quantity_vwap_and_duplicates_never_claim_completion(self):
         first = self.row()
         c,dto = self.setup_read([first,first,self.row(tid=22,oid=12,sz='3',px='110')])
-        self.assertEqual(await module.hyperliquid_twap_evidence(c,dto), {'twap_id':'123','verified_fill_size':'5','verified_fill_price':'106','history_may_be_truncated':False,'status':'fills-observed'})
+        self.assertEqual(await module.hyperliquid_twap_evidence(c,dto), {'twap_id':'123','verified_fill_size':'5','verified_fill_price':'106','history_may_be_truncated':False,'status':'fills-observed','fills':[{'id':'21','size':'2','price':'100'},{'id':'22','size':'3','price':'110'}]})
         c._api_post.assert_awaited_once_with(path_url='/info',data={'type':'userTwapSliceFills','user':'0x'+'a'*40},is_auth_required=False)
 
     async def test_empty_history_is_unverified_not_proof_of_no_fills(self):
         c,dto = self.setup_read([])
-        self.assertEqual(await module.hyperliquid_twap_evidence(c,dto), {'twap_id':'123','verified_fill_size':'0','history_may_be_truncated':False,'status':'unverified'})
+        self.assertEqual(await module.hyperliquid_twap_evidence(c,dto), {'twap_id':'123','verified_fill_size':'0','history_may_be_truncated':False,'status':'unverified','fills':[]})
 
     async def test_wrong_instrument_side_oversize_or_conflicting_duplicates_rejected(self):
         for rows in [[self.row(coin='ETH')],[self.row(side='A')],[self.row(sz='11')],[self.row(),self.row(sz='3')],[self.row(tid=None)]]:

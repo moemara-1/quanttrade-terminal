@@ -204,7 +204,7 @@ export class HummingbotExecution implements ExecutionClient {
     return {status:'pending'};
   }
   async chaseEvidence(order:OrderDraft,orderId:string):Promise<{status:'open'|'settled'|'pending';filledSize?:string;exchangeId?:string;error?:string}> {
-    if(order.marketType==='spot'||order.trigger||order.sizeUnit==='quote')return {status:'pending'};
+    if(order.marketType==='spot'||order.sizeUnit==='quote')return {status:'pending'};
     const identity=(value:unknown):string|undefined=>typeof value==='string'&&/^[1-9]\d*$/.test(value)?value:typeof value==='number'&&Number.isSafeInteger(value)&&value>0?String(value):undefined;
     const quantity=(value:unknown):Decimal|undefined=>{
       if(typeof value!=='string'&&typeof value!=='number')return undefined;
@@ -231,7 +231,8 @@ export class HummingbotExecution implements ExecutionClient {
         const filled=quantity(result.filledSize);if(!filled||filled.gt(order.size))return {status:'pending'};
         return {status:'settled',exchangeId:nativeId,filledSize:filled.toFixed()};
       }
-      return {status:'open',exchangeId:nativeId};
+      const filled=quantity(result.filledSize);if(!filled||filled.gt(order.size))return {status:'pending'};
+      return {status:'open',exchangeId:nativeId,filledSize:filled.toFixed()};
     }
     const schema=z.object({connector_name:z.literal('lighter_perpetual'),trading_pair:z.literal(order.symbol),open_orders:z.array(z.record(z.unknown())),order_history:z.array(z.record(z.unknown())),history_next_cursor:z.string().nullable().optional()});
     const rows:Record<string,unknown>[]=[],cursors=new Set<string>();let cursor:string|undefined;
@@ -257,7 +258,11 @@ export class HummingbotExecution implements ExecutionClient {
       if(filled.gt(order.size)||settled.some(row=>String(row.status).toLowerCase()==='filled'&&!filled.eq(order.size)))return {status:'pending'};
       return {status:'settled',exchangeId:nativeId,filledSize:filled.toFixed()};
     }
-    return selected.length&&selected.every(row=>['open','pending','in-progress','partially-filled','partially_filled'].includes(String(row.status).toLowerCase()))?{status:'open',exchangeId:nativeId}:{status:'pending'};
+    if(!selected.length||selected.some(row=>!['open','pending','in-progress','partially-filled','partially_filled'].includes(String(row.status).toLowerCase())))return {status:'pending'};
+    const values=new Set(selected.map(row=>quantity(row.filled_base_amount)?.toFixed()));
+    if(values.size!==1||values.has(undefined))return {status:'pending'};
+    const filled=new Decimal([...values][0]!);if(filled.gt(order.size))return {status:'pending'};
+    return {status:'open',exchangeId:nativeId,filledSize:filled.toFixed()};
   }
   async orderEvidence(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
     const connector=order.marketType==='spot'?order.venue:connectors[order.venue];

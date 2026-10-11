@@ -5,6 +5,13 @@ root=Path('/opt/quanttrade/current')
 operator=Path('/opt/quanttrade/shared/data/operator-token').read_text().strip()
 agent=Path('/opt/quanttrade/shared/data/agent-token').read_text().strip()
 for token in (None,agent):
+    protection_headers={}
+    if token: protection_headers['Authorization']='Bearer '+token
+    try:
+        urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:4318/api/advanced-protection?requestId=00000000-0000-4000-8000-000000000000',headers=protection_headers),timeout=10)
+        raise AssertionError('Unattended protection status access accepted')
+    except urllib.error.HTTPError as error:
+        assert error.code in (401,403),error.code
     headers={'Content-Type':'application/json'}
     if token: headers['Authorization']='Bearer '+token
     try:
@@ -35,6 +42,6 @@ expected=hashlib.sha256((root/'deployment/quanttrade-hummingbot-trading.py').rea
 actual=subprocess.check_output(['docker','exec','quanttrade-hummingbot-api','sha256sum','/hummingbot-api/quanttrade_hummingbot_trading.py'],text=True).split()[0]
 assert expected==actual,'Signer runtime hash mismatch'
 scripts=[p.read_text(encoding='utf-8',errors='replace') for p in (root/'frontend/assets').glob('*.js')]
-for marker in ('prepare_advanced_execution','get_native_twap_evidence','get_advanced_order_capabilities','Confirm complete plan','chase-cancel','Refresh status','Prepare cancellation','native-twap-policy'):
+for marker in ('prepare_advanced_execution','get_native_twap_evidence','get_advanced_order_capabilities','get_advanced_protection_status','after-full-entry-fill','verified-settled-attempt-fills','Confirm complete plan','chase-cancel','Refresh status','Prepare cancellation','native-twap-policy'):
     assert any(marker in script for script in scripts),marker
 print('Native TWAP, managed Chase, fill evidence, runtime hash and human-only approval guards verified; no orders or cancellations submitted.')

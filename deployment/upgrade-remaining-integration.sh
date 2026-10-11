@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261011-4
-[[ "$previous" == /opt/quanttrade/releases/20261011-3 ]]
+release=/opt/quanttrade/releases/20261011-5
+[[ "$previous" == /opt/quanttrade/releases/20261011-4 ]]
 test ! -e "$release"
 mkdir "$release"
 tar -C "$previous" --exclude='./frontend-before-*' --exclude='./node_modules' --exclude='./upstream' -cf - . | tar -C "$release" -xf -

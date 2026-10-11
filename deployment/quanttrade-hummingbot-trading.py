@@ -573,10 +573,8 @@ async def settled_order_evidence(connector, pair, order_id, amount, side):
     record = await status_read()
     if record is None:
         return pending
-    if record.get('status') == 'open':
-        return {'status': 'open', 'exchangeId': order_id}
     terminal = record.get('status')
-    if terminal != 'filled' and not (isinstance(terminal, str) and (terminal == 'canceled' or terminal.endswith('Canceled'))):
+    if terminal not in ('open', 'filled') and not (isinstance(terminal, str) and (terminal == 'canceled' or terminal.endswith('Canceled'))):
         return pending
     order = record['order']
     timestamp = order.get('timestamp')
@@ -591,6 +589,8 @@ async def settled_order_evidence(connector, pair, order_id, amount, side):
             return pending
     except ArithmeticError:
         return pending
+    if terminal == 'open':
+        return {'status': 'open', 'filledSize': str(reviewed - remaining), 'exchangeId': order_id}
     expected = reviewed if terminal == 'filled' else reviewed - remaining
     total, seen, complete = Decimal(0), {}, False
     for _ in range(100):
@@ -982,6 +982,7 @@ async def hyperliquid_twap_evidence(connector, dto):
                 raise ValueError('TWAP fills exceed the reviewed quantity')
         return {'twap_id':dto.twap_id, 'verified_fill_size':str(size),
             **({'verified_fill_price':str(notional / size)} if size > 0 else {}),
+            'fills':[{'id':tid,'size':value[1],'price':value[2]} for tid,value in seen.items()],
             'history_may_be_truncated':len(rows) >= 2000,
             'status':'fills-observed' if size > 0 else 'unverified'}
 

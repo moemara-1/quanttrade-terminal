@@ -30,7 +30,7 @@ class ChaseEvidenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_open_identity_requires_exact_size_side_and_owned_oid(self):
         c, record = self.connector('open', [])
-        self.assertEqual(await module.settled_order_evidence(c, 'BTC-USD', '11', '10', 'buy'), {'status': 'open', 'exchangeId': '11'})
+        self.assertEqual(await module.settled_order_evidence(c, 'BTC-USD', '11', '10', 'buy'), {'status': 'open', 'exchangeId': '11', 'filledSize': '2'})
         for field, value in [('origSz', '11'), ('side', 'A'), ('oid', 12), ('coin', 'ETH')]:
             old = record['order']['order'][field]
             record['order']['order'][field] = value
@@ -62,3 +62,12 @@ class ChaseEvidenceTests(unittest.IsolatedAsyncioTestCase):
         changed = {'status': 'order', 'order': {**record['order'], 'status': 'open'}}
         c._api_post.side_effect = [record, [fill], changed]
         self.assertEqual((await module.settled_order_evidence(c, 'BTC-USD', '11', '10', 'buy'))['status'], 'pending')
+
+    async def test_open_remaining_is_authoritative_and_missing_or_invalid_never_zero(self):
+        for remaining in [None, '-1', '11', 'NaN', True]:
+            c, record = self.connector('open', [])
+            record['order']['order']['sz'] = remaining
+            self.assertEqual((await module.settled_order_evidence(c, 'BTC-USD', '11', '10', 'buy'))['status'], 'pending')
+        c, record = self.connector('open', [])
+        record['order']['order']['sz'] = '10'
+        self.assertEqual(await module.settled_order_evidence(c, 'BTC-USD', '11', '10', 'buy'), {'status': 'open', 'exchangeId': '11', 'filledSize': '0'})

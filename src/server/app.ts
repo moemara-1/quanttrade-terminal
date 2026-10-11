@@ -17,8 +17,10 @@ import { parseCredentials } from './connections.ts';
 import type { LighterNativeOrders } from './lighter-native-orders.ts';
 import type { HyperliquidNativeTwap } from './hyperliquid-native-twap.ts';
 import type { ChasePlans } from './chase-plans.ts';
+import type { AdvancedProtection } from './advanced-protection.ts';
 
 interface Services {
+  advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
   lighterNativeOrders?:Pick<LighterNativeOrders,'execute'>;
@@ -269,6 +271,12 @@ export function createApp(services: Services) {
     catch(error){res.status(400).json({error:error instanceof Error?error.message:'Chase plan validation failed',submissionAttempted:false});}
   });
   app.get('/api/chase-plans',operator,(_req,res)=>res.json({runs:services.chasePlans?.list()??[]}));
+  app.get('/api/advanced-protection',operator,(req,res)=>{
+    if(!services.advancedProtection)throw Error('Advanced protection service is unavailable');
+    const run=services.advancedProtection.get(z.string().uuid().parse(req.query.requestId));
+    if(run.input.accountName!==desk.status().accountName||desk.modeFor(run.input.venue)!=='live'||desk.store.connectionFingerprint(run.input.accountName,run.input.venue)!==run.input.connectionRevision)throw Error('Reviewed protection account, mode or connection changed');
+    res.json({run});
+  });
   app.post('/api/terminal/chase-cancel',operator,(_req,res)=>{
     if(!services.chasePlans){res.status(503).json({error:'Managed Chase is unavailable',submissionAttempted:false});return;}
     if(connecting.size){res.status(409).json({error:'Exchange connection is being updated',submissionAttempted:false});return;}

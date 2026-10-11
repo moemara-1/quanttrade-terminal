@@ -63,16 +63,18 @@ export class TradingDesk {
   setHalted(halted: boolean): DeskStatus { this.store.halted = halted; return this.status(); }
 
   // Only the operator endpoint calls this, after the native terminal's attended confirmation.
-  async confirm(clientOrderId: string, mode: TradingMode, input: unknown): Promise<Proposal> {
+  async confirm(clientOrderId: string, mode: TradingMode, input: unknown, authorize?:()=>void, maxReservedNotional?:string): Promise<Proposal> {
+    authorize?.();
     const order = orderSchema.parse(input);
     if (mode !== this.modeFor(order.venue)) throw new Error('Terminal trading mode does not match the connected exchange mode');
-    if (mode !== this.config.mode) return this.scoped(mode).confirm(clientOrderId,mode,order);
-    const fingerprint = createHash('sha256').update(JSON.stringify({ mode, account: this.config.accountName, order })).digest('hex');
+    if (mode !== this.config.mode) return this.scoped(mode).confirm(clientOrderId,mode,order,authorize,maxReservedNotional);
+    const fingerprint = createHash('sha256').update(JSON.stringify({ mode, account: this.config.accountName, order, maxReservedNotional })).digest('hex');
     const existing = this.store.claimTerminal(clientOrderId, fingerprint);
     if (existing) return this.store.get(existing);
     const proposal = await this.propose(order, 'manual');
+    authorize?.();
     this.store.bindTerminal(clientOrderId, proposal.id);
-    return this.approve(proposal.id);
+    return this.approve(proposal.id,maxReservedNotional,authorize);
   }
 
   async preview(input: unknown): Promise<{order:OrderDraft;notional:string}> {
@@ -82,19 +84,22 @@ export class TradingDesk {
     return {order,notional:this.validate(order,market,'manual')};
   }
   async currentMarket(input:unknown):Promise<Market>{return this.quote(orderSchema.parse(input));}
-  async confirmBracket(requestId:string,mode:TradingMode,raw:[OrderDraft,OrderDraft]):Promise<{status:'submitted'|'paper-open'|'unknown';estimatedNotional:string;orderId?:string;error?:string}> {
+  async confirmBracket(requestId:string,mode:TradingMode,raw:[OrderDraft,OrderDraft],authorize?:()=>void,maxReservedNotional?:string):Promise<{status:'submitted'|'paper-open'|'unknown';estimatedNotional:string;orderId?:string;error?:string}> {
     const orders=raw.map(order=>orderSchema.parse(order)) as [OrderDraft,OrderDraft];
     if(this.store.halted||orders.some(order=>this.modeFor(order.venue)!==mode))throw new Error('Execution halted or reviewed OCO mode changed');
     if(orders.some(order=>order.venue!==orders[0].venue||order.symbol!==orders[0].symbol||order.marketType==='spot'||!order.reduceOnly||!order.trigger)||new Set(orders.map(order=>order.trigger?.triggerType)).size!==2)throw new Error('OCO requires matching reduce-only perpetual TP and SL exits');
     const quotes=await Promise.all(orders.map(order=>this.quote(order)));
+    authorize?.();
     const amount=orders.reduce((sum,order,index)=>sum.plus(this.validate(order,quotes[index],'manual')),new Decimal(0)).toFixed();
-    const fingerprint=createHash('sha256').update(JSON.stringify({mode,account:this.config.accountName,orders})).digest('hex');
+    if(maxReservedNotional!==undefined){const cap=new Decimal(maxReservedNotional);if(!cap.isFinite()||cap.lte(0)||new Decimal(amount).gt(cap))throw Error('Final validated notional exceeds immutable reviewed cap');}
+    const fingerprint=createHash('sha256').update(JSON.stringify({mode,account:this.config.accountName,orders,maxReservedNotional})).digest('hex');
     const previous=this.store.claimOperation(requestId,fingerprint);
     if(previous){if(previous.state==='completed')return previous.result as {status:'submitted'|'paper-open';estimatedNotional:string;orderId:string};return {status:'unknown',estimatedNotional:amount,error:'Grouped order outcome uncertain; inspect exchange before another proposal'};}
     try{
       this.store.reserveOperation(requestId,mode,this.day(),amount,this.config.dailyNotionalLimit);
       if(this.store.halted||this.modeFor(orders[0].venue)!==mode)throw new Error('Execution authorization changed');
       if(mode==='live'&&(!this.execution.configured||!this.execution.placeBracket))throw new Error('Native OCO execution is unavailable');
+      authorize?.();
       const orderId=mode==='paper'?`paper-oco-${requestId}`:await this.execution.placeBracket!(orders,orders.map((order,index)=>order.type==='market'?this.marketProtection(order,quotes[index]):undefined) as [string|undefined,string|undefined],requestId);
       const result={status:mode==='paper'?'paper-open' as const:'submitted' as const,estimatedNotional:amount,orderId};
       this.store.finishOperation(requestId,'completed',result);return result;
@@ -186,15 +191,16 @@ export class TradingDesk {
     this.store.save(proposal, 'proposal-created');
     return proposal;
   }
-  async approve(id: string): Promise<Proposal> {
+  async approve(id: string,maxReservedNotional?:string,authorize?:()=>void): Promise<Proposal> {
     if (this.store.halted) throw new Error('Execution is halted');
     const original = this.store.get(id);
     const mode=this.modeFor(original.order.venue);
-    if (mode!==this.config.mode) return this.scoped(mode).approve(id);
+    if (mode!==this.config.mode) return this.scoped(mode).approve(id,maxReservedNotional,authorize);
     if (original.status !== 'pending') throw new Error('Only pending proposals can be approved');
     if (original.mode !== this.config.mode) throw new Error('Proposal trading mode no longer matches this session');
     if (original.accountName !== this.config.accountName) throw new Error('Proposal execution account no longer matches this session');
     const authorized=()=>{
+      authorize?.();
       if(this.store.halted)throw new Error('Execution is halted');
       if(this.modeFor(original.order.venue)!==original.mode)throw new Error('Proposal trading mode changed during approval');
       if(original.mode==='live'&&(original.connectionRevision??null)!==this.store.connectionFingerprint(original.accountName,original.order.venue))throw new Error('Proposal exchange connection changed; prepare a fresh proposal');
@@ -209,6 +215,7 @@ export class TradingDesk {
     if (new Decimal(market.price).minus(original.referencePrice).abs().div(original.referencePrice).mul(10_000).gt(this.config.maxPriceDeviationBps)) throw new Error('Market price moved beyond the approval tolerance; prepare a new proposal');
     if (original.expiresAt <= this.clock()) throw new Error('Proposal expired while checking market data');
     authorized();
+    if(maxReservedNotional!==undefined){const cap=new Decimal(maxReservedNotional);if(!cap.isFinite()||cap.lte(0)||new Decimal(notional).gt(cap))throw Error('Final validated notional exceeds immutable reviewed cap');}
     const proposal = this.store.reserve(id, this.config.mode, this.day(), notional, this.config.dailyNotionalLimit);
     if (proposal.mode === 'paper') {
       proposal.status = proposal.order.type === 'market' && !proposal.order.trigger ? 'paper-filled' : 'paper-open';

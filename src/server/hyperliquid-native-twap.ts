@@ -1,20 +1,32 @@
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
+import { advancedProtectionSchema, type AdvancedProtection } from './advanced-protection.ts';
+import type { ProtectionInput } from './advanced-protection.ts';
 import type { OperationClient } from './operations.ts';
 import type { QuoteSource, TradingDesk } from './trading.ts';
 
 const positive=z.string().max(40).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).refine(value=>new Decimal(value).gt(0));
 const scope={requestId:z.string().uuid(),proposedAt:z.number().int().nonnegative(),credentialId:z.string().min(1).max(200),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/),accountName:z.string().min(1).max(200),mode:z.literal('live'),venue:z.literal('hyperliquid'),marketType:z.literal('perpetual'),symbol:z.string().max(100).regex(/^[A-Za-z0-9:_.]+-USDC$/)};
 export const hyperliquidNativeTwapSchema=z.discriminatedUnion('action',[
- z.object({...scope,action:z.literal('create'),side:z.enum(['buy','sell']),size:positive,durationMinutes:z.number().int().min(5).max(10080),randomize:z.boolean(),reduceOnly:z.boolean(),acceptNativeRisk:z.literal(true),referenceNotionalBudget:positive,leverage:z.number().int().min(1).max(125).optional(),marginMode:z.enum(['cross','isolated']).optional()}).strict(),
+ z.object({...scope,action:z.literal('create'),side:z.enum(['buy','sell']),size:positive,durationMinutes:z.number().int().min(5).max(10080),randomize:z.boolean(),reduceOnly:z.boolean(),protection:advancedProtectionSchema.optional(),acceptNativeRisk:z.literal(true),referenceNotionalBudget:positive,leverage:z.number().int().min(1).max(125).optional(),marginMode:z.enum(['cross','isolated']).optional()}).strict(),
  z.object({...scope,action:z.literal('cancel'),twapId:z.string().regex(/^[1-9]\d*$/).refine(value=>Number.isSafeInteger(Number(value)))}).strict(),
 ]);
 type Plan=z.infer<typeof hyperliquidNativeTwapSchema>;
 
 /** Native slices are venue-managed; this admission estimate is not a future price cap. */
 export class HyperliquidNativeTwap {
- constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now){}
+ constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection){}
+ recoverOwnedEntry(input:ProtectionInput):string|undefined {
+  const operation=this.desk.store.operation(input.id);
+  if(operation?.state!=='completed')return;
+  const receipt=z.object({status:z.literal('accepted'),twap_id:z.string().regex(/^[1-9]\d*$/).refine(value=>Number.isSafeInteger(Number(value))),reviewedPlan:hyperliquidNativeTwapSchema}).safeParse(operation.result);
+  if(!receipt.success||receipt.data.reviewedPlan.action!=='create')return;
+  const plan=receipt.data.reviewedPlan;
+  if(input.kind!=='native-twap'||input.venue!=='hyperliquid'||plan.requestId!==input.id||plan.accountName!==input.accountName||plan.connectionRevision!==input.connectionRevision||plan.symbol!==input.symbol||plan.side!==input.side||plan.size!==input.size||plan.reduceOnly!==input.reduceOnly||JSON.stringify(plan.protection)!==JSON.stringify(input.protection))return;
+  if(this.desk.status().accountName!==input.accountName||this.desk.modeFor(input.venue)!=='live'||this.desk.store.connectionFingerprint(input.accountName,input.venue)!==input.connectionRevision)return;
+  return receipt.data.twap_id;
+ }
  async evidence(raw:unknown):Promise<unknown>{
   const request=z.object({accountName:scope.accountName,connectionRevision:scope.connectionRevision,requestId:z.string().uuid().optional(),symbol:scope.symbol,twapId:z.string().regex(/^[1-9]\d*$/).refine(v=>Number.isSafeInteger(Number(v))),side:z.enum(['buy','sell']),size:positive}).strict().parse(raw);
   const authorized=()=>{
@@ -51,6 +63,7 @@ export class HyperliquidNativeTwap {
    const latestReferenceNotional=new Decimal(preview.notional).div(ordinaryMultiplier);
    if(latestReferenceNotional.lt(100))throw new Error('Native Hyperliquid TWAP requires at least 100 USDC reference notional');
    notional=latestReferenceNotional.mul(Decimal.max('1.03',ordinaryMultiplier));
+   if(plan.protection){const referencePrice=latestReferenceNotional.div(plan.size),stop=new Decimal(plan.protection.stopLossPrice);if(plan.side==='buy'?stop.gte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).lte(referencePrice)):stop.lte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).gte(referencePrice)))throw Error('Native protection triggers are already crossed at the latest admission reference price');if(!this.protection)throw Error('Advanced protection service is unavailable');await this.protection.prepare({id:plan.requestId,kind:'native-twap',accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,symbol:plan.symbol,side:plan.side,size:plan.size,sizeDecimals:market.sizeDecimals,reduceOnly:plan.reduceOnly,protection:plan.protection});this.authorize(plan);}
    if(notional.gt(plan.referenceNotionalBudget)||notional.gt(this.desk.status().maxOrderNotional))throw new Error('Native TWAP reference admission estimate exceeds reviewed or configured notional limit');
   }
   this.authorize(plan);
@@ -63,7 +76,7 @@ export class HyperliquidNativeTwap {
    const result=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.literal(plan.symbol.replace(/-USDC$/,'-USD')),twap_id:z.string().regex(/^[1-9]\d*$/)}).passthrough().parse(await this.client.perform(plan.action==='create'?'hyperliquid-twap':'hyperliquid-twap-cancel',{request_id:plan.requestId,account_name:plan.accountName,connector_name:'hyperliquid_perpetual',trading_pair:plan.symbol.replace(/-USDC$/,'-USD'),...(plan.action==='create'?{side:plan.side,amount:plan.size,duration_minutes:plan.durationMinutes,randomize:plan.randomize,reduce_only:plan.reduceOnly,...(plan.leverage!==undefined?{leverage:plan.leverage,margin_mode:plan.marginMode}:{})}:{twap_id:plan.twapId})}));
    if(plan.action==='cancel'&&result.twap_id!==plan.twapId)throw new Error('TWAP cancellation acknowledgment identity mismatch');
    const receipt=plan.action==='create'?{...result,reviewedPlan:plan}:result;
-   this.desk.store.finishOperation(plan.requestId,'completed',receipt);return {status:'accepted',result:receipt};
+   this.desk.store.finishOperation(plan.requestId,'completed',receipt);if(plan.action==='create'&&plan.protection)this.protection!.bindEntry(plan.requestId,result.twap_id);return {status:'accepted',result:receipt};
   }catch(error){
    const result={error:attempted?'Native TWAP submission outcome is uncertain. Inspect exchange state; this request will not be retried.':'Native TWAP blocked before submission; prepare a fresh proposal.'};
    try{this.desk.store.finishOperation(plan.requestId,'unknown',result);}catch{result.error+=' Durable status could not be updated; the request remains claimed.';}

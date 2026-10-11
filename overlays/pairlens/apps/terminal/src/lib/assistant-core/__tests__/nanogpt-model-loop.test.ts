@@ -7,7 +7,7 @@ import type { LanguageModel } from 'ai'
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
-test('NanoGPT DeepSeek thinking streams tools and preserves reasoning on the next step', async () => {
+test.each(['reasoning', 'reasoning_content'])('NanoGPT DeepSeek thinking streams %s and preserves it on the tool followup', async (reasoningField) => {
   const modelId = 'deepseek/deepseek-v4-flash:thinking'
   const plugin = createNanogptInferencePlugin(nanogptInferenceManifest)
   await plugin.initialize?.({ apiKey: 'offline-fixture-key', model: modelId })
@@ -19,7 +19,7 @@ test('NanoGPT DeepSeek thinking streams tools and preserves reasoning on the nex
     expect(body.model).toBe(modelId)
     expect(body.stream).toBe(true)
     const choices = requests.length === 1
-      ? [{ delta: { reasoning_content: 'Checking time.', tool_calls: [{ index: 0, id: 'clock-1', type: 'function', function: { name: 'read_clock', arguments: '{}' } }] }, finish_reason: 'tool_calls', index: 0 }]
+      ? [{ delta: { [reasoningField]: 'Checking time.', tool_calls: [{ index: 0, id: 'clock-1', type: 'function', function: { name: 'read_clock', arguments: '{}' } }] }, finish_reason: 'tool_calls', index: 0 }]
       : [{ delta: { content: 'Ready.' }, finish_reason: 'stop', index: 0 }]
     return new Response(`data: ${JSON.stringify({ id: 'fixture', model: modelId, choices })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } })
   }, { preconnect: originalFetch.preconnect })

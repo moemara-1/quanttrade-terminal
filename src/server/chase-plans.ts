@@ -2,13 +2,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
+import { advancedProtectionSchema, type AdvancedProtection } from './advanced-protection.ts';
 import type { TradingDesk } from './trading.ts';
 import type { OperationClient } from './operations.ts';
 import type { OrderDraft } from '../shared/types.ts';
 import type { OrderBook, Venue } from '../shared/types.ts';
 
 const positive=z.string().max(40).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).refine(v=>new Decimal(v).gt(0));
-export const chasePlanSchema=z.object({requestId:z.string().uuid(),proposedAt:z.number().int().nonnegative(),credentialId:z.string().min(1).max(200),accountName:z.string().min(1).max(200),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/),mode:z.literal('live'),venue:z.enum(['lighter','hyperliquid']),marketType:z.literal('perpetual'),symbol:z.string().max(100).regex(/^[A-Za-z0-9:_.]+-USDC$/),side:z.enum(['buy','sell']),size:positive,lowerPrice:positive,upperPrice:positive,durationSeconds:z.number().int().min(30).max(86400),intervalSeconds:z.number().int().min(10).max(300),maxAttempts:z.number().int().min(1).max(100),maxTotalNotional:positive,postOnly:z.boolean().optional(),reduceOnly:z.boolean().optional(),leverage:z.number().int().min(1).max(125).optional(),marginMode:z.enum(['cross','isolated']).optional()}).strict();
+export const chasePlanSchema=z.object({requestId:z.string().uuid(),proposedAt:z.number().int().nonnegative(),credentialId:z.string().min(1).max(200),accountName:z.string().min(1).max(200),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/),mode:z.literal('live'),venue:z.enum(['lighter','hyperliquid']),marketType:z.literal('perpetual'),symbol:z.string().max(100).regex(/^[A-Za-z0-9:_.]+-USDC$/),side:z.enum(['buy','sell']),size:positive,lowerPrice:positive,upperPrice:positive,durationSeconds:z.number().int().min(30).max(86400),intervalSeconds:z.number().int().min(10).max(300),maxAttempts:z.number().int().min(1).max(100),maxTotalNotional:positive,protection:advancedProtectionSchema.optional(),postOnly:z.boolean().optional(),reduceOnly:z.boolean().optional(),leverage:z.number().int().min(1).max(125).optional(),marginMode:z.enum(['cross','isolated']).optional()}).strict();
 type Plan=z.infer<typeof chasePlanSchema>;
 export interface ChaseEvidence {status:'open'|'settled'|'pending';filledSize?:string;exchangeId?:string;error?:string}
 interface EvidenceClient {chaseEvidence(order:OrderDraft,id:string):Promise<ChaseEvidence>}
@@ -22,7 +23,8 @@ export class ChasePlans {
   private busy=false;
   private closing=false;
   private closed=false;
-  constructor(path:string,private desk:TradingDesk,private evidence:EvidenceClient,private client:OperationClient,private clock=Date.now,private books?:{book(venue:Venue,symbol:string,marketType:'perpetual'):Promise<OrderBook>}){
+  private closeWaiters:Array<()=>void>=[];
+  constructor(path:string,private desk:TradingDesk,private evidence:EvidenceClient,private client:OperationClient,private clock=Date.now,private books?:{book(venue:Venue,symbol:string,marketType:'perpetual'):Promise<OrderBook>},private protection?:AdvancedProtection){
     this.db=new DatabaseSync(path);this.db.exec('PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS chase_runs(id TEXT PRIMARY KEY,body TEXT NOT NULL)');
     for(const run of this.list())if(run.status==='active'&&run.attempts.some(a=>a.phase==='submitting'||a.phase==='cancelling')){run.status='paused';run.error='Service restarted during an exchange mutation. Inspect owned orders; this plan will not replay.';this.save(run);}
   }
@@ -41,6 +43,10 @@ export class ChasePlans {
     const existing=this.list().find(r=>r.id===plan.requestId);if(existing){if(existing.fingerprint!==fingerprint)throw Error('Approval ID belongs to a different Chase plan');return existing;}
     this.authorized(plan);
     if(plan.proposedAt>this.clock()+5000||this.clock()-plan.proposedAt>180000)throw Error('Chase proposal expired; prepare a fresh review');
+    if(plan.protection){
+      const stop=new Decimal(plan.protection.stopLossPrice);
+      if(plan.side==='buy'?stop.gte(plan.lowerPrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).lte(plan.upperPrice)):stop.lte(plan.upperPrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).gte(plan.lowerPrice)))throw Error('Protective stop and take-profits must lie strictly outside the reviewed entry band');
+    }
     if(new Decimal(plan.lowerPrice).gte(plan.upperPrice))throw Error('Chase lower price must be below its upper price');
     if((plan.leverage===undefined)!==(plan.marginMode===undefined)||plan.reduceOnly&&plan.leverage!==undefined)throw Error('Opening leverage requires paired margin mode; reduce-only Chase cannot change leverage');
     if(this.list().filter(r=>r.status==='active').length>=20)throw Error('Too many active Chase plans');
@@ -54,6 +60,7 @@ export class ChasePlans {
     if(this.clock()-plan.proposedAt>180000)throw Error('Chase proposal expired during market reads');
     const raced=this.list().find(r=>r.id===plan.requestId);if(raced){if(raced.fingerprint!==fingerprint)throw Error('Approval ID belongs to a different Chase plan');return raced;}
     if(this.list().filter(r=>r.status==='active').length>=20)throw Error('Too many active Chase plans');
+    if(plan.protection){if(!this.protection)throw Error('Advanced protection service is unavailable');await this.protection.prepare({id:plan.requestId,kind:'chase',accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,symbol:plan.symbol,side:plan.side,size:plan.size,sizeDecimals:market.sizeDecimals,reduceOnly:plan.reduceOnly??false,protection:plan.protection});this.authorized(plan);}
     const run:ChaseRun={id:plan.requestId,fingerprint,plan,startedAt:this.clock(),deadline:this.clock()+plan.durationSeconds*1000,status:'active',attempts:[],filledSize:'0',spent:'0',stopRequested:false};this.save(run);return run;
   }
   cancel(id:string):ChaseRun{const run=this.get(id);if(!['active','paused'].includes(run.status)||run.attempts.at(-1)?.phase==='submitting'||run.status==='paused'&&run.attempts.at(-1)?.phase==='cancelling')throw Error('Uncertain Chase mutations must be inspected before cancellation');this.authorized(run.plan,true);run.stopRequested=true;run.status='active';this.save(run);return run;}
@@ -73,6 +80,7 @@ export class ChasePlans {
     if(this.busy||this.closing)return;this.busy=true;
     try{for(const run of this.list().filter(r=>r.status==='active')){
       try{
+        if(run.plan.protection){if(!this.protection)throw Error('Protection service unavailable');const protectionRun=this.protection.get(run.id);if(protectionRun.entryId){await this.protection.reconcile(run.id,{complete:true,fills:run.attempts.flatMap((a,i)=>a.phase==='settled'&&new Decimal(a.filledSize??'0').gt(0)?[{id:`attempt-${i+1}`,size:a.filledSize!}]:[]),entrySettled:run.status==='completed'||run.status==='cancelled'});if(this.protection.get(run.id).stopEntryRequested){run.stopRequested=true;this.save(run);}}}
         this.authorized(run.plan,run.stopRequested);const attempt=run.attempts.at(-1);
         if(attempt&&attempt.phase!=='settled'){
           if(!attempt.orderId)throw Error('Owned order identity is unavailable; no replacement allowed');
@@ -99,6 +107,7 @@ export class ChasePlans {
           }
           continue;
         }
+        if(run.plan.protection&&!this.protection!.entryAllowed(run.id))throw Error('Protection evidence or mutation unresolved; no further entry allowed');
         if(run.stopRequested||this.clock()>=run.deadline||run.attempts.length>=run.plan.maxAttempts){run.status='cancelled';this.save(run);continue;}
         const remaining=new Decimal(run.plan.size).minus(run.filledSize).toFixed();
         const market=await this.desk.currentMarket(this.order(run.plan,remaining,run.plan.lowerPrice,run.attempts.length===0));this.authorized(run.plan);
@@ -107,13 +116,20 @@ export class ChasePlans {
         const order=this.order(run.plan,remaining,price.toFixed(),run.attempts.length===0),preview=await this.desk.preview(order);this.authorized(run.plan);
         if(this.closing||this.clock()>=run.deadline||this.get(run.id).stopRequested)continue;
         if(new Decimal(run.spent).plus(preview.notional).gt(run.plan.maxTotalNotional))throw Error('Chase gross submission budget exhausted; remaining orders paused');
+        const remainingBudget=new Decimal(run.plan.maxTotalNotional).minus(run.spent).toFixed();
         const current:Attempt={order,phase:'submitting',submittedAt:this.clock()};run.attempts.push(current);run.spent=new Decimal(run.spent).plus(preview.notional).toFixed();this.save(run);
-        const proposal=await this.desk.confirm(`chase:${run.id}:${run.attempts.length}`,'live',order);
+        const proposal=await this.desk.confirm(`chase:${run.id}:${run.attempts.length}`,'live',order,()=>{this.authorized(run.plan);if(this.closing||this.get(run.id).stopRequested)throw Error('Chase entry stopped during confirmation');},remainingBudget);
+        run.spent=new Decimal(run.spent).minus(preview.notional).plus(proposal.estimatedNotional).toFixed();this.save(run);
         if(proposal.status!=='submitted'||!proposal.orderId)throw Error('Chase submission outcome is uncertain; inspect owned order before another trade');
-        current.orderId=proposal.orderId;current.phase='open';this.save(run);
+        current.orderId=proposal.orderId;current.phase='open';this.save(run);if(run.plan.protection&&!this.protection!.get(run.id).entryId)this.protection!.bindEntry(run.id,run.id);this.authorized(run.plan);
       }catch(error){run.status='paused';run.error=error instanceof Error?error.message:'Chase execution unverified';this.save(run);}
-    }}finally{this.busy=false;if(this.closing&&!this.closed){this.closed=true;this.db.close();}}
+    }}finally{this.busy=false;if(this.closing&&!this.closed){this.closed=true;this.db.close();for(const resolve of this.closeWaiters.splice(0))resolve();}}
   }
   startTimer(){if(!this.timer)this.timer=setInterval(()=>{void this.tick();},1000).unref();}
-  close(){this.closing=true;if(this.timer)clearInterval(this.timer);if(!this.busy&&!this.closed){this.closed=true;this.db.close();}}
+  close():Promise<void>{
+    this.closing=true;if(this.timer)clearInterval(this.timer);
+    if(this.closed)return Promise.resolve();
+    if(!this.busy){this.closed=true;this.db.close();return Promise.resolve();}
+    return new Promise<void>(resolve=>{this.closeWaiters.push(resolve);});
+  }
 }

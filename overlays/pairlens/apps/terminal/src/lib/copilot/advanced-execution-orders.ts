@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import Decimal from 'decimal.js'
 import { recordTradeSubmission } from './trade-submissions'
 import { assistantOrderAccount, assistantProposalMode } from './order-account'
 import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
@@ -9,6 +10,46 @@ const positive = z
   .max(40)
   .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/)
   .refine((value) => /[1-9]/.test(value), 'Must be positive')
+const protectionFields = {
+  stopLossPrice: positive,
+  takeProfits: z
+    .array(
+      z
+        .object({
+          price: positive,
+          sizePercent: positive.refine(
+            (value) => new Decimal(value).lte(100),
+            'Percentage must not exceed 100',
+          ),
+        })
+        .strict(),
+    )
+    .min(1)
+    .max(8),
+  maxExitNotional: positive,
+}
+const ExactDecimal = Decimal.clone({ precision: 100 })
+const completeAllocation = (value: {
+  takeProfits: Array<{ sizePercent: string }>
+}) =>
+  value.takeProfits
+    .reduce((sum, leg) => sum.plus(leg.sizePercent), new ExactDecimal(0))
+    .eq(100)
+const protectionInput = z
+  .object(protectionFields)
+  .strict()
+  .refine(completeAllocation, 'Take-profit percentages must total 100')
+const reviewedProtection = z
+  .object({
+    ...protectionFields,
+    activation: z.enum([
+      'after-full-entry-fill',
+      'verified-settled-attempt-fills',
+    ]),
+    management: z.literal('managed'),
+  })
+  .strict()
+  .refine(completeAllocation, 'Take-profit percentages must total 100')
 const common = {
   credentialId: z.string().min(1).optional(),
   mode: z.literal('live').optional(),
@@ -18,6 +59,7 @@ const common = {
   reduceOnly: z.boolean().default(false),
   leverage: z.number().int().min(1).max(125).optional(),
   marginMode: z.enum(['cross', 'isolated']).optional(),
+  protection: protectionInput.optional(),
 }
 const twap = z
   .object({
@@ -87,8 +129,12 @@ const identity = {
   marketType: z.literal('perpetual'),
 }
 const proposalSchema = z.discriminatedUnion('kind', [
-  twap.extend({ ...identity, venue: z.literal('hyperliquid') }),
-  chase.extend(identity),
+  twap.extend({
+    ...identity,
+    venue: z.literal('hyperliquid'),
+    protection: reviewedProtection.optional(),
+  }),
+  chase.extend({ ...identity, protection: reviewedProtection.optional() }),
   cancel.extend({ ...identity, venue: z.literal('hyperliquid') }),
   chaseCancel.extend(identity),
 ])
@@ -135,6 +181,14 @@ export async function prepareAdvancedExecution(
 ): Promise<Proposal> {
   const input = advancedExecutionInputSchema.parse(raw)
   if (
+    (input.kind === 'hyperliquid-twap' || input.kind === 'chase') &&
+    input.reduceOnly &&
+    input.protection
+  )
+    throw new Error(
+      'Bundled protection requires an opening entry; reduce-only entries cannot add protective exits.',
+    )
+  if (
     input.kind !== 'hyperliquid-twap-cancel' &&
     input.kind !== 'chase-cancel' &&
     (input.leverage !== undefined) !== (input.marginMode !== undefined)
@@ -170,6 +224,19 @@ export async function prepareAdvancedExecution(
     )
   return proposalSchema.parse({
     ...input,
+    ...((input.kind === 'hyperliquid-twap' || input.kind === 'chase') &&
+    input.protection
+      ? {
+          protection: {
+            ...input.protection,
+            management: 'managed',
+            activation:
+              input.kind === 'hyperliquid-twap'
+                ? 'after-full-entry-fill'
+                : 'verified-settled-attempt-fills',
+          },
+        }
+      : {}),
     venue,
     ...identityValues(
       account.id,

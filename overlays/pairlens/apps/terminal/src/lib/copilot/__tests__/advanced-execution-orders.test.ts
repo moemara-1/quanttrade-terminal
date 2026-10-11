@@ -24,6 +24,71 @@ const status = {
   connectionRevisions: { hyperliquid: 'a'.repeat(64) },
   venueModes: { hyperliquid: 'live' },
 }
+test('bundled protection survives one confirmation unchanged and invalid allocations never prepare', async () => {
+  const protection = {
+    stopLossPrice: '50000',
+    takeProfits: [
+      { price: '70000', sizePercent: '40' },
+      { price: '80000', sizePercent: '60' },
+    ],
+    maxExitNotional: '2000',
+  }
+  const reviewed = {
+    ...protection,
+    activation: 'after-full-entry-fill',
+    management: 'managed',
+  }
+  const proposal = await prepareAdvancedExecution(
+    { ...input, protection },
+    credentials,
+    async () => Response.json(status),
+    () => 1000,
+  )
+  expect(proposal.kind === 'hyperliquid-twap' && proposal.protection).toEqual(
+    reviewed,
+  )
+  let sent: unknown
+  const approval = new AdvancedExecutionApproval(
+    proposal,
+    () => credentials,
+    async (url, init) => {
+      if (url.endsWith('/status')) return Response.json(status)
+      sent = JSON.parse(String(init?.body))
+      return Response.json({
+        status: 'accepted',
+        result: {
+          status: 'accepted',
+          connector_name: 'hyperliquid_perpetual',
+          twap_id: '10',
+          trading_pair: 'BTC-USD',
+        },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('accepted')
+  expect((sent as { protection: unknown }).protection).toEqual(reviewed)
+  for (const bad of [
+    { ...protection, takeProfits: [{ price: '70000', sizePercent: '99' }] },
+    { ...protection, stopLossPrice: '0' },
+    { ...protection, maxExitNotional: '0' },
+    { ...protection, takeProfits: [{ price: '0', sizePercent: '100' }] },
+  ])
+    await expect(
+      prepareAdvancedExecution(
+        { ...input, protection: bad },
+        credentials,
+        async () => Response.json(status),
+      ),
+    ).rejects.toThrow()
+  await expect(
+    prepareAdvancedExecution(
+      { ...input, reduceOnly: true, protection },
+      credentials,
+      async () => Response.json(status),
+    ),
+  ).rejects.toThrow(/opening/)
+})
 test('preparation reads account only; duplicate confirmation never repeats execution', async () => {
   const requests: Array<string> = []
   const request = async (url: string) => {

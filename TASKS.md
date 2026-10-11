@@ -145,7 +145,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## NanoGPT assistant error
 - [completed] Confirmed UI masks all provider failures. Public NanoGPT catalog/tool support and CORS pass; actual SDK offline thinking/tool-followup test passes. Browser failure cause remains unobserved; no speculative adapter changes.
 - [completed] Safe actionable error categories and HTTP diagnostics deployed Hetzner20261010-1; billing notices retained. 14 offline tests/31 assertions, full native TypeScript/lint/build, 125 hosted backend tests and all hosted guards pass. No paid AI calls or trades.
-- [pending] User to retry once and provide QT-AI code; original browser provider failure not reproduced or claimed fixed.
+- [completed] User-authorized browser test on 11 October returned exactly OK in a clean conversation without tools or trades; current assistant failure did not reproduce. Both NanoGPT reasoning stream variants covered offline; original failure root cause remains unobserved.
 
 ## Direct AI trade confirmation and Lighter ticket values
 - [completed] Audit chat confirmation, Lighter balance/notional sizing and empty execution plans.
@@ -196,7 +196,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 
 ## Finish native TWAP, Chase and Atomic
 - [completed] Account-pinned evidence, fresh TWAP admission, explicit native risk permission and direct status/reviewed cancellation controls shipped Hetzner20261011-4. 3,920 terminal/190 backend/90 signer tests, TypeScript/lint/build and hosted guards pass; no live trades.
-- [in_progress] Add explicitly reviewed fill-aware protection to native Hyperliquid TWAP and managed Chase; current cards disclose entry-only scope. Managed entry-plus-protection plans are supported separately.
+- [completed] Bundled fill-aware native Hyperliquid TWAP and managed Chase protection shipped Hetzner20261011-5. One approval pins exact SL/TP allocations, account/revision and entry/exit caps; partial fills, settlement, late fills, restart binding and final quote races tested. 3,925 terminal/225 backend/91 signer tests, TypeScript/lint/build and hosted guards pass; no live trades or old plans resumed. Browser assistant connectivity test returned OK; original NanoGPT error not reproduced. Atomic remains unavailable without verified native contract.
 - [completed] Implement native Hyperliquid TWAP create/cancel/evidence and durable managed Chase with fresh bid/ask, partial-fill reconciliation, owned cancellation, one approval and account/revision guards.
 - [completed] 3,911 terminal, 183 backend and 90 signer tests; native/root TypeScript, changed-file ESLint and production build pass. Hetzner 20261011-3 hosted guards, signer runtime SHA and build identity pass. No live test trades/cancellations or old-plan resumes. Commit/push authorized.
 - [blocked] Atomic: official Lighter signer/prover expose no verified multi-market all-or-none signing contract; Hyperliquid ordinary batches allow independent leg outcomes. Capability discovery explicitly reports unavailable; no fake batch fallback. Verified primary sources recorded in docs/advanced-order-plan.md.
