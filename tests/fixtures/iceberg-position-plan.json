@@ -1,0 +1,248 @@
+{
+  "raw": {
+    "market": "lighter",
+    "pair": "PRL-USDC-USDC",
+    "side": "buy",
+    "totalSize": "12",
+    "maxTotalNotional": "100",
+    "leverage": 3,
+    "marginMode": "cross",
+    "kind": "iceberg",
+    "displaySize": "6",
+    "limitPrice": "1.4",
+    "stopLoss": "1.2",
+    "takeProfits": [
+      {
+        "price": "1.5",
+        "percent": 40
+      },
+      {
+        "price": "1.6",
+        "percent": 60
+      }
+    ]
+  },
+  "compiled": {
+    "market": "lighter",
+    "pair": "PRL-USDC-USDC",
+    "side": "buy",
+    "type": "limit",
+    "size": 12,
+    "exactSize": "12",
+    "price": 1.4,
+    "exactPrice": "1.4",
+    "leverage": 3,
+    "marginMode": "cross",
+    "reason": "Iceberg: 12 total base units, 2 slices. QuantTrade manages dependencies; child orders and paired protection are submitted to the reviewed venue. This is a managed plan. Protective exits do not cancel other entry slices. This is not an atomic basket or an exchange-hidden quantity.",
+    "workflow": {
+      "name": "Iceberg position plan",
+      "maxTotalNotional": "100",
+      "graph": {
+        "oco": true,
+        "steps": [
+          {
+            "id": "trigger",
+            "type": "trigger",
+            "data": {}
+          },
+          {
+            "id": "entry-1-1",
+            "type": "limit-order",
+            "data": {
+              "side": "inherit",
+              "sizeMode": "absolute",
+              "size": 2.4,
+              "priceMode": "absolute",
+              "priceValue": 1.4
+            }
+          },
+          {
+            "id": "entry-1-1-stop-loss",
+            "type": "stop-loss",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.2,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-1-1-take-profit",
+            "type": "take-profit",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.5,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-1-2",
+            "type": "limit-order",
+            "data": {
+              "side": "inherit",
+              "sizeMode": "absolute",
+              "size": 3.6,
+              "priceMode": "absolute",
+              "priceValue": 1.4
+            }
+          },
+          {
+            "id": "entry-1-2-stop-loss",
+            "type": "stop-loss",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.2,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-1-2-take-profit",
+            "type": "take-profit",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.6,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-2-1",
+            "type": "limit-order",
+            "data": {
+              "side": "inherit",
+              "sizeMode": "absolute",
+              "size": 2.4,
+              "priceMode": "absolute",
+              "priceValue": 1.4
+            }
+          },
+          {
+            "id": "entry-2-1-stop-loss",
+            "type": "stop-loss",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.2,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-2-1-take-profit",
+            "type": "take-profit",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.5,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-2-2",
+            "type": "limit-order",
+            "data": {
+              "side": "inherit",
+              "sizeMode": "absolute",
+              "size": 3.6,
+              "priceMode": "absolute",
+              "priceValue": 1.4
+            }
+          },
+          {
+            "id": "entry-2-2-stop-loss",
+            "type": "stop-loss",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.2,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          },
+          {
+            "id": "entry-2-2-take-profit",
+            "type": "take-profit",
+            "data": {
+              "triggerMode": "absolute",
+              "triggerValue": 1.6,
+              "sizePercent": 100,
+              "orderType": "market"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "trigger-to-entry-1-1",
+            "source": "trigger",
+            "target": "entry-1-1"
+          },
+          {
+            "id": "entry-1-1-to-entry-1-1-stop-loss",
+            "source": "entry-1-1",
+            "target": "entry-1-1-stop-loss"
+          },
+          {
+            "id": "entry-1-1-to-entry-1-1-take-profit",
+            "source": "entry-1-1",
+            "target": "entry-1-1-take-profit"
+          },
+          {
+            "id": "trigger-to-entry-1-2",
+            "source": "trigger",
+            "target": "entry-1-2"
+          },
+          {
+            "id": "entry-1-2-to-entry-1-2-stop-loss",
+            "source": "entry-1-2",
+            "target": "entry-1-2-stop-loss"
+          },
+          {
+            "id": "entry-1-2-to-entry-1-2-take-profit",
+            "source": "entry-1-2",
+            "target": "entry-1-2-take-profit"
+          },
+          {
+            "id": "entry-1-1-to-entry-2-1",
+            "source": "entry-1-1",
+            "target": "entry-2-1"
+          },
+          {
+            "id": "entry-1-2-to-entry-2-1",
+            "source": "entry-1-2",
+            "target": "entry-2-1"
+          },
+          {
+            "id": "entry-2-1-to-entry-2-1-stop-loss",
+            "source": "entry-2-1",
+            "target": "entry-2-1-stop-loss"
+          },
+          {
+            "id": "entry-2-1-to-entry-2-1-take-profit",
+            "source": "entry-2-1",
+            "target": "entry-2-1-take-profit"
+          },
+          {
+            "id": "entry-1-1-to-entry-2-2",
+            "source": "entry-1-1",
+            "target": "entry-2-2"
+          },
+          {
+            "id": "entry-1-2-to-entry-2-2",
+            "source": "entry-1-2",
+            "target": "entry-2-2"
+          },
+          {
+            "id": "entry-2-2-to-entry-2-2-stop-loss",
+            "source": "entry-2-2",
+            "target": "entry-2-2-stop-loss"
+          },
+          {
+            "id": "entry-2-2-to-entry-2-2-take-profit",
+            "source": "entry-2-2",
+            "target": "entry-2-2-take-profit"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -172,7 +172,12 @@ async function verifiedStatus(
     throw new Error(
       'Unable to verify the hosted live account. Nothing was submitted.',
     )
-  const status = statusSchema.parse(await response.json())
+  const parsed = statusSchema.safeParse(await response.json())
+  if (!parsed.success)
+    throw new Error(
+      'The live Lighter account has no verified connection revision. Reconnect Lighter in Connect Exchange and prepare a fresh native order. Nothing was submitted.',
+    )
+  const status = parsed.data
   if (accountName && status.accountName !== accountName)
     throw new Error(
       'The hosted account changed. Prepare a new native proposal.',
@@ -279,7 +284,7 @@ export class LighterNativeOrderApproval {
         throw new Error('This proposal expired. Prepare a fresh native order.')
       this.record('submitting')
       posted = true
-      const response = await this.request(
+      const response = await quantTradeFetch(
         '/_quanttrade/api/terminal/lighter-native-orders',
         {
           method: 'POST',
@@ -289,6 +294,7 @@ export class LighterNativeOrderApproval {
           signal: AbortSignal.timeout(35000),
           redirect: 'error',
         },
+        this.request,
       )
       const body: unknown = await response.json()
       const rejection = z

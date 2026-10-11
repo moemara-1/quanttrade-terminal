@@ -25,3 +25,11 @@ Hyperliquid exposes order batches, normalTpsl/positionTpsl grouping and twapOrde
 ## Acceptance checks
 
 Mock signing/wire tests, precision and full coverage partition tests, pending/partial fills, missing evidence, child failure, duplicate approval, service restart, changing account/mode/revision and kill-switch races. Production checks remain read-only. No test trades or replay of old paused plans.
+
+## Implementation status, 11 October
+
+The assistant compiler now prepares Scale, managed Iceberg and managed TWAP as one complete confirmation card on Lighter and Hyperliquid. Exact approved quantity is partitioned in exchange ticks; an Iceberg display slice waits for every allocation of the preceding slice to fill. Optional multi-TP allocations each have their own matching SL/TP group. Protection applies to the new entries only. Protective fills do not cancel other entry slices. Managed TWAP uses timed QuantTrade submissions, not a native Hyperliquid TWAP ID.
+
+Reviewed plans pin the account and credential revision from preparation through submission and later execution. Native Lighter submissions renew an expired hosted session once using the identical proposal ID; uncertain submission outcomes are not retried. Conditional/native Lighter types remain available through the existing native tool.
+
+Native Hyperliquid TWAP, bounded Chase and native Atomic are still pending. The assistant must disclose this boundary and must not replace an uncertain order or claim a regular batch is atomic. Native Hyperliquid TWAP needs explicit handling of the venue's fixed 3% slippage and future risk limits. Chase needs authoritative cancelled-order partial-fill reconciliation before replacement. Lighter Atomic requires a verified signing contract.

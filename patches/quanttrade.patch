@@ -8648,7 +8648,7 @@ index d295e08..8afa1df 100644
                  variant="ghost"
                  size="sm"
 diff --git a/apps/terminal/src/components/copilot/copilot-chat-message.tsx b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
-index 8feeacd..5a90e41 100644
+index 8feeacd..56bc8e4 100644
 --- a/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 +++ b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 @@ -42,6 +42,9 @@ import {
@@ -8661,13 +8661,17 @@ index 8feeacd..5a90e41 100644
  import type { NormalizedToolPart } from './tool-part'
  import type {
    CopilotCancelRequest,
-@@ -257,8 +260,27 @@ function toMessageBlocks(
+@@ -257,9 +260,39 @@ function toMessageBlocks(
      }
  
      const { toolName, output } = tool
 +    if (toolName === 'prepare_lighter_native_order' && output?.nativeOrder) {
 +      flush(index)
-+      blocks.push({ kind: 'node', key: `lighter-native-order-${index}`, node: <LighterNativeOrderCard nativeOrder={output.nativeOrder} /> })
++      blocks.push({
++        kind: 'node',
++        key: `lighter-native-order-${index}`,
++        node: <LighterNativeOrderCard nativeOrder={output.nativeOrder} />,
++      })
 +      return
 +    }
 +    if (toolName === 'prepare_exchange_operation' && output?.operation) {
@@ -8681,14 +8685,23 @@ index 8feeacd..5a90e41 100644
 +    }
      // Trading tools render an interactive confirmation card instead of a
      // status chip — the order only executes when the user confirms.
+-    if (toolName === 'place_order' && output?.order) {
 +    if (toolName === 'get_workflow_runs' && output?.runs) {
 +      flush(index)
-+      blocks.push({ kind: 'node', key: `workflow-runs-${index}`, node: <WorkflowRunsCard runs={output.runs} /> })
++      blocks.push({
++        kind: 'node',
++        key: `workflow-runs-${index}`,
++        node: <WorkflowRunsCard runs={output.runs} />,
++      })
 +      return
 +    }
-     if (toolName === 'place_order' && output?.order) {
++    if (
++      (toolName === 'place_order' || toolName === 'prepare_position_plan') &&
++      output?.order
++    ) {
        flush(index)
        blocks.push({
+         kind: 'node',
 diff --git a/apps/terminal/src/components/copilot/copilot-order-card.tsx b/apps/terminal/src/components/copilot/copilot-order-card.tsx
 index 219799a..80d2484 100644
 --- a/apps/terminal/src/components/copilot/copilot-order-card.tsx
@@ -12783,10 +12796,10 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..a378b1f 100644
+index ce0d317..a5c1e77 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -73,8 +73,16 @@ const WORKING_RULES = [
+@@ -73,8 +73,17 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -12796,6 +12809,7 @@ index ce0d317..a378b1f 100644
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
 +  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
 +  'For native Lighter order types and entry-attached OTO/OTOCO use prepare_lighter_native_order. Native TWAP must use that tool, not a scheduled graph. For other single orders or custom scheduled graphs, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
++  'For a Scale ladder or fill-gated Iceberg on Lighter or Hyperliquid, use prepare_position_plan: one card approves every slice and optional exact multi-TP/SL allocation. Use its twap kind only when the user wants a QuantTrade-managed timed plan with a gross budget or custom multi-TP protection; clearly call it Managed TWAP. A native Lighter TWAP remains prepare_lighter_native_order. The native Hyperliquid TWAP API exists but is not exposed by this tool; never call its managed alternative native. The card includes entry dependencies, account revision and gross cap. Paired protection covers each allocated entry, excluding prior holdings. Protective exits do not cancel other entry slices. Do not create individual approval cards for each child. Native Atomic baskets and Chase Limit are not integrated; report that limitation instead of silently substituting separate orders or claiming all-or-none execution. Never switch an uncertain limit entry to a market entry or recreate its proposal: reconcile the original exchange identity first.',
 +  'Server graph trigger is only input metadata and NEVER places an entry or has a fill. An immediate entry requires an explicit market-order or limit-order directly after trigger. Count only actual entry nodes as DCA slices. Old conversation claims that trigger is a buy are incorrect; inspect the current graph and correct those claims. A saved graph may need a freshly reviewed correction rather than executing its unchanged mistaken topology.',
 +  'The manual Workflow ticket and the chat workflow card register through the SAME QuantTrade workflow endpoint. Do not tell the user manual selection bypasses the scheduler or makes trigger submit a buy. Check get_workflow_runs and the exact account snapshot to diagnose missing orders. A balance difference alone is not fill evidence. Public venue research and funding data cannot establish private order outcomes. Tool errors are failed reads, never proof an order was placed or that the exchange connection failed. Report uncertainty precisely, without retrying orders.',
 +  'Carry the requested account, mode, leverage, margin mode, exact size and price into the order proposal. If these are missing or ambiguous, ask before preparing; never substitute another account. When the ticket supplies credentialId and mode, use those exact fields. Live orders still require the human to approve the clearly labelled live card.',
@@ -12805,7 +12819,7 @@ index ce0d317..a378b1f 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +102,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +103,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -12943,10 +12957,10 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..bfc3c75 100644
+index bf4d768..0ecb6b6 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
-@@ -17,12 +17,18 @@
+@@ -17,12 +17,19 @@
  
  export const WORKFLOW_GUIDE = [
    '## What a workflow is',
@@ -12961,6 +12975,7 @@ index bf4d768..bfc3c75 100644
 +  '- A missing fill read stays pending and retries only the read. Never rebuild a plan, submit a manual duplicate, or replay the remaining buys as a workaround. Inspect the exact run and account evidence. Paused old runs remain paused; a new proposal must explicitly account for any already-filled entries.',
 +  '- Maximum total quote notional is the reviewed gross order budget, including entry and protective exit submissions, not the margin deposit. Estimate it from all order quantities and applicable prices; do not silently invent or raise the user budget. Native OCO requires matching TP/SL siblings with the same parents and close percentage; one 100% stop plus three unequal take-profit slices is not that pairing. Only promise connector order types verified by its available tools. Do not invent native TWAP, scale orders or atomic multi-TP support.',
 +  '- A confirmation registers the reviewed graph; registration is not proof of submission or a fill. Read get_workflow_runs for the run ID and individual node errors, exchange order IDs and fill evidence before saying orders were sent or filled. If failed or unverified, report the exact outcome and do not automatically retry. Do not ask the user to confirm again after the card has already registered a run.',
++  '- prepare_position_plan builds a complete Scale, Iceberg or explicitly Managed TWAP plan on Lighter/Hyperliquid and returns one chat confirmation card for every child. Scale places native child limits; managed Iceberg waits for verified fills before exposing the next display slice; managed TWAP has explicit immediate and scheduled market entries with an enforced gross cap. Optional multi-TP allocations partition exact new-entry size into paired SL/TP brackets. These are managed plans, not atomic baskets or exchange-hidden quantities. Protective exits do not cancel other entry slices. Do not require individual child confirmations, a manual ticket or a saved workflow. Native Atomic and Chase Limit integration remain unavailable; do not claim otherwise.',
    '- Write the whole graph in one update_workflow call: it replaces steps and edges wholesale, so include everything you want to keep, trigger included.',
    '- Read the validation you get back. "Must have a trigger step", a dangling edge or a cycle means the graph is not runnable, and fixing it is your job rather than the user’s. When a step fails validation the result carries that step type’s `expectedConfig`: use it and fix the call, rather than trying another spelling.',
 -  '- A workflow you build lands as an uncommitted draft. The user reviews and commits it. Say so instead of implying it is live.',
@@ -12968,7 +12983,7 @@ index bf4d768..bfc3c75 100644
  ].join('\n')
  
  export const NOTIFICATION_GUIDE = [
-@@ -39,6 +45,6 @@ export const NOTIFICATION_GUIDE = [
+@@ -39,6 +46,6 @@ export const NOTIFICATION_GUIDE = [
  /** The pointer that stands in for the full SDK guide off the workbench. */
  export const SCRIPT_GUIDE_POINTER = [
    '## Writing indicators and strategies',
@@ -13365,7 +13380,7 @@ index e7631ae..5082a86 100644
        },
      }),
 diff --git a/apps/terminal/src/lib/copilot/tool-labels.ts b/apps/terminal/src/lib/copilot/tool-labels.ts
-index fc621a5..dcd596d 100644
+index fc621a5..51712aa 100644
 --- a/apps/terminal/src/lib/copilot/tool-labels.ts
 +++ b/apps/terminal/src/lib/copilot/tool-labels.ts
 @@ -84,6 +84,12 @@ export const COPILOT_TOOL_LABELS = {
@@ -13381,28 +13396,36 @@ index fc621a5..dcd596d 100644
    get_risk_limits: ['check', 'risk limits'],
    get_account_settings: ['read', 'account settings'],
  
-@@ -128,6 +134,10 @@ export const COPILOT_TOOL_LABELS = {
+@@ -128,6 +134,11 @@ export const COPILOT_TOOL_LABELS = {
    // ---- Trading (proposals — the user confirms before anything executes) ----
    place_order: ['propose', 'an order'],
    cancel_order: ['propose', 'an order cancellation'],
 +  get_trade_submissions: ['read', 'trade submission evidence'],
 +  get_workflow_runs: ['read', 'workflow execution status'],
 +  prepare_lighter_native_order: ['propose', 'a native Lighter order'],
++  prepare_position_plan: ['propose', 'a complete position plan'],
 +  prepare_exchange_operation: ['propose', 'an exchange operation'],
  
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..6dcd655 100644
+index 2f8e01a..76a4df1 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,116 @@
+@@ -2,9 +2,192 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
-+import { lighterNativeOrderInputSchema, prepareLighterNativeOrder } from './lighter-native-orders'
++import {
++  compilePositionPlan,
++  positionPlanInputSchema,
++} from './advanced-position-plan'
++import {
++  lighterNativeOrderInputSchema,
++  prepareLighterNativeOrder,
++} from './lighter-native-orders'
  import { resolveTarget } from './tool-deps'
 +import {
 +  assistantOrderAccount,
@@ -13452,30 +13475,99 @@ index 2f8e01a..6dcd655 100644
 +  })
 +  .strict()
 +export type VenueOrderControls = z.infer<typeof venueOrderControlsSchema>
-+const scheduledWorkflowSchema = z.object({
-+  name: z.string().min(1).max(100),
-+  maxTotalNotional: decimal,
-+  steps: z.array(z.object({
-+    ...venueOrderControlsSchema.shape,
-+    delaySeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-+    side: z.enum(['buy', 'sell']),
-+    type: z.enum(['market', 'limit']),
-+    exactSize: decimal,
-+  }).strict()).min(1),
-+}).strict().superRefine((plan, ctx) => {
-+  let previous = -1
-+  for (const step of plan.steps) {
-+    if (step.delaySeconds < previous || (step.type === 'limit' && !step.exactPrice) || (step.type === 'market' && step.exactPrice) || (step.postOnly && (step.type !== 'limit' || step.trigger)) || ((step.leverage !== undefined) !== (step.marginMode !== undefined)))
-+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Each workflow step needs chronological time, exact size/limit price and compatible explicit leverage/margin controls.' })
-+    previous = step.delaySeconds
-+  }
-+})
-+export const workflowGraphSchema = z.object({
-+  oco: z.boolean().optional(),
-+  steps: z.array(z.object({ id: z.string().min(1), type: z.string().min(1), position: z.object({ x: z.number(), y: z.number() }).optional(), data: z.record(z.string(), z.unknown()) }).strict()).min(1),
-+  edges: z.array(z.object({ id: z.string().min(1), source: z.string().min(1), sourceHandle: z.string().optional(), target: z.string().min(1) }).strict()),
-+}).strict().refine((graph) => graph.steps.some((step) => ['market-order', 'limit-order', 'take-profit', 'stop-loss'].includes(step.type)), 'This trade plan has no executable orders. Ask the assistant to prepare the complete entry and exits before confirming.')
-+export const approvedWorkflowSchema = z.union([scheduledWorkflowSchema, z.object({ name: z.string().min(1).max(100), maxTotalNotional: decimal, graph: workflowGraphSchema }).strict()])
++const scheduledWorkflowSchema = z
++  .object({
++    name: z.string().min(1).max(100),
++    maxTotalNotional: decimal,
++    accountName: z.string().min(1).optional(),
++    connectionRevision: z
++      .string()
++      .regex(/^[a-f0-9]{64}$/)
++      .optional(),
++    steps: z
++      .array(
++        z
++          .object({
++            ...venueOrderControlsSchema.shape,
++            delaySeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
++            side: z.enum(['buy', 'sell']),
++            type: z.enum(['market', 'limit']),
++            exactSize: decimal,
++          })
++          .strict(),
++      )
++      .min(1),
++  })
++  .strict()
++  .superRefine((plan, ctx) => {
++    let previous = -1
++    for (const step of plan.steps) {
++      if (
++        step.delaySeconds < previous ||
++        (step.type === 'limit' && !step.exactPrice) ||
++        (step.type === 'market' && step.exactPrice) ||
++        (step.postOnly && (step.type !== 'limit' || step.trigger)) ||
++        (step.leverage !== undefined) !== (step.marginMode !== undefined)
++      )
++        ctx.addIssue({
++          code: z.ZodIssueCode.custom,
++          message:
++            'Each workflow step needs chronological time, exact size/limit price and compatible explicit leverage/margin controls.',
++        })
++      previous = step.delaySeconds
++    }
++  })
++export const workflowGraphSchema = z
++  .object({
++    oco: z.boolean().optional(),
++    steps: z
++      .array(
++        z
++          .object({
++            id: z.string().min(1),
++            type: z.string().min(1),
++            position: z.object({ x: z.number(), y: z.number() }).optional(),
++            data: z.record(z.string(), z.unknown()),
++          })
++          .strict(),
++      )
++      .min(1),
++    edges: z.array(
++      z
++        .object({
++          id: z.string().min(1),
++          source: z.string().min(1),
++          sourceHandle: z.string().optional(),
++          target: z.string().min(1),
++        })
++        .strict(),
++    ),
++  })
++  .strict()
++  .refine(
++    (graph) =>
++      graph.steps.some((step) =>
++        ['market-order', 'limit-order', 'take-profit', 'stop-loss'].includes(
++          step.type,
++        ),
++      ),
++    'This trade plan has no executable orders. Ask the assistant to prepare the complete entry and exits before confirming.',
++  )
++export const approvedWorkflowSchema = z.union([
++  scheduledWorkflowSchema,
++  z
++    .object({
++      name: z.string().min(1).max(100),
++      maxTotalNotional: decimal,
++      accountName: z.string().min(1).optional(),
++      connectionRevision: z
++        .string()
++        .regex(/^[a-f0-9]{64}$/)
++        .optional(),
++      graph: workflowGraphSchema,
++    })
++    .strict(),
++])
 +export type ApprovedWorkflow = z.infer<typeof approvedWorkflowSchema>
 +export function venueOrderControls(
 +  input: VenueOrderControls,
@@ -13514,7 +13606,7 @@ index 2f8e01a..6dcd655 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +119,69 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +195,89 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -13537,18 +13629,35 @@ index 2f8e01a..6dcd655 100644
 +  'cancel_order',
 +  'prepare_exchange_operation',
 +  'prepare_lighter_native_order',
++  'prepare_position_plan',
 +] as const
  
  export function buildTradingTools(deps: CopilotToolDeps) {
-   return {
+-  return {
++  const tools = {
 +    prepare_lighter_native_order: tool({
-+      description: 'Prepare one exact native Lighter perpetual order or OTO/OCO/OTOCO group for human confirmation in chat. Native types: market, limit, stop-loss market/limit, take-profit market/limit and TWAP. TWAP is single only. A grouped child with zero amount follows its parent entry fill; position OCO zero size protects the whole position dynamically and requires the user-reviewed current positionSize. Always state exact buy/sell, base amount, price bound/limit, trigger, reduce-only, time in force, expiry and TWAP duration. No workflow editor and no order is sent by this tool. Native acceptance is not fill evidence. Do not substitute this for scheduled DCA or claim chase/advanced TWAP support.',
++      description:
++        'Prepare one exact native Lighter perpetual order or OTO/OCO/OTOCO group for human confirmation in chat. Native types: market, limit, stop-loss market/limit, take-profit market/limit and TWAP. TWAP is single only. A grouped child with zero amount follows its parent entry fill; position OCO zero size protects the whole position dynamically and requires the user-reviewed current positionSize. Always state exact buy/sell, base amount, price bound/limit, trigger, reduce-only, time in force, expiry and TWAP duration. No workflow editor and no order is sent by this tool. Native acceptance is not fill evidence. Do not substitute this for scheduled DCA or claim chase/advanced TWAP support.',
 +      inputSchema: lighterNativeOrderInputSchema,
 +      execute: async (input) => {
 +        try {
-+          return { status: 'awaiting_confirmation', nativeOrder: await prepareLighterNativeOrder(input, useCredentialsStore.getState().credentials), message: 'Review every leg, live account and margin settings, then click Confirm native order. Nothing has been submitted. Native transaction acceptance is not a fill.' }
++          return {
++            status: 'awaiting_confirmation',
++            nativeOrder: await prepareLighterNativeOrder(
++              input,
++              useCredentialsStore.getState().credentials,
++            ),
++            message:
++              'Review every leg, live account and margin settings, then click Confirm native order. Nothing has been submitted. Native transaction acceptance is not a fill.',
++          }
 +        } catch (cause) {
-+          return { status: 'invalid', error: cause instanceof Error ? cause.message : 'The native order could not be prepared. Nothing was submitted.' }
++          return {
++            status: 'invalid',
++            error:
++              cause instanceof Error
++                ? cause.message
++                : 'The native order could not be prepared. Nothing was submitted.',
++          }
 +        }
 +      },
 +    }),
@@ -13570,9 +13679,13 @@ index 2f8e01a..6dcd655 100644
      place_order: tool({
        description:
 -        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order — it returns a proposal that the user must explicitly approve (paper or live) in the chat. Every order is enforced against the user’s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
-+        'Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order. It returns an exact account and mode proposal for human approval in the chat. Omit mode to use the exact connected account or the venue\'s only connected account; ask when ambiguous. Use paper only for requested simulation, never as a fallback for unavailable live execution. Every order is enforced against the user\'s risk guardrails. Use get_risk_limits / get_portfolio first when sizing.',
++        "Prepare an order for the user to confirm, on whichever venue is active (exchange, on-chain or prediction market). This does NOT place the order. It returns an exact account and mode proposal for human approval in the chat. Omit mode to use the exact connected account or the venue's only connected account; ask when ambiguous. Use paper only for requested simulation, never as a fallback for unavailable live execution. Every order is enforced against the user's risk guardrails. Use get_risk_limits / get_portfolio first when sizing.",
        inputSchema: z.object({
-+        workflow: approvedWorkflowSchema.optional().describe('For a requested workflow on Hyperliquid/Lighter: pass the complete original graph with every node data and edge, or ALL exact scheduled orders and offsets. Include user-reviewed maximum total quote notional. One card approves the entire plan. The graph trigger only seeds input and never submits an order; the outer order is not an extra entry. Include an explicit immediate entry node when requested, and count every requested DCA slice as an entry node. Protective percentages apply to inherited quantity, not the eventual total position; connect new-entry protection to its filled parent. Gross notional budget includes protective exits. Preserve dynamic conditions, branching, percentage sizes, relative prices and protective orders verbatim. Never omit branches, invent budget or leverage, or imply saving a definition starts execution.'),
++        workflow: approvedWorkflowSchema
++          .optional()
++          .describe(
++            'For a requested workflow on Hyperliquid/Lighter: pass the complete original graph with every node data and edge, or ALL exact scheduled orders and offsets. Include user-reviewed maximum total quote notional. One card approves the entire plan. The graph trigger only seeds input and never submits an order; the outer order is not an extra entry. Include an explicit immediate entry node when requested, and count every requested DCA slice as an entry node. Protective percentages apply to inherited quantity, not the eventual total position; connect new-entry protection to its filled parent. Gross notional budget includes protective exits. Preserve dynamic conditions, branching, percentage sizes, relative prices and protective orders verbatim. Never omit branches, invent budget or leverage, or imply saving a definition starts execution.',
++          ),
 +        ...venueOrderControlsSchema.shape,
          pair: z.string().optional(),
          market: z.string().optional(),
@@ -13580,7 +13693,7 @@ index 2f8e01a..6dcd655 100644
 +          .enum(['paper', 'live'])
 +          .optional()
 +          .describe(
-+            'Use the user\'s requested mode. If unspecified, omit to resolve from the exact connected account or one unambiguous venue account. Never silently substitute paper for live.',
++            "Use the user's requested mode. If unspecified, omit to resolve from the exact connected account or one unambiguous venue account. Never silently substitute paper for live.",
 +          ),
 +        credentialId: z
 +          .string()
@@ -13592,18 +13705,19 @@ index 2f8e01a..6dcd655 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +205,10 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +301,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
 +        if (args.workflow) {
 +          const parsed = approvedWorkflowSchema.safeParse(args.workflow)
-+          if (!parsed.success) return { status: 'invalid', error: parsed.error.message }
++          if (!parsed.success)
++            return { status: 'invalid', error: parsed.error.message }
 +        }
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +224,200 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +321,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -13620,7 +13734,11 @@ index 2f8e01a..6dcd655 100644
 +          }),
 +        )
 +        const quantTrade = requiresAttendedTrading(target.market)
-+        if (args.workflow && !quantTrade) return { status: 'invalid', error: 'Approved server workflows require Hyperliquid or Lighter.' }
++        if (args.workflow && !quantTrade)
++          return {
++            status: 'invalid',
++            error: 'Approved server workflows require Hyperliquid or Lighter.',
++          }
 +        const perpetual = ['hyperliquid', 'lighter'].includes(target.market)
 +        if (
 +          (!quantTrade && Object.keys(controls).length > 0) ||
@@ -13726,13 +13844,13 @@ index 2f8e01a..6dcd655 100644
              reason: args.reason ?? null,
 +            ...controls,
            },
-           message:
+-          message:
 -            paperAuto || liveAuto
 -              ? `Order prepared. The user has standing auto-approval (paper: ${paperAuto}, live on ${target.market}: ${liveAuto}) — the card executes automatically when the user's default trading mode is covered; otherwise it waits for their confirmation. Verify the outcome with get_open_orders before claiming the order was placed.`
 -              : 'Order prepared. It will NOT be placed until the user confirms it (paper or live) on the confirmation card. Tell the user to review and confirm.',
-+            args.workflow
-+              ? 'Complete trade plan prepared for confirmation here in chat. Confirm registers the exact reviewed graph through QuantTrade on the selected exchange account. Explicit order nodes are attempted when their dependencies become ready; trigger is not an entry order and future steps run on the server. No manual ticket or workflow editor is required. Read get_workflow_runs for actual results; scheduled is not filled. Nothing has been submitted yet.'
-+              : mode === 'live'
++          message: args.workflow
++            ? 'Complete trade plan prepared for confirmation here in chat. Confirm registers the exact reviewed graph through QuantTrade on the selected exchange account. Explicit order nodes are attempted when their dependencies become ready; trigger is not an entry order and future steps run on the server. No manual ticket or workflow editor is required. Read get_workflow_runs for actual results; scheduled is not filled. Nothing has been submitted yet.'
++            : mode === 'live'
 +              ? 'Live order prepared for the reviewed exchange account. It will NOT be placed until the user confirms it on the confirmation card. Confirmation submits this exact live order directly. Nothing has been submitted yet.'
 +              : 'Paper simulation prepared. It will NOT run until the user confirms it on the confirmation card. This simulates the trade and never submits it to the live exchange.',
          }
@@ -13740,11 +13858,16 @@ index 2f8e01a..6dcd655 100644
      }),
  
 +    get_workflow_runs: tool({
-+      description: 'Read actual approved server workflow schedules and per-order outcomes. Read-only. Registered/scheduled is not filled. No result means no confirmed server plan.',
++      description:
++        'Read actual approved server workflow schedules and per-order outcomes. Read-only. Registered/scheduled is not filled. No result means no confirmed server plan.',
 +      inputSchema: z.object({}),
 +      execute: async () => {
-+        const response = await quantTradeFetch('/_quanttrade/api/workflow-runs', { credentials: 'same-origin' })
-+        if (!response.ok) return { status: 'unavailable', httpStatus: response.status }
++        const response = await quantTradeFetch(
++          '/_quanttrade/api/workflow-runs',
++          { credentials: 'same-origin' },
++        )
++        if (!response.ok)
++          return { status: 'unavailable', httpStatus: response.status }
 +        return { status: 'available', runs: await response.json() }
 +      },
 +    }),
@@ -13790,7 +13913,9 @@ index 2f8e01a..6dcd655 100644
 +        if (!response.ok) {
 +          let detail = `Exchange snapshot request failed (HTTP ${response.status}).`
 +          try {
-+            const parsed = z.object({ error: z.string() }).safeParse(await response.json())
++            const parsed = z
++              .object({ error: z.string() })
++              .safeParse(await response.json())
 +            if (parsed.success) detail = parsed.data.error
 +          } catch {
 +            detail = `Exchange snapshot request failed (HTTP ${response.status}).`
@@ -13798,9 +13923,10 @@ index 2f8e01a..6dcd655 100644
 +          return {
 +            status: 'unavailable',
 +            httpStatus: response.status,
-+            error: response.status === 401
-+              ? 'The hosted exchange session could not be verified after renewal. Refresh the terminal and check the hosted connection; this does not indicate paper mode.'
-+              : detail,
++            error:
++              response.status === 401
++                ? 'The hosted exchange session could not be verified after renewal. Refresh the terminal and check the hosted connection; this does not indicate paper mode.'
++                : detail,
 +          }
 +        }
 +        return parseNativeSnapshot(
@@ -13814,6 +13940,107 @@ index 2f8e01a..6dcd655 100644
      cancel_order: tool({
        description:
          'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. Use get_open_orders to find the order id.',
+@@ -135,4 +559,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+       },
+     }),
+   }
++  return {
++    ...tools,
++    prepare_position_plan: tool({
++      description:
++        'Prepare an entire Scale limit ladder, QuantTrade-managed Iceberg position or explicitly Managed TWAP schedule as ONE human confirmation card, without a workflow editor or per-child approvals. Specify the exact total base quantity, all Scale prices/count or Iceberg display size/limit price, reviewed gross cap, leverage/margin, account and mode. Optional TP allocations must total 100%; each allocation has its own paired SL/TP when both are present. Scale child limits are attempted together; Iceberg waits for confirmed fills before exposing the next display slice; Managed TWAP submits explicit immediate and timed slices under the gross cap. Standard native Lighter TWAP uses prepare_lighter_native_order instead. These are managed plans, not atomic baskets or exchange-hidden orders. Protective exits do not cancel other entry slices. Preparation reads market metadata only and never submits orders.',
++      inputSchema: positionPlanInputSchema,
++      execute: async (raw, options) => {
++        try {
++          const response = await fetch(
++            `/_quanttrade/api/public/markets?venue=${raw.market}&marketType=perpetual`,
++            {
++              credentials: 'same-origin',
++              signal: AbortSignal.timeout(15000),
++              redirect: 'error',
++            },
++          )
++          if (!response.ok)
++            throw new Error(
++              'Fresh exchange market metadata is unavailable. Nothing was submitted.',
++            )
++          const markets = z
++            .array(
++              z.object({
++                symbol: z.string(),
++                price: z.string().optional(),
++                maxLeverage: z.number().nullable().optional(),
++                sizeDecimals: z.number().int(),
++                priceDecimals: z.number().int(),
++                minSize: z.string(),
++                minNotional: z.string(),
++                updatedAt: z.number(),
++              }),
++            )
++            .parse(await response.json())
++          const symbol = raw.pair.replace(/-USDC-USDC$/, '-USDC')
++          const market = markets.find((row) => row.symbol === symbol)
++          if (
++            !market ||
++            Date.now() - market.updatedAt > 15000 ||
++            market.updatedAt > Date.now() + 5000
++          )
++            throw new Error(
++              'The exact pair needs fresh exchange metadata. Nothing was submitted.',
++            )
++          const compiled = compilePositionPlan(raw, market)
++          const statusResponse = await quantTradeFetch(
++            '/_quanttrade/api/status',
++            { credentials: 'same-origin' },
++          )
++          if (!statusResponse.ok)
++            throw new Error(
++              'The hosted exchange account could not be verified. Nothing was submitted.',
++            )
++          const status = z
++            .object({
++              accountName: z.string().min(1),
++              connectionRevisions: z.record(z.string(), z.string().nullable()),
++            })
++            .parse(await statusResponse.json())
++          const mode = assistantProposalMode(
++            useCredentialsStore.getState().credentials,
++            raw.market,
++            raw.mode,
++            raw.credentialId,
++          )
++          const revision = status.connectionRevisions[raw.market]
++          if (
++            mode === 'live' &&
++            (!revision || !/^[a-f0-9]{64}$/.test(revision))
++          )
++            throw new Error(
++              'The live exchange has no verified connection revision. Reconnect it in Connect Exchange, then prepare this plan again. Nothing was submitted.',
++            )
++          return await tools.place_order.execute!(
++            {
++              ...compiled,
++              workflow: {
++                ...compiled.workflow,
++                accountName: status.accountName,
++                ...(revision ? { connectionRevision: revision } : {}),
++              },
++            },
++            options,
++          )
++        } catch (cause) {
++          return {
++            status: 'invalid',
++            error:
++              cause instanceof Error
++                ? cause.message
++                : 'The complete position plan could not be prepared. Nothing was submitted.',
++          }
++        }
++      },
++    }),
++  }
+ }
 diff --git a/apps/terminal/src/lib/desktop-download.ts b/apps/terminal/src/lib/desktop-download.ts
 index ad51b05..e8cb53b 100644
 --- a/apps/terminal/src/lib/desktop-download.ts

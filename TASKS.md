@@ -190,5 +190,6 @@ Hosted release verification passed: all eight private Hummingbot extension route
 
 ## Advanced Lighter and Hyperliquid single-approval plans
 - [completed] After audit repairs, inspect user trade transcript and official native capabilities for conditional/TWAP/scale/atomic/chase/iceberg.
-- [in_progress] Implement supported native or clearly labeled managed compound plans with one exact human approval, idempotent child execution and verified outcomes.
-- [pending] Verify and deploy without placing test trades.
+- [completed] Implement Scale, managed Iceberg and managed TWAP with one exact human approval, paired multi-TP allocations, fill-gated slices and pinned account/revision. Existing conditional/native Lighter types retained.
+- [completed] 3,903 terminal tests, 163 backend tests, focused 37 tests/169 assertions, TypeScript/lint/build pass. Hetzner 20261011-2 read-only hosted guards and source identity pass. No test trades or old-run resumes.
+- [pending] Native Hyperliquid TWAP needs explicit venue slippage/future-risk handling; bounded Chase needs authoritative cancelled partial-fill evidence; Atomic needs a verified all-or-none native signing contract. These are not claimed supported.

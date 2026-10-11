@@ -9,7 +9,7 @@ import type {OrderDraft} from '../shared/types.ts';
 const positive=z.string().max(40).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).refine(value=>new Decimal(value).gt(0));
 export const workflowPlanSchema=z.object({
   name:z.string().min(1).max(100),accountName:z.string().min(1).max(100),
-  mode:z.enum(['paper','live']),maxTotalNotional:positive,
+  mode:z.enum(['paper','live']),maxTotalNotional:positive,connectionRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),
   steps:z.array(z.object({delaySeconds:z.number().int().nonnegative().max(Math.floor(Number.MAX_SAFE_INTEGER/1000)),order:orderSchema}).strict()).min(1).optional(),
   graph:workflowGraphSchema.optional(),input:orderSchema.optional(),
 }).strict().superRefine((plan,ctx)=>{
@@ -60,6 +60,9 @@ export class WorkflowRuns {
     if(input.plan.graph&&input.plan.input)validateWorkflowInput(input.plan.graph,input.plan.input);
     if(input.plan.graph?.oco&&input.plan.input?.venue==='hyperliquid')hyperliquidOcoTopologies(input.plan.graph);
     if(input.plan.accountName!==this.desk.status().accountName)throw new Error('Reviewed workflow account no longer matches the execution account');
+    const venue=(input.plan.input??input.plan.steps![0].order).venue;
+    const reviewedConnection=()=>{if(input.plan.connectionRevision&&this.desk.store.connectionFingerprint(input.plan.accountName,venue)!==input.plan.connectionRevision)throw new Error('Reviewed exchange connection changed; prepare a fresh plan');};
+    reviewedConnection();
     if(this.desk.modeFor((input.plan.input??input.plan.steps![0].order).venue)!==input.plan.mode)throw new Error('Reviewed workflow mode no longer matches the exchange');
     if(this.list().filter(run=>run.status==='active').length>=20)throw new Error('Too many active workflows');
     let total=new Decimal(0);
@@ -67,6 +70,7 @@ export class WorkflowRuns {
     for(const step of input.plan.steps??[])total=total.plus((await this.desk.preview(step.order)).notional);
     if(input.plan.input)await this.desk.currentMarket(input.plan.input);
     if(revision!==this.connectionRevision||this.desk.modeFor((input.plan.input??input.plan.steps![0].order).venue)!==input.plan.mode)throw new Error('Exchange credentials or mode changed during approval; prepare a fresh plan');
+    reviewedConnection();
     if(total.gt(input.plan.maxTotalNotional))throw new Error('Reviewed workflow budget does not cover its protected order notionals');
     const run:WorkflowRun={id:input.clientOrderId,fingerprint,plan:input.plan,startedAt:this.clock(),spent:'0',status:'active',states:input.plan.graph?input.plan.graph.steps.map(node=>({status:'pending',nodeId:node.id})):(input.plan.steps??[]).map(()=>({status:'pending'})),...(input.plan.graph&&input.plan.input?{graphState:createGraphState(input.plan.graph,input.plan.input),graphOrders:{}}:{})};
     // Preview awaits network reads: check for a concurrent confirmation before saving.
@@ -81,7 +85,7 @@ export class WorkflowRuns {
     const graph=run.plan.graph!,input=run.plan.input!,state=run.graphState!;
     const active=()=>!this.closing&&this.get(run.id).status==='active';
     const save=()=>{const current=this.get(run.id);current.graphState=state;current.states=graph.steps.map(step=>({nodeId:step.id,status:state.nodes[step.id].status,orderId:state.nodes[step.id].orderId,error:state.nodes[step.id].error}));if(Object.values(state.nodes).some(node=>node.status==='failed'||node.status==='unverified')){if(current.status==='active')current.status='paused';current.error=Object.values(state.nodes).find(node=>node.error)?.error??'Workflow execution unverified';}this.save(current);};
-    const authorization=()=>{if(this.desk.status().halted||run.plan.accountName!==this.desk.status().accountName||run.plan.mode!==this.desk.modeFor(input.venue))throw new Error('Execution halted or reviewed workflow account/mode changed');};
+    const authorization=()=>{if(this.desk.status().halted||run.plan.accountName!==this.desk.status().accountName||run.plan.mode!==this.desk.modeFor(input.venue)||run.plan.connectionRevision&&this.desk.store.connectionFingerprint(run.plan.accountName,input.venue)!==run.plan.connectionRevision)throw new Error('Execution halted or reviewed workflow account, mode or connection changed');};
     const budget=async(orders:OrderDraft[])=>{authorization();let total=new Decimal(0);for(const order of orders)total=total.plus((await this.desk.preview(order)).notional);if(new Decimal(this.get(run.id).spent).plus(total).gt(run.plan.maxTotalNotional))throw new Error('Workflow exceeds its approved total notional budget');if(!active())throw new Error('Workflow is no longer active');return total;};
     const readFill=async(order:OrderDraft,id:string)=>{
       try{return await this.desk.orderEvidence(order,id,run.plan.mode);}
@@ -143,9 +147,11 @@ export class WorkflowRuns {
           if(this.clock()-(run.startedAt+step.delaySeconds*1000)>300000)throw new Error('Scheduled step missed by over five minutes; workflow paused rather than catching up orders');
           if(this.desk.status().halted)throw new Error('Execution is halted; workflow paused');
           if(run.plan.accountName!==this.desk.status().accountName||run.plan.mode!==this.desk.modeFor(step.order.venue))throw new Error('Reviewed account or exchange mode changed; workflow paused');
+          if(run.plan.connectionRevision&&this.desk.store.connectionFingerprint(run.plan.accountName,step.order.venue)!==run.plan.connectionRevision)throw new Error('Reviewed exchange connection changed; workflow paused');
           const preview=await this.desk.preview(step.order);
           if(new Decimal(run.spent).plus(preview.notional).gt(run.plan.maxTotalNotional))throw new Error('Market moved beyond the approved total workflow budget');
           if(this.get(run.id).status!=='active')continue;
+          if(run.plan.connectionRevision&&this.desk.store.connectionFingerprint(run.plan.accountName,step.order.venue)!==run.plan.connectionRevision)throw new Error('Reviewed exchange connection changed during quote read; workflow paused');
           run.states[index]={status:'submitting'};this.save(run);
           const proposal=await this.desk.confirm(`workflow:${run.id}:${index}`,run.plan.mode,step.order);
           const current=this.get(run.id);

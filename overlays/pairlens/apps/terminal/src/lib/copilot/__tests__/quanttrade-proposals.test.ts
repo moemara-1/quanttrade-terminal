@@ -22,6 +22,88 @@ const call = (input: Record<string, unknown>) =>
   ).execute(input, { toolCallId: 'test', messages: [] })
 const originalFetch = globalThis.fetch
 const originalCredentials = useCredentialsStore.getState().credentials
+
+test('Scale preparation reads metadata only and returns all child limits on one live card', async () => {
+  const requests: Array<string> = []
+  globalThis.fetch = (async (url, init) => {
+    requests.push(String(url))
+    expect(init?.method ?? 'GET').toBe('GET')
+    if (String(url).endsWith('/status'))
+      return new Response(
+        JSON.stringify({
+          accountName: 'desk',
+          connectionRevisions: { lighter: 'a'.repeat(64) },
+        }),
+        { status: 200 },
+      )
+    return new Response(
+      JSON.stringify([
+        {
+          symbol: 'PRL-USDC',
+          maxLeverage: 3,
+          sizeDecimals: 2,
+          priceDecimals: 4,
+          minSize: '0.01',
+          minNotional: '1',
+          updatedAt: Date.now(),
+        },
+      ]),
+      { status: 200 },
+    )
+  }) as typeof fetch
+  useCredentialsStore.setState({
+    credentials: [
+      {
+        id: 'lt-main',
+        market: 'lighter',
+        label: 'Lighter main',
+        mode: 'live',
+        apiKey: 'placeholder',
+        apiSecret: 'placeholder',
+        createdAt: 0,
+      },
+    ],
+  })
+  const result = await buildTradingTools(deps).prepare_position_plan.execute!(
+    {
+      market: 'lighter',
+      pair: 'PRL-USDC-USDC',
+      side: 'buy',
+      kind: 'scale',
+      totalSize: '12',
+      maxTotalNotional: '100',
+      count: 3,
+      lowerPrice: '1.3',
+      upperPrice: '1.5',
+      leverage: 3,
+      marginMode: 'cross',
+    },
+    { toolCallId: 'test', messages: [] },
+  )
+  expect(result).toMatchObject({
+    status: 'awaiting_confirmation',
+    order: {
+      credentialId: 'lt-main',
+      mode: 'live',
+      exactSize: '12',
+      workflow: {
+        name: 'Scale position plan',
+        graph: {
+          steps: [
+            { id: 'trigger' },
+            { id: 'entry-1' },
+            { id: 'entry-2' },
+            { id: 'entry-3' },
+          ],
+        },
+      },
+    },
+  })
+  expect(requests).toEqual([
+    '/_quanttrade/api/public/markets?venue=lighter&marketType=perpetual',
+    '/_quanttrade/api/status',
+  ])
+})
 afterEach(() => {
   useCredentialsStore.setState({ credentials: originalCredentials })
   globalThis.fetch = originalFetch

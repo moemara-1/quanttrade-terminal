@@ -95,6 +95,46 @@ test('one human approval submits exact native plan once and acceptance never imp
   expect(approval.evidence).toMatchObject({ txHash: 'hash', orderIds: ['123'] })
 })
 
+test('native approval renews an expired bridge session only after a pre-handler 401 and preserves exact request identity', async () => {
+  const bodies: Array<string> = []
+  let renewals = 0
+  const approval = new LighterNativeOrderApproval(
+    proposal,
+    () => [account],
+    async (url, init) => {
+      if (url.endsWith('/status')) return Response.json(status)
+      if (url.endsWith('/session')) {
+        renewals++
+        return Response.json({ ok: true })
+      }
+      bodies.push(String(init?.body))
+      if (bodies.length === 1)
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      return Response.json({
+        status: 'accepted',
+        result: {
+          status: 'accepted',
+          grouping: 'single',
+          connector_name: 'lighter_perpetual',
+          trading_pair: 'GRAM-USDC',
+          tx_hash: 'hash',
+          client_order_ids: ['123'],
+        },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('accepted')
+  expect(renewals).toBe(1)
+  expect(bodies).toEqual([
+    JSON.stringify(approval.proposal),
+    JSON.stringify(approval.proposal),
+  ])
+  expect(JSON.parse(bodies[0])).toEqual(proposal)
+  expect(await approval.approve()).toBe('accepted')
+  expect(bodies).toHaveLength(2)
+})
+
 test('changed credentials, expired proposals and server account or mode changes prevent order POST', async () => {
   for (const failure of [
     'credential',
