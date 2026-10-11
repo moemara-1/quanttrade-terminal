@@ -76,6 +76,27 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
         c._auth._api_address = 'account'
         status = {'status': 'order', 'order': {'status': 'filled', 'order': {'coin': 'BTC', 'oid': 11, 'timestamp': 1000, 'origSz': '1.001', 'limitPx': '999'}}}
         c._api_post.side_effect = [status, [{'oid': 11, 'coin': 'BTC', 'tid': 1, 'sz': '1', 'px': '100', 'time': 1001}]]
+        self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'pending')
+
+    async def test_hl_temporarily_missing_order_or_fills_does_not_permanently_fail_reconciliation(self):
+        c = self.hl()
+        c._auth._api_address = 'account'
+        c._api_post.side_effect = [{'status': 'unknownOid'}]
+        self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'pending')
+        status = {'status': 'order', 'order': {'status': 'filled', 'order': {'coin': 'BTC', 'oid': 11, 'timestamp': 1000, 'origSz': '1'}}}
+        c._api_post.side_effect = [status, []]
+        self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'pending')
+        c._api_post.side_effect = [status, [{'oid': 11, 'coin': 'BTC', 'tid': 1, 'sz': '1', 'px': '100', 'time': 1001}]]
+        self.assertEqual(await module.order_evidence(c, 'BTC-USD', '11'), {'status': 'filled', 'fillSize': '1', 'fillPrice': '100'})
+
+    async def test_hl_authoritative_cancel_or_oversized_fill_stops_dependents(self):
+        c = self.hl()
+        c._auth._api_address = 'account'
+        status = {'status': 'order', 'order': {'status': 'canceled', 'order': {'coin': 'BTC', 'oid': 11, 'timestamp': 1000, 'origSz': '1'}}}
+        c._api_post.side_effect = [status]
+        self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'failed')
+        status['order']['status'] = 'filled'
+        c._api_post.side_effect = [status, [{'oid': 11, 'coin': 'BTC', 'tid': 1, 'sz': '2', 'px': '100', 'time': 1001}]]
         self.assertEqual((await module.order_evidence(c, 'BTC-USD', '11'))['status'], 'failed')
 
     async def test_lighter_oco_uses_grouped_sdk_call_exact_units_and_stable_ids(self):

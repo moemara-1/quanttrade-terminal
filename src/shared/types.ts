@@ -45,6 +45,7 @@ export type ProposalStatus = 'pending' | 'rejected' | 'expired' | 'submitting' |
 export interface Proposal {
   id: string;
   accountName: string;
+  connectionRevision?: string | null;
   source: 'manual' | 'agent';
   mode: TradingMode;
   order: OrderDraft;

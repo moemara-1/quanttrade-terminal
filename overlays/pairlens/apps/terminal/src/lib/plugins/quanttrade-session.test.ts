@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { quantTradeFetch } from './quanttrade-session'
+import { bridgeRequest, quantTradeFetch } from './quanttrade-session'
 
 test('expired hosted cookie renews once before replaying the exact rejected request', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = []
@@ -95,4 +95,15 @@ test('uncertain operation responses and network failures are never replayed', as
       throw new Error('network')
     }),
   ).rejects.toThrow('network')
+})
+
+test('non-JSON gateway failure is actionable and never replays a possibly submitted action', async () => {
+ let calls = 0
+ const request = async () => { calls++; return new Response('<html>proxy failure</html>', { status: 502, headers: { 'Content-Type': 'text/html' } }) }
+ await expect(bridgeRequest('/terminal/orders', { clientOrderId: 'reviewed' }, request)).rejects.toThrow('QuantTrade returned an invalid response (502). Check exchange status before retrying a trading action.')
+ expect(calls).toBe(1)
+})
+
+test('successful non-JSON bridge response never masquerades as a connected account', async () => {
+ await expect(bridgeRequest('/connections', undefined, async () => new Response('<html>Sign in</html>'))).rejects.toThrow('QuantTrade returned an invalid response (200)')
 })

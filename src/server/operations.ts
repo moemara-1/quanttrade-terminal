@@ -38,6 +38,12 @@ export class VenueOperations {
   constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource) {}
   async execute(raw:unknown):Promise<{status:'accepted'|'unknown';result:unknown}> {
     const input=operationSchema.parse(raw);
+    const accountName=this.desk.status().accountName;
+    const revision=this.desk.store.connectionFingerprint(accountName,input.venue);
+    const authorized=()=>{
+      if(this.desk.status().accountName!==accountName||this.desk.store.connectionFingerprint(accountName,input.venue)!==revision)throw new Error('Exchange credentials changed during review');
+      if(input.action!=='cancel'&&(this.desk.store.halted||this.desk.modeFor(input.venue)!=='live'))throw new Error('Execution is halted or the Live mode changed');
+    };
     if (input.action!=='cancel'&&this.desk.modeFor(input.venue)!=='live') throw new Error('Exchange operations require a Live connection');
     if (input.action!=='cancel'&&this.desk.store.halted) throw new Error('Execution is halted');
     if (input.marketType==='spot'&&['leverage','margin'].includes(input.action)) throw new Error('Spot accounts do not have perpetual leverage or margin');
@@ -55,10 +61,12 @@ export class VenueOperations {
       if (input.venue==='hyperliquid'&&!price.isInteger()&&price.precision()>5) throw new Error('Amendment price violates Hyperliquid precision');
       if (amount.mul(price).lt(market.minNotional)) throw new Error('Amendment is below exchange minimum notional');
       const notional=amount.mul(Decimal.max(market.price,price));
+      authorized();
       const status=this.desk.status();
       if (notional.gt(status.maxOrderNotional)) throw new Error('Amended order notional exceeds configured limit');
       this.desk.store.reserveOperation(input.requestId,'live',new Date().toISOString().slice(0,10),notional.toString(),status.dailyNotionalLimit);
     }
+    authorized();
     const fingerprint=createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const previous=this.desk.store.claimOperation(input.requestId,fingerprint);
     if (previous) {

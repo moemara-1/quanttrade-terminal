@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  availableBasePercentage,
+  availablePercentage,
   contractLeverageLimit,
   tradingAvailableBalance,
   tradingBalanceMap,
@@ -108,4 +110,21 @@ test('available funds never include locked margin or an unverified balance', () 
   expect(tradingAvailableBalance(undefined)).toBeNull()
   expect(tradingAvailableBalance({ available: 'NaN' })).toBeNull()
   expect(tradingAvailableBalance({ available: '-1' })).toBeNull()
+})
+
+test('percentage controls never round above available and respect venue precision', () => {
+  expect(availablePercentage('0.000000009', 100, 8)).toBe('')
+  expect(availablePercentage('9.999', 100, 2)).toBe('9.99')
+  expect(availablePercentage('20.01', 50, 2)).toBe('10')
+  expect(availablePercentage('9007199254740993.123456789', 100, 9)).toBe(
+    '9007199254740993.123456789',
+  )
+  expect(availablePercentage('1', -1, 2)).toBe('')
+  expect(availablePercentage('1', 101, 2)).toBe('')
+})
+
+test('quote percentage conversion floors base precision without a float overspend', () => {
+  expect(availableBasePercentage('10.01', '3', 100, 2)).toBe('3.33')
+  expect(availableBasePercentage('10', '2', 50, 2)).toBe('2.5')
+  expect(availableBasePercentage('1', '0', 100, 2)).toBe('')
 })

@@ -211,6 +211,7 @@ export function createApp(services: Services) {
   });
   app.post('/api/proposals',async(req,res)=>res.status(201).json(await desk.propose(req.body,res.locals.role==='agent'?'agent':'manual')));
   app.post('/api/terminal/orders',operator,async(req,res)=>{
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh order afterwards',submissionAttempted:false});return;}
     const input=z.object({clientOrderId:z.string().min(1).max(128),mode:z.enum(['paper','live']),order:z.unknown()}).strict().parse(req.body);
     res.json(await desk.confirm(input.clientOrderId,input.mode,input.order));
   });
@@ -225,6 +226,7 @@ export function createApp(services: Services) {
     res.json(services.workflows.cancel(z.string().min(1).max(100).parse(req.params.id)));
   });
   app.post('/api/terminal/operations',operator,async(req,res)=>{
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; wait for the connection before changing exchange settings',submissionAttempted:false});return;}
     if (!services.operations) {res.status(503).json({error:'Exchange operations are unavailable'});return;}
     res.json(await services.operations.execute(req.body));
   });
@@ -241,7 +243,10 @@ export function createApp(services: Services) {
     if (!services.operations) {res.status(503).json({error:'Exchange account access is unavailable'});return;}
     res.json(await services.operations.snapshot(req.body));
   });
-  app.post('/api/proposals/:id/approve',operator,async(req,res)=>res.json(await desk.approve(z.string().uuid().parse(req.params.id))));
+  app.post('/api/proposals/:id/approve',operator,async(req,res)=>{
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh proposal afterwards',submissionAttempted:false});return;}
+    res.json(await desk.approve(z.string().uuid().parse(req.params.id)));
+  });
   app.post('/api/proposals/:id/reject',operator,(req,res)=>res.json(desk.reject(z.string().uuid().parse(req.params.id))));
   app.post('/api/proposals/:id/cancel',operator,async(req,res)=>res.json(await desk.cancel(z.string().uuid().parse(req.params.id))));
   app.post('/api/halt',operator,(req,res)=>res.json(desk.setHalted(z.object({halted:z.boolean()}).strict().parse(req.body).halted)));

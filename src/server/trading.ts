@@ -181,6 +181,7 @@ export class TradingDesk {
     const estimatedNotional = this.validate(order, market, source);
     const createdAt = this.clock();
     const proposal: Proposal = { id: randomUUID(), accountName: this.config.accountName, source, mode: this.config.mode, order,
+      ...(this.config.mode==='live'?{connectionRevision:this.store.connectionFingerprint(this.config.accountName,order.venue)}:{}),
       referencePrice: market.price, estimatedNotional, createdAt, expiresAt: createdAt + this.config.proposalTtlSeconds * 1000, status: 'pending' };
     this.store.save(proposal, 'proposal-created');
     return proposal;
@@ -193,6 +194,12 @@ export class TradingDesk {
     if (original.status !== 'pending') throw new Error('Only pending proposals can be approved');
     if (original.mode !== this.config.mode) throw new Error('Proposal trading mode no longer matches this session');
     if (original.accountName !== this.config.accountName) throw new Error('Proposal execution account no longer matches this session');
+    const authorized=()=>{
+      if(this.store.halted)throw new Error('Execution is halted');
+      if(this.modeFor(original.order.venue)!==original.mode)throw new Error('Proposal trading mode changed during approval');
+      if(original.mode==='live'&&(original.connectionRevision??null)!==this.store.connectionFingerprint(original.accountName,original.order.venue))throw new Error('Proposal exchange connection changed; prepare a fresh proposal');
+    };
+    authorized();
     if (original.expiresAt <= this.clock()) {
       original.status = 'expired'; this.store.save(original, 'proposal-expired'); throw new Error('Proposal expired; prepare a new one');
     }
@@ -201,6 +208,7 @@ export class TradingDesk {
     const notional = this.validate(original.order, market, original.source);
     if (new Decimal(market.price).minus(original.referencePrice).abs().div(original.referencePrice).mul(10_000).gt(this.config.maxPriceDeviationBps)) throw new Error('Market price moved beyond the approval tolerance; prepare a new proposal');
     if (original.expiresAt <= this.clock()) throw new Error('Proposal expired while checking market data');
+    authorized();
     const proposal = this.store.reserve(id, this.config.mode, this.day(), notional, this.config.dailyNotionalLimit);
     if (proposal.mode === 'paper') {
       proposal.status = proposal.order.type === 'market' && !proposal.order.trigger ? 'paper-filled' : 'paper-open';

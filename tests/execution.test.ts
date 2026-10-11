@@ -236,3 +236,10 @@ test('Lighter ambiguous client mappings and looping pagination remain unverified
     assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'},'42'),{status:'pending'});assert.equal(reads,ambiguous?1:2);
   }
 });
+test('generic and native Hyperliquid fill evidence cannot exceed the reviewed order size',async()=>{
+  const order:OrderDraft={venue:'hyperliquid',symbol:'BTC-USDC',side:'buy',type:'market',size:'1',rationale:'test'};
+  for(const native of [false,true]){
+    const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async()=>Response.json(native?{status:'filled',fillSize:'2',fillPrice:'100'}:{data:[{order_id:'entry',account_name:'desk',connector_name:'hyperliquid_perpetual',trading_pair:'BTC-USD',status:'FILLED',filled_amount:'2',average_fill_price:'100'}],pagination:{has_more:false}}));
+    const evidence=await client.orderEvidence(order,native?'native:hyperliquid:11':'entry');assert.equal(evidence.status,'failed');assert.match(evidence.error??'',/reviewed.*size/);
+  }
+});

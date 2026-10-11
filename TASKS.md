@@ -181,3 +181,14 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Traced exact Lighter fill DTOs, client-ID placeholders, missing-evidence pauses and inherited last-slice protective sizing.
 - [completed] Reconciliation and explicit full-workflow protection implemented; transient reads never resubmit and old immutable runs remain paused.
 - [completed] 156 backend tests, 74 Python tests, 68 focused terminal tests, TypeScript/lint and production build pass. Hetzner20261010-8 hosted guards pass; server/signer hashes and frontend build identity match. Old paused runs remain paused. Commit/push authorized.
+
+
+## 11 October full app audit and repair
+- [completed] Audit navigation/pinned charts, sliders, connectors, approval/session boundaries and app quality; record reproducible findings.
+- [completed] Fix confirmed defects with focused regression tests and verify each affected module.
+- [completed] 3,894 terminal, 160 backend and 76 signer tests; TypeScript/lint/build pass. Hetzner 20261011-1 read-only hosted guards and build identity pass. No trades submitted or resumed. Commit/push authorized.
+
+## Advanced Lighter and Hyperliquid single-approval plans
+- [completed] After audit repairs, inspect user trade transcript and official native capabilities for conditional/TWAP/scale/atomic/chase/iceberg.
+- [in_progress] Implement supported native or clearly labeled managed compound plans with one exact human approval, idempotent child execution and verified outcomes.
+- [pending] Verify and deploy without placing test trades.

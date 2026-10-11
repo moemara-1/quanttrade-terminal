@@ -209,7 +209,13 @@ export class HummingbotExecution implements ExecutionClient {
     if(orderId.startsWith('native:hyperliquid:')){
       if(order.venue!=='hyperliquid'||order.marketType==='spot')throw new Error('Native bracket evidence does not match the reviewed venue');
       const id=z.string().regex(/^[1-9]\d*$/).parse(orderId.slice('native:hyperliquid:'.length));
-      return z.object({status:z.enum(['filled','pending','failed']),fillPrice:z.string().optional(),fillSize:z.string().optional(),error:z.string().optional()}).parse(await this.post('/quanttrade/trading/order-evidence',{request_id:createHash('sha256').update(orderId).digest('hex'),account_name:this.config.accountName,connector_name:connector,trading_pair:pair,exchange_order_id:id}));
+      const evidence=z.object({status:z.enum(['filled','pending','failed']),fillPrice:z.string().optional(),fillSize:z.string().optional(),error:z.string().optional()}).parse(await this.post('/quanttrade/trading/order-evidence',{request_id:createHash('sha256').update(orderId).digest('hex'),account_name:this.config.accountName,connector_name:connector,trading_pair:pair,exchange_order_id:id}));
+      if(evidence.status==='filled'){
+        const size=new Decimal(evidence.fillSize??'0'),price=new Decimal(evidence.fillPrice??'0');
+        if(!size.isFinite()||size.lte(0)||!price.isFinite()||price.lte(0))return {status:'pending',error:'Native fill amount or price is not verified yet'};
+        if(size.gt(order.size))return {status:'failed',error:'Native fill exceeds the reviewed order size; inspect exchange fills'};
+      }
+      return evidence;
     }
     const history=await this.allPages('/trading/orders/search',{account_names:[this.config.accountName],connector_names:[connector],trading_pairs:[pair],limit:100});
     const row=history.data.find(item=>item.order_id===orderId&&item.account_name===this.config.accountName&&item.connector_name===connector&&item.trading_pair===pair);
@@ -219,6 +225,7 @@ export class HummingbotExecution implements ExecutionClient {
     if(status!=='FILLED')return order.venue==='lighter'&&order.marketType!=='spot'?this.lighterEvidence(order,orderId,typeof row.exchange_order_id==='string'?row.exchange_order_id:undefined):{status:'pending'};
     const size=new Decimal(String(row.filled_amount??'0')),price=new Decimal(String(row.average_fill_price??'0'));
     if(!size.isFinite()||!size.gt(0)||!price.isFinite()||!price.gt(0))return order.venue==='lighter'&&order.marketType!=='spot'?this.lighterEvidence(order,orderId,typeof row.exchange_order_id==='string'?row.exchange_order_id:undefined):{status:'pending'};
+    if(size.gt(order.size))return {status:'failed',error:'Fill exceeds the reviewed order size; inspect exchange fills'};
     return {status:'filled',fillSize:size.toFixed(),fillPrice:price.toFixed()};
   }
 }

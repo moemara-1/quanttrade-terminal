@@ -97,3 +97,61 @@ export function tradingAvailableBalance(
   if (!balance || !/^\d+(?:\.\d+)?$/.test(balance.available)) return null
   return Number.isFinite(Number(balance.available)) ? balance.available : null
 }
+
+/** Floor a balance percentage to the venue tick; never overspend through float rounding. */
+export function availablePercentage(
+  available: string,
+  percent: number,
+  decimals = 8,
+): string {
+  const amount = decimal(available)
+  if (
+    !amount ||
+    !Number.isInteger(percent) ||
+    percent < 0 ||
+    percent > 100 ||
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > 30
+  )
+    return ''
+  const units =
+    (amount.value * BigInt(percent) * 10n ** BigInt(decimals)) /
+    (100n * 10n ** BigInt(amount.scale))
+  if (units <= 0n) return ''
+  const raw = units.toString().padStart(decimals + 1, '0')
+  return decimals
+    ? `${raw.slice(0, -decimals)}.${raw.slice(-decimals)}`.replace(/\.?0+$/, '')
+    : raw
+}
+
+/** Percentage of quote funds converted to base units, floored to an executable quantity tick. */
+export function availableBasePercentage(
+  quote: string,
+  price: string,
+  percent: number,
+  decimals = 8,
+): string {
+  const funds = decimal(quote),
+    rate = decimal(price)
+  if (
+    !funds ||
+    !rate ||
+    rate.value <= 0n ||
+    !Number.isInteger(percent) ||
+    percent < 0 ||
+    percent > 100 ||
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > 30
+  )
+    return ''
+  const units =
+    (funds.value * BigInt(percent) * 10n ** BigInt(rate.scale + decimals)) /
+    (100n * rate.value * 10n ** BigInt(funds.scale))
+  if (units <= 0n) return ''
+  const raw = units.toString().padStart(decimals + 1, '0')
+  return decimals
+    ? `${raw.slice(0, -decimals)}.${raw.slice(-decimals)}`.replace(/\.?0+$/, '')
+    : raw
+}

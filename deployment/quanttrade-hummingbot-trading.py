@@ -495,7 +495,7 @@ async def order_evidence(connector, pair, order_id):
     identity = order_id if order_id.startswith('0x') else int(order_id)
     result = await connector._api_post(path_url='/info', data={'type': 'orderStatus', 'user': owner, 'oid': identity}, is_auth_required=False)
     if not isinstance(result, dict) or result.get('status') != 'order':
-        return {'status': 'failed', 'error': 'Native entry acknowledgment cannot be reconciled; inspect exchange state'}
+        return {'status': 'pending', 'error': 'Native entry status is not visible yet; only verification reads will retry'}
     record = result.get('order', {})
     order = record.get('order', {})
     if order.get('coin') != symbol or str(order.get('oid', '')).isdigit() is False:
@@ -506,18 +506,18 @@ async def order_evidence(connector, pair, order_id):
         return {'status': 'failed', 'error': 'Native entry is ' + str(record.get('status', 'unverified'))}
     timestamp, expected = order.get('timestamp'), positive_decimal(order.get('origSz', '0'))
     if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
-        return {'status': 'failed', 'error': 'Filled entry has no reliable timestamp; inspect exchange fills'}
+        return {'status': 'pending', 'error': 'Filled entry has no reliable timestamp yet; inspect exchange fills'}
     size, notional, seen = Decimal(0), Decimal(0), set()
     for _ in range(10):
         rows = await connector._api_post(path_url='/info', data={'type': 'userFillsByTime', 'user': owner, 'startTime': timestamp, 'aggregateByTime': False}, is_auth_required=False)
         if not isinstance(rows, list):
-            return {'status': 'failed', 'error': 'Native entry fills are unavailable'}
+            return {'status': 'pending', 'error': 'Native entry fills are temporarily unavailable'}
         for row in rows:
             if str(row.get('oid')) != str(order['oid']) or row.get('coin') != symbol:
                 continue
             tid = row.get('tid')
             if not isinstance(tid, (int, str)) or isinstance(tid, bool):
-                return {'status': 'failed', 'error': 'Native entry fills lack stable identities'}
+                return {'status': 'pending', 'error': 'Native entry fills lack stable identities; verification remains blocked'}
             if str(tid) in seen:
                 continue
             seen.add(str(tid))
@@ -526,7 +526,9 @@ async def order_evidence(connector, pair, order_id):
             notional += filled_size * price
         if size == expected:
             return {'status': 'filled', 'fillSize': str(size), 'fillPrice': str(notional / size)}
-        if size > expected or len(rows) < 2000:
+        if size > expected:
+            return {'status': 'failed', 'error': 'Native fills exceed the reviewed entry size; inspect exchange fills'}
+        if len(rows) < 2000:
             break
         times = [row.get('time') for row in rows]
         if not all(isinstance(value, int) and not isinstance(value, bool) and value >= timestamp for value in times):
@@ -537,7 +539,7 @@ async def order_evidence(connector, pair, order_id):
         if next_timestamp == timestamp:
             break
         timestamp = next_timestamp
-    return {'status': 'failed', 'error': 'Native fill history does not prove the complete reviewed entry; inspect exchange fills'}
+    return {'status': 'pending', 'error': 'Native fill history does not yet prove the complete reviewed entry; only verification reads will retry'}
 
 
 async def cancel(connector, name, pair, exchange_order_id):

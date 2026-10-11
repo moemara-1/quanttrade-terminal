@@ -11,6 +11,17 @@ function setup(fail=false) {
   const operations=new VenueOperations(desk,{perform:async(_action,input)=>{calls++;payload=input;if(fail)throw new Error('transport');return {status:'accepted',leverage:3};}},{list:async()=>[{venue:'hyperliquid',symbol:'BTC-USDC',base:'BTC',maxLeverage:40,price:'100',change24h:0,volume24h:'1',fundingRate:0,openInterest:null,sizeDecimals:3,priceDecimals:2,minSize:'0.001',minNotional:'1',updatedAt:Date.now()}]});
   return {store,desk,operations,calls:()=>calls,payload:()=>payload};
 }
+
+test('kill switch during leverage metadata read blocks the exchange mutation',async()=>{
+ const state=setup();try {
+  let calls=0;
+  const operations=new VenueOperations(state.desk,{perform:async()=>{calls++;return {status:'accepted'};}},{list:async()=>{
+   state.store.halted=true;
+   return [{venue:'hyperliquid',symbol:'BTC-USDC',base:'BTC',maxLeverage:40,price:'100',change24h:0,volume24h:'1',fundingRate:0,openInterest:null,sizeDecimals:3,priceDecimals:2,minSize:'0.001',minNotional:'1',updatedAt:Date.now()}];
+  }});
+  await assert.rejects(operations.execute(leverage),/halted/);assert.equal(calls,0);
+ }finally{state.store.close();}
+});
 const leverage={requestId:'operation-identifier',venue:'hyperliquid',marketType:'perpetual',symbol:'BTC-USDC',mode:'live',action:'leverage',leverage:3,marginMode:'isolated'};
 test('exchange mutations keep exact account/pair and durable duplicate keys cannot resubmit',async()=>{
   const state=setup();try {

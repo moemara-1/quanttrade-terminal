@@ -106,7 +106,14 @@ export async function bridgeRequest(
       )
     throw error
   }
-  const data: unknown = await response.json()
+  let data: unknown
+  try {
+    data = await response.json()
+  } catch {
+    throw new Error(
+      `QuantTrade returned an invalid response (${response.status}). Check exchange status before retrying a trading action.`,
+    )
+  }
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(data)
     throw new Error(

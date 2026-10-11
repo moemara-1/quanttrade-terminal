@@ -60,6 +60,19 @@ test('manual live orders execute once on submission while agent trades remain pe
   await assert.rejects(desk.approve(agent.id),/mode/i);
   store.close();
 });
+
+test('live approval rechecks kill switch, venue mode and physical keys after asynchronous market reads',async()=>{
+  for(const change of ['halt','mode','keys']){
+    const store=new DeskStore(':memory:');store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+    let armed=false,calls=0;
+    const desk=new TradingDesk(store,{list:async()=>{if(armed){if(change==='halt')desk.setHalted(true);else if(change==='mode')desk.setVenueMode('hyperliquid','paper');else store.setConnectionFingerprint('desk','hyperliquid','b'.repeat(64));}return [{...quote,updatedAt:Date.now()}];}},{configured:true,place:async()=>{calls++;return 'exchange';},cancel:async()=>{}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'http://localhost'});
+    try{const proposal=await desk.propose(draft,'agent');armed=true;await assert.rejects(desk.approve(proposal.id),/halted|mode|connection/i);assert.equal(calls,0);assert.equal(store.get(proposal.id).status,'pending');}finally{store.close();}
+  }
+});
+
+test('agent proposal is pinned to physical connection revision even when account label and mode stay the same',async()=>{
+  const s=setup({mode:'live'});try{s.store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));const proposal=await s.desk.propose(draft,'agent');s.store.setConnectionFingerprint('desk','hyperliquid','b'.repeat(64));await assert.rejects(s.desk.approve(proposal.id),/connection/i);assert.equal(s.calls(),0);}finally{s.store.close();}
+});
 function setup(overrides: Partial<DeskConfig> = {}, execute?: ExecutionClient['place']) {
   let now = Date.now();
   let market = { ...quote, updatedAt: now };

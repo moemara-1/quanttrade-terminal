@@ -37,6 +37,9 @@ test('unchanged credential reprovision does not pause runs; mode/key changes and
     const started=new Promise<void>(resolve=>{entered=resolve;});
     const pending=connect('live','4'.repeat(64));await started;
     assert.equal((await connect('paper','3'.repeat(64))).status,409);
+    for(const path of ['/api/terminal/orders','/api/terminal/operations','/api/proposals/00000000-0000-4000-8000-000000000000/approve']){
+      const blocked=await fetch(base+path,{method:'POST',headers,body:'{}'});assert.equal(blocked.status,409);assert.equal((await blocked.json() as {submissionAttempted:boolean}).submissionAttempted,false);
+    }
     release?.();assert.equal((await pending).status,200);assert.equal(pauses,6);assert.equal(connects,4);
     assert.equal((await connect('live','4'.repeat(64))).status,200);assert.equal(pauses,6);assert.equal(connects,4);
     fail=true;assert.equal((await connect('live','5'.repeat(64))).status,400);assert.equal(pauses,7);assert.equal(connects,5);

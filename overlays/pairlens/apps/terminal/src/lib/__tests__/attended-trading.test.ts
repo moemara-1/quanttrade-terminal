@@ -43,8 +43,9 @@ describe('QuantTrade attended execution', () => {
       ),
       'utf8',
     )
-    expect(source).toContain('if (attendedOnly && opts?.auto) return')
-    expect(source).toContain('if (attendedOnly) return')
-    expect(source).toContain('{!attendedOnly && (')
+    expect(source).toContain('proposalApprovalError(')
+    expect(source).toContain('auto_approved: false')
+    expect(source).not.toContain('shouldAutoApprove(')
+    expect(source).not.toContain('setConsent(')
   })
 })
