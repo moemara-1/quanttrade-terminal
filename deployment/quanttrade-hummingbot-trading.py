@@ -112,6 +112,11 @@ class OrderEvidenceRequest(Scope):
     exchange_order_id: str = Field(max_length=40, pattern=r'^(?:[0-9]+|0x[0-9a-f]{32})$')
 
 
+class SettledOrderEvidenceRequest(OrderEvidenceRequest):
+    amount: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    side: Literal['buy', 'sell']
+
+
 class AmendRequest(CancelRequest):
     amount: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
     price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
@@ -542,6 +547,95 @@ async def order_evidence(connector, pair, order_id):
     return {'status': 'pending', 'error': 'Native fill history does not yet prove the complete reviewed entry; only verification reads will retry'}
 
 
+async def settled_order_evidence(connector, pair, order_id, amount, side):
+    """Read-only proof for cancel/reconcile/replace; acknowledgments are not proof."""
+    pending = {'status': 'pending'}
+    symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=pair)
+    owner, reviewed = connector._auth._api_address, positive_decimal(amount)
+    if not order_id.isdigit() or int(order_id) <= 0:
+        return pending
+    async def status_read():
+        result = await connector._api_post(path_url='/info', data={'type': 'orderStatus', 'user': owner, 'oid': int(order_id)}, is_auth_required=False)
+        if not isinstance(result, dict) or result.get('status') != 'order':
+            return None
+        record = result.get('order')
+        if not isinstance(record, dict) or not isinstance(record.get('order'), dict):
+            return None
+        order = record['order']
+        if order.get('coin') != symbol or str(order.get('oid')) != order_id or order.get('side') != ('B' if side == 'buy' else 'A'):
+            return None
+        try:
+            if positive_decimal(order.get('origSz', '')) != reviewed:
+                return None
+        except (ValueError, ArithmeticError):
+            return None
+        return record
+    record = await status_read()
+    if record is None:
+        return pending
+    if record.get('status') == 'open':
+        return {'status': 'open', 'exchangeId': order_id}
+    terminal = record.get('status')
+    if terminal != 'filled' and not (isinstance(terminal, str) and (terminal == 'canceled' or terminal.endswith('Canceled'))):
+        return pending
+    order = record['order']
+    timestamp = order.get('timestamp')
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        return pending
+    raw_remaining = order.get('sz')
+    if not isinstance(raw_remaining, (str, int, float)) or isinstance(raw_remaining, bool):
+        return pending
+    try:
+        remaining = Decimal(str(raw_remaining))
+        if not remaining.is_finite() or remaining < 0 or remaining > reviewed:
+            return pending
+    except ArithmeticError:
+        return pending
+    expected = reviewed if terminal == 'filled' else reviewed - remaining
+    total, seen, complete = Decimal(0), {}, False
+    for _ in range(100):
+        rows = await connector._api_post(path_url='/info', data={'type': 'userFillsByTime', 'user': owner, 'startTime': timestamp, 'aggregateByTime': False}, is_auth_required=False)
+        if not isinstance(rows, list):
+            return pending
+        for row in rows:
+            if not isinstance(row, dict):
+                return pending
+            if str(row.get('oid')) != order_id or row.get('coin') != symbol:
+                continue
+            tid = row.get('tid')
+            if not isinstance(tid, (int, str)) or isinstance(tid, bool) or row.get('side') != ('B' if side == 'buy' else 'A'):
+                return pending
+            try:
+                size, price = positive_decimal(row.get('sz', '')), positive_decimal(row.get('px', ''))
+            except (ValueError, ArithmeticError):
+                return pending
+            evidence = (str(size), str(price), row.get('time'))
+            if str(tid) in seen:
+                if seen[str(tid)] != evidence:
+                    return pending
+                continue
+            seen[str(tid)] = evidence
+            total += size
+            if total > reviewed:
+                return pending
+        if len(rows) < 2000:
+            complete = True
+            break
+        times = [row.get('time') for row in rows]
+        if not all(isinstance(value, int) and not isinstance(value, bool) and value >= timestamp for value in times):
+            return pending
+        next_timestamp = max(times)
+        if next_timestamp <= timestamp:
+            return pending
+        timestamp = next_timestamp
+    if not complete or total != expected:
+        return pending
+    final = await status_read()
+    if final is None or final != record:
+        return pending
+    return {'status': 'settled', 'filledSize': str(total), 'exchangeId': order_id}
+
+
 async def cancel(connector, name, pair, exchange_order_id):
     if not exchange_order_id.isdigit() or int(exchange_order_id) <= 0:
         raise ValueError('An exchange order index is required')
@@ -731,6 +825,15 @@ async def order_evidence_route(dto: OrderEvidenceRequest, request: Request):
         raise HTTPException(status_code=503, detail='Native order evidence is unavailable or does not match the reviewed instrument') from None
 
 
+@router.post('/settled-order-evidence')
+async def settled_order_evidence_route(dto: SettledOrderEvidenceRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
+        return await settled_order_evidence(connector, dto.trading_pair, dto.exchange_order_id, dto.amount, dto.side)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Settled order evidence is unavailable; replacement remains blocked') from None
+
+
 @router.post('/entry-bracket-orders')
 async def entry_bracket_route(dto: EntryBracketRequest, request: Request):
     return await perform(request, dto, lambda c: entry_bracket(c, dto))
@@ -763,3 +866,130 @@ async def snapshot_route(dto: SnapshotRequest, request: Request):
 
 def install(app, auth_user):
     app.include_router(router, dependencies=[Depends(auth_user)])
+
+
+class HyperliquidTwapRequest(Scope):
+    connector_name: Literal['hyperliquid_perpetual'] = 'hyperliquid_perpetual'
+    side: Literal['buy', 'sell']
+    amount: str = Field(max_length=40, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+    duration_minutes: StrictInt = Field(ge=5, le=10080)
+    randomize: StrictBool
+    reduce_only: StrictBool
+    leverage: StrictInt | None = Field(default=None, ge=1, le=125)
+    margin_mode: Literal['cross', 'isolated'] | None = None
+
+
+class HyperliquidTwapCancelRequest(Scope):
+    connector_name: Literal['hyperliquid_perpetual'] = 'hyperliquid_perpetual'
+    twap_id: str = Field(max_length=16, pattern=r'^[1-9][0-9]*$')
+
+
+async def hyperliquid_twap(connector, dto):
+    positive_decimal(dto.amount)
+    if (dto.leverage is None) != (dto.margin_mode is None) or dto.reduce_only and dto.leverage is not None:
+        raise ValueError('Opening leverage and margin must be reviewed together')
+    if dto.reduce_only:
+        await verify_exit_position(connector, dto.connector_name, dto.trading_pair, dto.side, dto.amount)
+    asset = await hl_asset(connector, dto.trading_pair)
+    if dto.leverage is not None:
+        await leverage(connector, dto.connector_name, dto.trading_pair, dto.leverage, dto.margin_mode)
+    response = await hl_action(connector, {'type': 'twapOrder', 'twap': {
+        'a': asset, 'b': dto.side == 'buy', 's': dto.amount, 'r': dto.reduce_only,
+        'm': dto.duration_minutes, 't': dto.randomize,
+    }})
+    data = response.get('response', {})
+    details = data.get('data') if isinstance(data, dict) else None
+    status = details.get('status') if isinstance(details, dict) else None
+    if isinstance(status, dict) and 'error' in status:
+        raise ActionRejected('Exchange rejected the native TWAP')
+    running = status.get('running') if isinstance(status, dict) else None
+    twap_id = running.get('twapId') if isinstance(running, dict) else None
+    if not isinstance(data, dict) or data.get('type') != 'twapOrder' or isinstance(twap_id, bool) or not isinstance(twap_id, int) or not 0 < twap_id <= 9007199254740991:
+        raise ActionUncertain('Native TWAP acknowledgment is unrecognized; inspect exchange state')
+    return {'status': 'accepted', 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair, 'twap_id': str(twap_id)}
+
+
+async def hyperliquid_twap_cancel(connector, dto):
+    twap_id = int(dto.twap_id)
+    if not 0 < twap_id <= 9007199254740991:
+        raise ValueError('Native TWAP identity is invalid')
+    response = await hl_action(connector, {'type': 'twapCancel', 'a': await hl_asset(connector, dto.trading_pair), 't': twap_id})
+    data = response.get('response', {})
+    details = data.get('data') if isinstance(data, dict) else None
+    status = details.get('status') if isinstance(details, dict) else None
+    if isinstance(status, dict) and 'error' in status:
+        raise ActionRejected('Exchange rejected native TWAP cancellation')
+    if not isinstance(data, dict) or data.get('type') != 'twapCancel' or status != 'success':
+        raise ActionUncertain('Native TWAP cancellation acknowledgment is unrecognized')
+    return {'status': 'accepted', 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair, 'twap_id': dto.twap_id}
+
+
+@router.post('/hyperliquid-twap')
+async def hyperliquid_twap_route(dto: HyperliquidTwapRequest, request: Request):
+    return await perform(request, dto, lambda c: hyperliquid_twap(c, dto))
+
+
+@router.post('/hyperliquid-twap-cancel')
+async def hyperliquid_twap_cancel_route(dto: HyperliquidTwapCancelRequest, request: Request):
+    return await perform(request, dto, lambda c: hyperliquid_twap_cancel(c, dto))
+
+
+class HyperliquidTwapEvidenceRequest(HyperliquidTwapCancelRequest):
+    side: Literal['buy', 'sell']
+    amount: str = Field(max_length=40, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
+
+
+async def hyperliquid_twap_evidence(connector, dto):
+    """Observed slice fills only: absence and retained history are not lifecycle proof."""
+    from decimal import localcontext
+    owner = connector._auth._api_address
+    if not isinstance(owner, str) or len(owner) != 42 or not owner.startswith('0x') or any(ch not in '0123456789abcdefABCDEF' for ch in owner[2:]):
+        raise ValueError('Reviewed master account is unavailable')
+    if not 0 < int(dto.twap_id) <= 9007199254740991:
+        raise ValueError('Reviewed TWAP identity is invalid')
+    symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=dto.trading_pair)
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError('Reviewed instrument is unavailable')
+    reviewed = positive_decimal(dto.amount)
+    rows = await connector._api_post(path_url='/info', data={'type':'userTwapSliceFills','user':owner}, is_auth_required=False)
+    if not isinstance(rows, list):
+        raise ValueError('TWAP fills are unavailable')
+    with localcontext() as context:
+        context.prec = 100
+        size, notional, seen = Decimal(0), Decimal(0), {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError('TWAP fill history is malformed')
+            identity = row.get('twapId')
+            if isinstance(identity, bool) or not isinstance(identity, (int, str)) or str(identity) != dto.twap_id:
+                continue
+            fill = row.get('fill')
+            if not isinstance(fill, dict) or fill.get('coin') != symbol or fill.get('side') != ('B' if dto.side == 'buy' else 'A'):
+                raise ValueError('TWAP fill does not match the reviewed instrument or side')
+            tid, oid, timestamp = fill.get('tid'), fill.get('oid'), fill.get('time')
+            if isinstance(tid, bool) or not isinstance(tid, (int, str)) or not str(tid).isdigit() or isinstance(oid, bool) or not isinstance(oid, (int, str)) or not str(oid).isdigit() or int(oid) <= 0 or not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+                raise ValueError('TWAP fill identity is not verified')
+            amount, price = positive_decimal(fill.get('sz', '')), positive_decimal(fill.get('px', ''))
+            evidence = (str(oid), str(amount), str(price), timestamp)
+            if str(tid) in seen:
+                if seen[str(tid)] != evidence:
+                    raise ValueError('TWAP fill identity has conflicting evidence')
+                continue
+            seen[str(tid)] = evidence
+            size += amount
+            notional += amount * price
+            if size > reviewed:
+                raise ValueError('TWAP fills exceed the reviewed quantity')
+        return {'twap_id':dto.twap_id, 'verified_fill_size':str(size),
+            **({'verified_fill_price':str(notional / size)} if size > 0 else {}),
+            'history_may_be_truncated':len(rows) >= 2000,
+            'status':'fills-observed' if size > 0 else 'unverified'}
+
+
+@router.post('/hyperliquid-twap-evidence')
+async def hyperliquid_twap_evidence_route(dto: HyperliquidTwapEvidenceRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
+        return await hyperliquid_twap_evidence(connector, dto)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Native TWAP fill evidence is unavailable or does not match the reviewed trade') from None

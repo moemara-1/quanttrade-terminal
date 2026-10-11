@@ -192,4 +192,9 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] After audit repairs, inspect user trade transcript and official native capabilities for conditional/TWAP/scale/atomic/chase/iceberg.
 - [completed] Implement Scale, managed Iceberg and managed TWAP with one exact human approval, paired multi-TP allocations, fill-gated slices and pinned account/revision. Existing conditional/native Lighter types retained.
 - [completed] 3,903 terminal tests, 163 backend tests, focused 37 tests/169 assertions, TypeScript/lint/build pass. Hetzner 20261011-2 read-only hosted guards and source identity pass. No test trades or old-run resumes.
-- [pending] Native Hyperliquid TWAP needs explicit venue slippage/future-risk handling; bounded Chase needs authoritative cancelled partial-fill evidence; Atomic needs a verified all-or-none native signing contract. These are not claimed supported.
+- [completed] Native Hyperliquid TWAP and bounded managed Chase completed in the final integration below. Atomic remains unavailable without a verified all-or-none native signing contract.
+
+## Finish native TWAP, Chase and Atomic
+- [completed] Implement native Hyperliquid TWAP create/cancel/evidence and durable managed Chase with fresh bid/ask, partial-fill reconciliation, owned cancellation, one approval and account/revision guards.
+- [completed] 3,911 terminal, 183 backend and 90 signer tests; native/root TypeScript, changed-file ESLint and production build pass. Hetzner 20261011-3 hosted guards, signer runtime SHA and build identity pass. No live test trades/cancellations or old-plan resumes. Commit/push authorized.
+- [blocked] Atomic: official Lighter signer/prover expose no verified multi-market all-or-none signing contract; Hyperliquid ordinary batches allow independent leg outcomes. Capability discovery explicitly reports unavailable; no fake batch fallback. Verified primary sources recorded in docs/advanced-order-plan.md.

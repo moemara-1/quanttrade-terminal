@@ -203,6 +203,62 @@ export class HummingbotExecution implements ExecutionClient {
     }
     return {status:'pending'};
   }
+  async chaseEvidence(order:OrderDraft,orderId:string):Promise<{status:'open'|'settled'|'pending';filledSize?:string;exchangeId?:string;error?:string}> {
+    if(order.marketType==='spot'||order.trigger||order.sizeUnit==='quote')return {status:'pending'};
+    const identity=(value:unknown):string|undefined=>typeof value==='string'&&/^[1-9]\d*$/.test(value)?value:typeof value==='number'&&Number.isSafeInteger(value)&&value>0?String(value):undefined;
+    const quantity=(value:unknown):Decimal|undefined=>{
+      if(typeof value!=='string'&&typeof value!=='number')return undefined;
+      if(!/^\d+(?:\.\d+)?$/.test(String(value)))return undefined;
+      const result=new Decimal(value);return result.isFinite()&&result.gte(0)?result:undefined;
+    };
+    const prefix='native:'+order.venue+':',clientPrefix='native-client:'+order.venue+':';
+    const pair=order.venue==='hyperliquid'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;
+    let nativeId=orderId.startsWith(prefix)?identity(orderId.slice(prefix.length)):undefined;
+    let clientId=orderId.startsWith(clientPrefix)?identity(orderId.slice(clientPrefix.length)):undefined;
+    if(!nativeId&&!clientId){
+      const history=await this.allPages('/trading/orders/search',{account_names:[this.config.accountName],connector_names:[connectors[order.venue]],trading_pairs:[pair],limit:100});
+      const rows=history.data.filter(row=>row.order_id===orderId&&row.account_name===this.config.accountName&&row.connector_name===connectors[order.venue]&&row.trading_pair===pair);
+      const ids=new Set(rows.map(row=>identity(row.exchange_order_id)).filter((id):id is string=>Boolean(id)));
+      if(ids.size!==1)return {status:'pending'};
+      if(order.venue==='lighter')clientId=[...ids][0];else nativeId=[...ids][0];
+    }
+    if(order.venue==='hyperliquid'){
+      if(!nativeId)return {status:'pending'};
+      const result=z.object({status:z.enum(['open','settled','pending']),filledSize:z.string().optional(),exchangeId:z.string().optional(),error:z.string().optional()}).parse(await this.post('/quanttrade/trading/settled-order-evidence',{request_id:createHash('sha256').update(orderId).digest('hex'),account_name:this.config.accountName,connector_name:connectors.hyperliquid,trading_pair:pair,exchange_order_id:nativeId,amount:order.size,side:order.side}));
+      if(result.status==='pending')return result;
+      if(result.exchangeId!==nativeId)return {status:'pending'};
+      if(result.status==='settled'){
+        const filled=quantity(result.filledSize);if(!filled||filled.gt(order.size))return {status:'pending'};
+        return {status:'settled',exchangeId:nativeId,filledSize:filled.toFixed()};
+      }
+      return {status:'open',exchangeId:nativeId};
+    }
+    const schema=z.object({connector_name:z.literal('lighter_perpetual'),trading_pair:z.literal(order.symbol),open_orders:z.array(z.record(z.unknown())),order_history:z.array(z.record(z.unknown())),history_next_cursor:z.string().nullable().optional()});
+    const rows:Record<string,unknown>[]=[],cursors=new Set<string>();let cursor:string|undefined;
+    for(let page=0;page<100;page++){
+      const result=schema.parse(await this.post('/quanttrade/trading/snapshot',{account_name:this.config.accountName,connector_name:'lighter_perpetual',trading_pair:order.symbol,...(cursor?{history_cursor:cursor}:{})}));
+      rows.push(...result.open_orders,...result.order_history);
+      const next=result.history_next_cursor??undefined;
+      if(!next)break;
+      if(cursors.has(next)||page===99)return {status:'pending'};
+      cursors.add(next);cursor=next;
+    }
+    const matches=rows.filter(row=>(nativeId&&identity(row.exchange_order_id)===nativeId)||(clientId&&identity(row.client_order_index)===clientId));
+    const ids=new Set(matches.map(row=>identity(row.exchange_order_id)).filter((id):id is string=>Boolean(id)));
+    if(ids.size!==1||(nativeId&&!ids.has(nativeId)))return {status:'pending'};
+    nativeId=[...ids][0];
+    const terminal=(row:Record<string,unknown>)=>['filled','canceled','cancelled'].includes(String(row.status).toLowerCase())||String(row.status).toLowerCase().startsWith('canceled-');
+    const settled=matches.filter(terminal),selected=settled.length?settled:matches;
+    if(selected.some(row=>!quantity(row.initial_base_amount)?.eq(order.size)||(row.is_ask!==undefined&&row.is_ask!==(order.side==='sell'))))return {status:'pending'};
+    if(settled.length){
+      const values=new Set(settled.map(row=>quantity(row.filled_base_amount)?.toFixed()));
+      if(values.size!==1||values.has(undefined))return {status:'pending'};
+      const filled=new Decimal([...values][0]!);
+      if(filled.gt(order.size)||settled.some(row=>String(row.status).toLowerCase()==='filled'&&!filled.eq(order.size)))return {status:'pending'};
+      return {status:'settled',exchangeId:nativeId,filledSize:filled.toFixed()};
+    }
+    return selected.length&&selected.every(row=>['open','pending','in-progress','partially-filled','partially_filled'].includes(String(row.status).toLowerCase()))?{status:'open',exchangeId:nativeId}:{status:'pending'};
+  }
   async orderEvidence(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
     const connector=order.marketType==='spot'?order.venue:connectors[order.venue];
     const pair=order.venue==='hyperliquid'&&order.marketType!=='spot'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;

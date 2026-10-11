@@ -23,7 +23,7 @@ export class HummingbotOperations implements OperationClient {
     if (!['127.0.0.1','localhost','[::1]'].includes(url.hostname)||url.username||url.password||!['http:','https:'].includes(url.protocol)) throw new Error('Hummingbot must be a local HTTP(S) service');
   }
   async perform(action:string,payload:Record<string,unknown>):Promise<unknown> {
-    if (!['leverage','margin','cancel-order','amend-order','snapshot','native-orders'].includes(action)) throw new Error('Unsupported exchange operation');
+    if (!['leverage','margin','cancel-order','amend-order','snapshot','native-orders','hyperliquid-twap','hyperliquid-twap-cancel','hyperliquid-twap-evidence'].includes(action)) throw new Error('Unsupported exchange operation');
     const response=await this.request(new URL('/quanttrade/trading/'+(action==='native-orders'?'lighter-native-orders':action),this.config.url),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Basic '+Buffer.from(this.config.username+':'+this.config.password).toString('base64')},body:JSON.stringify(payload),signal:AbortSignal.timeout(30_000),redirect:'error'});
     if (!response.ok) throw new Error('Exchange operation failed; inspect account state before retrying');
     return response.json();

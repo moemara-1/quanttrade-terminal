@@ -15,8 +15,12 @@ import type { LiquidationCollector } from './liquidations.ts';
 import type { WorkflowRuns } from './workflows.ts';
 import { parseCredentials } from './connections.ts';
 import type { LighterNativeOrders } from './lighter-native-orders.ts';
+import type { HyperliquidNativeTwap } from './hyperliquid-native-twap.ts';
+import type { ChasePlans } from './chase-plans.ts';
 
 interface Services {
+  hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'>;
+  chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
   lighterNativeOrders?:Pick<LighterNativeOrders,'execute'>;
   workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
   liquidations?: Pick<LiquidationCollector,'get'>;
@@ -238,6 +242,34 @@ export function createApp(services: Services) {
       const message=error instanceof z.ZodError?error.issues.map(issue=>`${issue.path.join('.')||'request'}: ${issue.message}`).join('; '):error instanceof Error?error.message:'Native order validation failed before submission';
       res.status(400).json({error:message,submissionAttempted:false});
     }
+  });
+  app.post('/api/terminal/hyperliquid-twap',operator,async(req,res)=>{
+    if(!services.hyperliquidNativeTwap){res.status(503).json({error:'Native Hyperliquid TWAP is unavailable',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh plan afterwards',submissionAttempted:false});return;}
+    try{res.json(await services.hyperliquidNativeTwap.execute(req.body));}
+    catch(error){res.status(400).json({error:error instanceof Error?error.message:'Native TWAP validation failed',submissionAttempted:false});}
+  });
+  app.post('/api/terminal/chase-plans',operator,async(req,res)=>{
+    if(!services.chasePlans){res.status(503).json({error:'Managed Chase is unavailable',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh plan afterwards',submissionAttempted:false});return;}
+    try{res.json({status:'registered',run:await services.chasePlans.start(req.body)});}
+    catch(error){res.status(400).json({error:error instanceof Error?error.message:'Chase plan validation failed',submissionAttempted:false});}
+  });
+  app.get('/api/chase-plans',operator,(_req,res)=>res.json({runs:services.chasePlans?.list()??[]}));
+  app.post('/api/terminal/chase-cancel',operator,(_req,res)=>{
+    if(!services.chasePlans){res.status(503).json({error:'Managed Chase is unavailable',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange connection is being updated',submissionAttempted:false});return;}
+    try{res.json({status:'cancellation-requested',run:services.chasePlans.cancelReviewed(_req.body)});}
+    catch(error){res.status(400).json({error:error instanceof Error?error.message:'Chase cancellation validation failed',submissionAttempted:false});}
+  });
+  app.post('/api/terminal/hyperliquid-twap-evidence',operator,async(req,res)=>{
+    if(!services.hyperliquidNativeTwap){res.status(503).json({error:'Native TWAP evidence is unavailable'});return;}
+    res.json(await services.hyperliquidNativeTwap.evidence(req.body));
+  });
+  app.post('/api/chase-plans/:id/cancel',operator,(req,res)=>{
+    if(!services.chasePlans){res.status(503).json({error:'Managed Chase is unavailable'});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange connection is being updated'});return;}
+    res.json(services.chasePlans.cancel(z.string().uuid().parse(req.params.id)));
   });
   app.post('/api/terminal/snapshot',operator,async(req,res)=>{
     if (!services.operations) {res.status(503).json({error:'Exchange account access is unavailable'});return;}
