@@ -12734,6 +12734,68 @@ index 5484a85..4f17ead 100644
 +    }).kind,
 +  ).toBe('unavailable')
 +})
+diff --git a/apps/terminal/src/lib/api.ts b/apps/terminal/src/lib/api.ts
+index 39aaa14..cc1ff07 100644
+--- a/apps/terminal/src/lib/api.ts
++++ b/apps/terminal/src/lib/api.ts
+@@ -395,14 +395,19 @@ export class EquityFundamentalsUnavailableError extends Error {
+   }
+ }
+ 
+-async function fetchFundamentals<T>(path: string): Promise<T> {
+-  // Standalone builds have nowhere to ask, which is the same news for a pane
+-  // as a server with no provider key: keep today's seam, skip the request.
+-  if (!hasAppServer) {
++async function fetchFundamentals<T>(
++  path: string,
++  hostedCalendar = false,
++): Promise<T> {
++  // QuantTrade serves calendars under the terminal's origin even without a
++  // Pairlens App Server. Company and insider providers still require one.
++  if (!hasAppServer && !hostedCalendar) {
+     throw new EquityFundamentalsUnavailableError('not_configured')
+   }
+ 
+-  const response = await authFetch(`${appServerUrl}${path}`)
++  const response = await authFetch(
++    hasAppServer ? `${appServerUrl}${path}` : path,
++  )
+ 
+   if (!response.ok) {
+     // An App Server built before these routes existed answers 404. Same seam:
+@@ -628,20 +633,22 @@ export const api = {
+     const suffix = qs.toString() ? `?${qs.toString()}` : ''
+     return fetchFundamentals<EarningsCalendarResponse>(
+       `/api/earnings-calendar${suffix}`,
++      true,
+     )
+   },
+ 
+   /**
+    * What the United States publishes next: the forward macro release calendar,
+    * compiled server-side from the BLS, BEA, Fed and Census schedules. No
+-   * provider key behind it, so the only refusal is the App Server being absent
+-   * (standalone build) or the agencies being unreachable, and both arrive as
++   * provider key behind it. QuantTrade standalone uses its same-origin bridge;
++   * a missing bridge or unreachable agencies both arrive as
+    * `EquityFundamentalsUnavailableError`. Defaults to a fortnight, capped at 92
+    * days server-side.
+    */
+   getEconomicCalendar: (days?: number) =>
+     fetchFundamentals<EconomicCalendarResponse>(
+       `/api/economic-calendar${days ? `?days=${days}` : ''}`,
++      true,
+     ),
+ 
+   /**
+@@ -652,6 +659,7 @@ export const api = {
+   getIpoCalendar: (params?: { days?: number }) =>
+     fetchFundamentals<IpoCalendarResponse>(
+       `/api/ipo-calendar${params?.days ? `?days=${params.days}` : ''}`,
++      true,
+     ),
+ 
+   /**
 diff --git a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
 index b93724f..7196259 100644
 --- a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
@@ -32075,7 +32137,7 @@ index ed1faf6..27a7cc6 100644
      const store = get()
      const ref = asInstrumentRef(target)
 diff --git a/apps/terminal/vite.config.ts b/apps/terminal/vite.config.ts
-index 944d10d..ca00cdb 100644
+index 944d10d..73882b4 100644
 --- a/apps/terminal/vite.config.ts
 +++ b/apps/terminal/vite.config.ts
 @@ -3,6 +3,7 @@
@@ -32117,7 +32179,7 @@ index 944d10d..ca00cdb 100644
  
  // Stage public/version.json (gitignored) carrying the version and build id the
  // bundle bakes in. Deployed alongside the web terminal, it always reports the
-@@ -140,8 +147,14 @@ const config = defineConfig({
+@@ -140,8 +147,18 @@ const config = defineConfig({
      __APP_BUILD_ID__: JSON.stringify(buildId),
    },
    server: {
@@ -32125,6 +32187,10 @@ index 944d10d..ca00cdb 100644
 +    port: Number.isFinite(terminalPort) ? terminalPort : 4317,
 +    headers: { 'X-QuantTrade-Terminal': '1' },
      proxy: {
++      '^/api/(earnings-calendar|ipo-calendar|economic-calendar)(?:[?]|$)': {
++        target: 'http://127.0.0.1:4318',
++        changeOrigin: true,
++      },
 +      '/_quanttrade/': {
 +        target: 'http://127.0.0.1:4318',
 +        changeOrigin: true,

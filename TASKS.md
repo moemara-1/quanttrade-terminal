@@ -200,3 +200,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Implement native Hyperliquid TWAP create/cancel/evidence and durable managed Chase with fresh bid/ask, partial-fill reconciliation, owned cancellation, one approval and account/revision guards.
 - [completed] 3,911 terminal, 183 backend and 90 signer tests; native/root TypeScript, changed-file ESLint and production build pass. Hetzner 20261011-3 hosted guards, signer runtime SHA and build identity pass. No live test trades/cancellations or old-plan resumes. Commit/push authorized.
 - [blocked] Atomic: official Lighter signer/prover expose no verified multi-market all-or-none signing contract; Hyperliquid ordinary batches allow independent leg outcomes. Capability discovery explicitly reports unavailable; no fake batch fallback. Verified primary sources recorded in docs/advanced-order-plan.md.
+
+## Calendar panels standalone transport repair
+- [completed] Reproduced the standalone client refusal before any request; routed earnings, IPO and macro calls to existing same-origin feeds and added a narrowly scoped local proxy. Provider failure distinctions and unsupported company/insider behavior preserved.
+- [completed] Seven focused regressions, 3,932 terminal tests, native typecheck, changed-file ESLint and production build pass. Deployed Hetzner20261012-1; live earnings/IPO/macro feeds, login, asset hashes, approval guards and build identity verified. No trades or credential changes. Commit/push authorized.
