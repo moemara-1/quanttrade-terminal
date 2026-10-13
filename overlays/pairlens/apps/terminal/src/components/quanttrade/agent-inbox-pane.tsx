@@ -223,8 +223,14 @@ function ConnectedInbox({
               {status.halted ? ' · Trading halted' : ''}
             </p>
             <p className="text-muted-foreground">
-              Order cap ${status.maxOrderNotional} · Daily reserved $
-              {status.dailyNotionalUsed} / ${status.dailyNotionalLimit}
+              Order cap{' '}
+              {status.maxOrderNotional === null
+                ? 'Off'
+                : `$${status.maxOrderNotional}`}{' '}
+              · Daily reserved ${status.dailyNotionalUsed} /{' '}
+              {status.dailyNotionalLimit === null
+                ? 'cap Off'
+                : `$${status.dailyNotionalLimit}`}
             </p>
             <p className="text-muted-foreground">
               {status.mode === 'paper'

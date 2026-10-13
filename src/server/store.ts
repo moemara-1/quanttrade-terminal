@@ -132,26 +132,26 @@ export class DeskStore {
     const rows = this.db.prepare('SELECT amount FROM reservations WHERE mode = ? AND day = ?').all(mode, day);
     return rows.reduce((sum, row) => sum.plus(String(row.amount)), new Decimal(0)).toFixed();
   }
-  reserveOperation(id:string,mode:TradingMode,day:string,amount:string,limit:string):void {
+  reserveOperation(id:string,mode:TradingMode,day:string,amount:string,limit:string|null):void {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const previous=this.db.prepare('SELECT amount FROM reservations WHERE id=?').get('operation:'+id);
       if (previous) {
         if (String(previous.amount)!==amount) throw new Error('Request key belongs to a different amendment');
       } else {
-        if (new Decimal(this.used(mode,day)).plus(amount).gt(limit)) throw new Error('Daily notional limit exceeded');
+        if (limit !== null && new Decimal(this.used(mode,day)).plus(amount).gt(limit)) throw new Error('Daily notional limit exceeded');
         this.db.prepare('INSERT INTO reservations VALUES (?,?,?,?)').run('operation:'+id,mode,day,amount);
       }
       this.db.exec('COMMIT');
     } catch(error) {this.db.exec('ROLLBACK');throw error;}
   }
-  reserve(id: string, mode: TradingMode, day: string, amount: string, limit: string): Proposal {
+  reserve(id: string, mode: TradingMode, day: string, amount: string, limit: string | null): Proposal {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const proposal = this.get(id);
       if (proposal.status !== 'pending') throw new Error('Only pending proposals can be approved');
       if (this.halted) throw new Error('Execution is halted');
-      if (new Decimal(this.used(mode, day)).plus(amount).gt(limit)) throw new Error('Daily notional limit exceeded');
+      if (limit !== null && new Decimal(this.used(mode, day)).plus(amount).gt(limit)) throw new Error('Daily notional limit exceeded');
       this.db.prepare('INSERT INTO reservations VALUES (?, ?, ?, ?)').run(id, mode, day, amount);
       proposal.status = 'submitting';
       proposal.estimatedNotional = amount;

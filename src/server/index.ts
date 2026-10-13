@@ -23,10 +23,10 @@ import { ProtectionMonitor } from './protection-monitor.ts';
 import { LiquidationCollector } from './liquidations.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
-const positiveDecimal=z.string().regex(/^[1-9]\d*(?:\.\d+)?$/);
+import { notionalLimit } from './notional-limits.ts';
 const env=z.object({
   DESK_MODE:z.enum(['paper','live']).default('paper'),
-  MAX_ORDER_NOTIONAL:positiveDecimal.default('1000'),DAILY_NOTIONAL_LIMIT:positiveDecimal.default('5000'),
+  MAX_ORDER_NOTIONAL:notionalLimit,DAILY_NOTIONAL_LIMIT:notionalLimit,
   MAX_PRICE_DEVIATION_BPS:z.coerce.number().int().min(1).max(1000).default(100),
   PROPOSAL_TTL_SECONDS:z.coerce.number().int().min(15).max(600).default(120),
   HUMMINGBOT_URL:z.string().url().default('http://127.0.0.1:8000'),HUMMINGBOT_USERNAME:z.string().default(''),HUMMINGBOT_PASSWORD:z.string().default(''),

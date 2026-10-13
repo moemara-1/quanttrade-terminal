@@ -64,7 +64,8 @@ export class HyperliquidNativeTwap {
    if(latestReferenceNotional.lt(100))throw new Error('Native Hyperliquid TWAP requires at least 100 USDC reference notional');
    notional=latestReferenceNotional.mul(Decimal.max('1.03',ordinaryMultiplier));
    if(plan.protection){const referencePrice=latestReferenceNotional.div(plan.size),stop=new Decimal(plan.protection.stopLossPrice);if(plan.side==='buy'?stop.gte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).lte(referencePrice)):stop.lte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).gte(referencePrice)))throw Error('Native protection triggers are already crossed at the latest admission reference price');if(!this.protection)throw Error('Advanced protection service is unavailable');await this.protection.prepare({id:plan.requestId,kind:'native-twap',accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,symbol:plan.symbol,side:plan.side,size:plan.size,sizeDecimals:market.sizeDecimals,reduceOnly:plan.reduceOnly,protection:plan.protection});this.authorize(plan);}
-   if(notional.gt(plan.referenceNotionalBudget)||notional.gt(this.desk.status().maxOrderNotional))throw new Error('Native TWAP reference admission estimate exceeds reviewed or configured notional limit');
+   const orderLimit=this.desk.status().maxOrderNotional;
+   if(notional.gt(plan.referenceNotionalBudget)||(orderLimit!==null&&notional.gt(orderLimit)))throw new Error('Native TWAP reference admission estimate exceeds reviewed or configured notional limit');
   }
   this.authorize(plan);
   const fingerprint=createHash('sha256').update(JSON.stringify(plan)).digest('hex'),previous=this.desk.store.claimOperation(plan.requestId,fingerprint);

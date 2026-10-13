@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261014-1
-[[ "$previous" == /opt/quanttrade/releases/20261013-3 ]]
+release=/opt/quanttrade/releases/20261014-2
+[[ "$previous" == /opt/quanttrade/releases/20261014-1 ]]
 if test -e "$release"; then
     # A failed, rolled-back candidate may be rebuilt; never overwrite current.
     [[ "$(readlink -f /opt/quanttrade/current)" != "$release" ]]
@@ -23,8 +23,14 @@ chmod -R a+rX "$release"
 runuser -u quanttrade -- node --experimental-transform-types --test --test-isolation=none tests/*.test.ts
 backup=/opt/quanttrade/shared/nginx-before-remaining-integration.conf
 cp -a /etc/nginx/sites-available/quanttrade-public "$backup"
-restore(){ ln -sfn "$previous" /opt/quanttrade/current; cp -a "$backup" /etc/nginx/sites-available/quanttrade-public; docker compose -p quanttrade-hbot --env-file /opt/quanttrade/hummingbot/.env -f "$previous/deployment/hummingbot-compose.yml" up -d --force-recreate --no-deps api; systemctl restart quanttrade-bridge; nginx -t && systemctl reload nginx; }
+cap_env_backup=''
+if [[ "${QUANTTRADE_DISABLE_NOTIONAL_CAPS:-0}" == 1 ]]; then
+    cap_env_backup=/opt/quanttrade/shared/env-before-notional-off
+    cp -p /opt/quanttrade/shared/bridge.env "$cap_env_backup"
+fi
+restore(){ if [[ -n "$cap_env_backup" ]]; then cp -p "$cap_env_backup" /opt/quanttrade/shared/bridge.env; fi; ln -sfn "$previous" /opt/quanttrade/current; cp -a "$backup" /etc/nginx/sites-available/quanttrade-public; docker compose -p quanttrade-hbot --env-file /opt/quanttrade/hummingbot/.env -f "$previous/deployment/hummingbot-compose.yml" up -d --force-recreate --no-deps api; systemctl restart quanttrade-bridge; nginx -t && systemctl reload nginx; }
 trap restore ERR
+if [[ -n "$cap_env_backup" ]]; then python3 deployment/configure-notional-limits.py; fi
 ln -sfn "$release" /opt/quanttrade/current
 install -m 0644 deployment/nginx-public.conf /etc/nginx/sites-available/quanttrade-public
 nginx -t
@@ -54,6 +60,7 @@ python3 deployment/verify-remaining-integration.py
 python3 deployment/verify-native-preparation-repair.py
 python3 deployment/verify-assistant-open-orders.py
 python3 deployment/verify-assistant-market-scan.py
+if [[ -n "$cap_env_backup" ]]; then python3 deployment/verify-notional-limits-off.py; fi
 curl -fsS https://quanttrade.azurestore.shop/version.json | cmp - frontend/version.json
 trap - ERR
 printf '\nQuantTrade single-approval plans active: %s\n' "$release"

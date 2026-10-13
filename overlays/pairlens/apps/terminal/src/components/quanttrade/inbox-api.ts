@@ -8,8 +8,8 @@ export const inboxStatusSchema = z.object({
   halted: z.boolean(),
   executionConfigured: z.boolean(),
   accountName: z.string(),
-  maxOrderNotional: z.string(),
-  dailyNotionalLimit: z.string(),
+  maxOrderNotional: z.string().nullable(),
+  dailyNotionalLimit: z.string().nullable(),
   dailyNotionalUsed: z.string(),
 })
 export const inboxProposalSchema = z.object({

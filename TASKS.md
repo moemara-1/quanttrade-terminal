@@ -220,3 +220,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Assistant market scan transport and native symbols
 - [completed] Reproduced optional App Server failures and generic foreign-venue candle fallback. Assistant context now uses public feed fallback with explicit source/timestamps and unknown metrics; native reads resolve exact catalog symbols and bypass foreign chart/provider fallback.
 - [completed] 3,970 terminal and 236 backend tests, native/root TypeScript, lint and production build pass. Deployed Hetzner20261014-1; actual catalog/hourly candles for all eight requested Lighter assets and existing order/signing guards verified. No trades, cancellations or credential changes; commit/push authorized.
+
+## Disable backend notional caps as requested
+- [completed] Explicit Off/null backend caps retain daily usage, reservation/idempotency, exchange checks, immutable approved budgets and AI confirmations. Assistant now reads actual hosted caps separately from local controls.
+- [completed] 3,972 terminal /240 backend /2 deployment-configuration tests, native/root TypeScript, lint and build pass. Deployed Hetzner20261014-2; actual caps Off and unrelated bridge.env settings unchanged verified. No trades/cancellations or paused-run resumes; commit/push authorized.

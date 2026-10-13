@@ -12873,7 +12873,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..a589b7f 100644
+index ce0d317..0fe66eb 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -60,6 +60,9 @@ const CAPABILITIES = [
@@ -12886,12 +12886,13 @@ index ce0d317..a589b7f 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +76,21 @@ const WORKING_RULES = [
+@@ -73,8 +76,22 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Read get_risk_limits for actual hosted per-order and daily-notional limits before sizing. Local controls marked Off do not establish backend settings. A verified null hosted notional cap means Off, not zero allowance or a missing credential. Disabled backend caps do not remove exchange balance/margin checks, precision rules, account verification, human confirmation, or the immutable reviewed budget of a workflow or advanced order. Never retry or resume an old paused or uncertain plan merely because a limit changed; reconcile its exchange outcomes and prepare a fresh exact review only when requested.',
 +  'Market scan failures are failed reads, not proof of an upstream outage or bad trading credentials. A 503 alone does not establish the cause. For native venues resolve requested assets through the selected venue catalog; never invent a USDT spelling for Lighter or reuse another venue chart as native evidence. Report each returned requested/resolved pair, venue, timeframe and data timestamp, and distinguish partial comparisons from a complete scan. Broad top-coins data is market-cap context, not proof an asset is listed on the requested exchange or a guaranteed pump candidate. Read failures never establish unchanged orders, an empty account, or working trade execution; private order claims require fresh native account evidence.',
 +  'For current pending Lighter or Hyperliquid orders, call get_exchange_open_orders for each requested connected venue and market type. get_open_orders is a device-local event cache, never proof of the complete exchange book. Check returned complete/scope and read failures before claiming all orders are listed or the book is empty. Prepare native cancellations using the exact returned symbol and exchangeOrderId, pinned to the freshly verified account and connection revision. Never use local exchange: IDs or a generic CEX cancellation route for native stops. Explicitly disclose that cancelling reduce-only SL/TP removes position protection. A pending confirmation card is not a cancellation receipt; never claim cancelled before confirmed execution and a fresh native read. Preserve specific tool errors and distinguish failed discovery from failed submission; do not say everything is live merely because one public market snapshot succeeded.',
 +  'Connection revisions do not expire with time. A revision identifies a verified account connection; a proposal expiry is separate. An unknown QT-AI error is not proof of expired credentials, disconnected account or failed submission. Report the actual returned error or failed verification, without inventing a cause. Never switch to a workflow to bypass a connection, account, revision or risk error. Stop preparation on a guard failure, refresh verified account settings only when needed, and request reconnect only if the returned verified state actually requires it. A validation error with no submission permits correcting the exact malformed proposal; an uncertain submission requires reconciliation, never a new execution route.',
@@ -12910,7 +12911,7 @@ index ce0d317..a589b7f 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +110,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +111,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13668,14 +13669,15 @@ index 048abff..489f600 100644
                }
              }
 diff --git a/apps/terminal/src/lib/copilot/portfolio-tools.ts b/apps/terminal/src/lib/copilot/portfolio-tools.ts
-index e7631ae..411dcda 100644
+index e7631ae..19a54e6 100644
 --- a/apps/terminal/src/lib/copilot/portfolio-tools.ts
 +++ b/apps/terminal/src/lib/copilot/portfolio-tools.ts
-@@ -2,12 +2,110 @@
+@@ -2,12 +2,111 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 +import { quantTradeFetch } from '../plugins/quanttrade-session'
++import { inboxStatusSchema } from '../../components/quanttrade/inbox-api'
  import { api } from '../api'
 +import { hasAppServer } from '../auth-client'
 +import { loadConnectedExchanges } from '../plugins/quanttrade-connections'
@@ -13783,7 +13785,7 @@ index e7631ae..411dcda 100644
  
  // ---------------------------------------------------------------------------
  // Phase 3 (account state) — read-only portfolio, open orders, and the risk
-@@ -15,7 +113,7 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -15,7 +114,7 @@ import type { CopilotToolDeps } from './tool-deps'
  // globally accessible, so these execute directly in the transport.
  // ---------------------------------------------------------------------------
  
@@ -13792,7 +13794,7 @@ index e7631ae..411dcda 100644
    return {
      get_portfolio: tool({
        description:
-@@ -43,7 +141,7 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+@@ -43,7 +142,7 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
  
      get_open_orders: tool({
        description:
@@ -13801,7 +13803,7 @@ index e7631ae..411dcda 100644
        inputSchema: z.object({
          pair: z.string().optional().describe('Filter to one pair'),
          includeHistory: z.boolean().optional().default(false),
-@@ -68,7 +166,89 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+@@ -68,19 +167,124 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
                )
                .slice(0, 25)
            : []
@@ -13892,7 +13894,43 @@ index e7631ae..411dcda 100644
        },
      }),
  
-@@ -102,27 +282,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+     get_risk_limits: tool({
+       description:
+-        'Get the user’s risk guardrails and current usage — max position size, max daily loss, max daily trades, today’s P&L and trade count, and whether orders are currently locked. Every order the copilot places is enforced against these.',
++        'Read local risk guardrails and actual hosted backend notional caps, account mode, usage and halt status. Null hosted caps mean disabled; unavailable hosted status is unknown, never disabled. Confirmation, balance checks and exact reviewed workflow budgets still apply.',
+       inputSchema: z.object({}),
+       execute: async () => {
+         const r = useRiskConfigStore.getState()
+         r.checkWindowReset?.()
+         const s = useRiskConfigStore.getState()
++        let hosted:
++          | ({ status: 'available' } & z.infer<typeof inboxStatusSchema>)
++          | { status: 'unavailable'; error: string }
++        try {
++          const response = await quantTradeFetch('/_quanttrade/api/status', {
++            method: 'GET',
++            credentials: 'same-origin',
++            cache: 'no-store',
++            signal: AbortSignal.timeout(15000),
++          })
++          if (!response.ok) throw new Error('Hosted risk status unavailable')
++          hosted = {
++            status: 'available',
++            ...inboxStatusSchema.parse(await response.json()),
++          }
++        } catch {
++          hosted = {
++            status: 'unavailable',
++            error:
++              'Hosted backend risk limits could not be verified. Do not assume caps are disabled.',
++          }
++        }
+         return {
++          hosted,
+           local: {
+             maxPositionSizePct: s.maxPositionSize,
+             maxDailyLoss: s.maxDailyLoss,
+@@ -102,27 +306,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
  
      get_account_settings: tool({
        description:

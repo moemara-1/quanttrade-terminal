@@ -4,6 +4,7 @@ import {
   canCancelProposal,
   inboxProposalSchema,
   inboxRequest,
+  inboxStatusSchema,
 } from './inbox-api'
 import type { InboxProposal, InboxStatus } from './inbox-api'
 
@@ -40,6 +41,17 @@ const status: InboxStatus = {
   dailyNotionalLimit: '5000',
   dailyNotionalUsed: '0',
 }
+test('disabled hosted notional caps preserve approval account guards', () => {
+  const disabled = inboxStatusSchema.parse({
+    ...status,
+    maxOrderNotional: null,
+    dailyNotionalLimit: null,
+  })
+  expect(canApproveProposal(proposal, disabled, 20)).toBe(true)
+  expect(
+    canApproveProposal(proposal, { ...disabled, accountName: 'other' }, 20),
+  ).toBe(false)
+})
 describe('agent inbox approval availability', () => {
   test('cancellation requires an open order in the current account and mode', () => {
     const live = {

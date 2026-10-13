@@ -73,7 +73,7 @@ export class VenueOperations {
       const notional=amount.mul(Decimal.max(market.price,price));
       authorized();
       const status=this.desk.status();
-      if (notional.gt(status.maxOrderNotional)) throw new Error('Amended order notional exceeds configured limit');
+      if (status.maxOrderNotional !== null && notional.gt(status.maxOrderNotional)) throw new Error('Amended order notional exceeds configured limit');
       this.desk.store.reserveOperation(input.requestId,'live',new Date().toISOString().slice(0,10),notional.toString(),status.dailyNotionalLimit);
     }
     authorized();

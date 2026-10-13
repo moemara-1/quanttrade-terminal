@@ -20,7 +20,8 @@ export class LighterNativeOrders {
   }
   async preview(raw:unknown){
     const reviewed=await this.validate(lighterNativeOrderSchema.parse(raw));
-    if(new Decimal(this.desk.store.used('live',new Date(this.clock()).toISOString().slice(0,10))).plus(reviewed.estimatedNotional).gt(this.desk.status().dailyNotionalLimit))throw new Error('Daily notional limit exceeded');
+    const dailyLimit=this.desk.status().dailyNotionalLimit;
+    if(dailyLimit!==null&&new Decimal(this.desk.store.used('live',new Date(this.clock()).toISOString().slice(0,10))).plus(reviewed.estimatedNotional).gt(dailyLimit))throw new Error('Daily notional limit exceeded');
     return reviewed;
   }
   private async validate(plan:Plan){

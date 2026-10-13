@@ -65,8 +65,8 @@ export interface DeskStatus {
   halted: boolean;
   executionConfigured: boolean;
   agentConfigured: boolean;
-  maxOrderNotional: string;
-  dailyNotionalLimit: string;
+  maxOrderNotional: string | null;
+  dailyNotionalLimit: string | null;
   dailyNotionalUsed: string;
   maxPriceDeviationBps: number;
   proposalTtlSeconds: number;

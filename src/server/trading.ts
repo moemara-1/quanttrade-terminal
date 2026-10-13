@@ -39,8 +39,8 @@ export interface ExecutionClient {
 export interface DeskConfig {
   mode: TradingMode;
   accountName: string;
-  maxOrderNotional: string;
-  dailyNotionalLimit: string;
+  maxOrderNotional: string | null;
+  dailyNotionalLimit: string | null;
   maxPriceDeviationBps: number;
   proposalTtlSeconds: number;
   pairlensUrl: string;
@@ -160,7 +160,7 @@ export class TradingDesk {
     const notional = size.mul(upperPrice);
     if (order.quoteBudget && size.mul(order.type==='market' ? this.marketProtection(order,market) : price).gt(order.quoteBudget)) throw new Error('Market moved beyond the approved quote budget; prepare a new order');
     if (size.mul(price).lt(market.minNotional)) throw new Error('Order is below venue minimum notional');
-    if (notional.gt(this.config.maxOrderNotional)) throw new Error('Order notional exceeds the configured limit');
+    if (this.config.maxOrderNotional !== null && notional.gt(this.config.maxOrderNotional)) throw new Error('Order notional exceeds the configured limit');
     return notional.toFixed();
   }
   private marketProtection(order: OrderDraft, market: Market): string {

@@ -234,3 +234,11 @@ test('PRL rejects over-cap manual orders before execution and rechecks approved 
   setMarket({maxLeverage:2});await assert.rejects(desk.approve(proposal.id),/maximum leverage is 2x/);assert.equal(calls(),1);
  } finally {store.close();}
 });
+
+test('disabled caps allow approved notional above former defaults and keep turnover and replay guards', async () => {
+ const s=setup({maxOrderNotional:null,dailyNotionalLimit:null});
+ try {const p=await s.desk.propose({...draft,size:'60'},'agent');assert.equal(p.status,'pending');assert.equal(s.calls(),0);await s.desk.approve(p.id);assert.equal(s.desk.status().dailyNotionalUsed,'6000');await assert.rejects(s.desk.approve(p.id));assert.equal(s.desk.status().maxOrderNotional,null);assert.equal(s.desk.status().dailyNotionalLimit,null);} finally{s.store.close();}
+});
+test('disabled operation cap still reserves once and rejects changed reservation amounts', () => {
+ const store=new DeskStore(':memory:');try{store.reserveOperation('uncapped','live','2026-10-14','6000',null);store.reserveOperation('uncapped','live','2026-10-14','6000',null);assert.equal(store.used('live','2026-10-14'),'6000');assert.throws(()=>store.reserveOperation('uncapped','live','2026-10-14','7000',null),/different/);assert.throws(()=>store.reserveOperation('finite','live','2026-10-14','1','5000'),/Daily/);}finally{store.close();}
+});

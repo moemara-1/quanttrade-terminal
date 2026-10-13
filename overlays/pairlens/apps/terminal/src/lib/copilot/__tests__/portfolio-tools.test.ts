@@ -9,6 +9,42 @@ import type { AccountSettingsReaders } from '../portfolio-tools'
 import type { CopilotToolDeps } from '../tool-deps'
 import type { ExchangeCredential } from '@/stores/credentials-store'
 
+test('risk read distinguishes disabled hosted caps from unknown hosted status', async () => {
+  const original = globalThis.fetch
+  const execute = (
+    buildPortfolioTools({} as CopilotToolDeps).get_risk_limits as unknown as {
+      execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+    }
+  ).execute
+  try {
+    globalThis.fetch = (async () =>
+      Response.json({
+        accountName: 'desk',
+        mode: 'live',
+        halted: false,
+        executionConfigured: true,
+        maxOrderNotional: null,
+        dailyNotionalLimit: null,
+        dailyNotionalUsed: '9000',
+      })) as typeof fetch
+    expect(await execute({}, {})).toMatchObject({
+      hosted: {
+        status: 'available',
+        maxOrderNotional: null,
+        dailyNotionalLimit: null,
+        dailyNotionalUsed: '9000',
+      },
+    })
+    globalThis.fetch = (async () =>
+      Response.json({ error: 'Unavailable' }, { status: 503 })) as typeof fetch
+    expect(await execute({}, {})).toMatchObject({
+      hosted: { status: 'unavailable' },
+    })
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
 function credential(
   market: string,
   mode: 'paper' | 'live',
