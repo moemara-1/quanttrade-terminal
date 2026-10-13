@@ -216,3 +216,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Native pending orders and assistant cancellation routing
 - [completed] Replace local-cache discovery assumptions with fresh native order reads, route Lighter/Hyperliquid cancellation by exact native ID, bind account/revision and surface read failures.
 - [completed] Fresh native discovery, exact large IDs, scoped cancellation and structured tool errors shipped Hetzner20261013-3. 3,956 terminal /236 backend /102 signer tests, TypeScript/lint/build and actual hosted Lighter discovery/access checks pass. No live orders cancelled/created or paused plans resumed; commit/push authorized.
+
+## Assistant market scan transport and native symbols
+- [completed] Reproduced optional App Server failures and generic foreign-venue candle fallback. Assistant context now uses public feed fallback with explicit source/timestamps and unknown metrics; native reads resolve exact catalog symbols and bypass foreign chart/provider fallback.
+- [completed] 3,970 terminal and 236 backend tests, native/root TypeScript, lint and production build pass. Deployed Hetzner20261014-1; actual catalog/hourly candles for all eight requested Lighter assets and existing order/signing guards verified. No trades, cancellations or credential changes; commit/push authorized.

@@ -12873,7 +12873,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..63272ab 100644
+index ce0d317..a589b7f 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -60,6 +60,9 @@ const CAPABILITIES = [
@@ -12886,12 +12886,13 @@ index ce0d317..63272ab 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +76,20 @@ const WORKING_RULES = [
+@@ -73,8 +76,21 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Market scan failures are failed reads, not proof of an upstream outage or bad trading credentials. A 503 alone does not establish the cause. For native venues resolve requested assets through the selected venue catalog; never invent a USDT spelling for Lighter or reuse another venue chart as native evidence. Report each returned requested/resolved pair, venue, timeframe and data timestamp, and distinguish partial comparisons from a complete scan. Broad top-coins data is market-cap context, not proof an asset is listed on the requested exchange or a guaranteed pump candidate. Read failures never establish unchanged orders, an empty account, or working trade execution; private order claims require fresh native account evidence.',
 +  'For current pending Lighter or Hyperliquid orders, call get_exchange_open_orders for each requested connected venue and market type. get_open_orders is a device-local event cache, never proof of the complete exchange book. Check returned complete/scope and read failures before claiming all orders are listed or the book is empty. Prepare native cancellations using the exact returned symbol and exchangeOrderId, pinned to the freshly verified account and connection revision. Never use local exchange: IDs or a generic CEX cancellation route for native stops. Explicitly disclose that cancelling reduce-only SL/TP removes position protection. A pending confirmation card is not a cancellation receipt; never claim cancelled before confirmed execution and a fresh native read. Preserve specific tool errors and distinguish failed discovery from failed submission; do not say everything is live merely because one public market snapshot succeeded.',
 +  'Connection revisions do not expire with time. A revision identifies a verified account connection; a proposal expiry is separate. An unknown QT-AI error is not proof of expired credentials, disconnected account or failed submission. Report the actual returned error or failed verification, without inventing a cause. Never switch to a workflow to bypass a connection, account, revision or risk error. Stop preparation on a guard failure, refresh verified account settings only when needed, and request reconnect only if the returned verified state actually requires it. A validation error with no submission permits correcting the exact malformed proposal; an uncertain submission requires reconciliation, never a new execution route.',
 +  'Native Lighter grouping: Entry plus stop-loss alone uses OTO; entry plus take-profit and stop-loss uses OTOCO. OCO is exclusively a pair of protective TP/SL exits for an existing position, never an opening entry plus a stop. A standalone order uses single grouping. Keep the entry first and protections reduce-only on the opposite side. For a short, the stop trigger is above entry and the take-profit below; for a long, the reverse. Never invent an expiry timestamp or time-in-force not accepted by the tool. One complete native card is the requested trade, not several single-order confirmations.',
@@ -12909,7 +12910,7 @@ index ce0d317..63272ab 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +109,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +110,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13291,6 +13292,97 @@ index 5a3bae1..a37411c 100644
  
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
+diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
+index b543053..0988a66 100644
+--- a/apps/terminal/src/lib/copilot/context-tools.ts
++++ b/apps/terminal/src/lib/copilot/context-tools.ts
+@@ -2,7 +2,11 @@
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+ import { tool } from 'ai'
+ import { z } from 'zod'
+-import { api } from '../api'
++import { api, appServerUrl } from '../api'
++import {
++  fetchFearGreedWithFallback,
++  fetchTopCoinsWithFallback,
++} from '../public-market-data'
+ import type { CopilotToolDeps } from './tool-deps'
+ 
+ // ---------------------------------------------------------------------------
+@@ -64,15 +68,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
+       }),
+       execute: async ({ limit }) => {
+         try {
+-          const coins = await api.getTopCoins()
+-          return { count: coins.length, coins: coins.slice(0, limit ?? 25) }
+-        } catch (err) {
++          const snapshot = await fetchTopCoinsWithFallback((path) =>
++            fetch(`${appServerUrl}${path}`),
++          )
++          if (!Array.isArray(snapshot.coins) || snapshot.coins.length === 0)
++            throw new Error('No market-cap ranking returned')
++          return {
++            status: 'available',
++            source: snapshot.source,
++            retrievedAt: new Date().toISOString(),
++            updatedAt: snapshot.updatedAt,
++            timestampMeaning:
++              snapshot.source === 'CoinGecko'
++                ? 'updatedAt is retrieval time, not provider observation time'
++                : 'App Server reported timestamp',
++            providerUpdatedAt: snapshot.providerUpdatedAt ?? null,
++            ranking: 'market-cap',
++            count: snapshot.coins.length,
++            coins: snapshot.coins.slice(0, limit ?? 25).map((coin) => ({
++              ...coin,
++              ...Object.fromEntries(
++                (snapshot.missingChanges?.[coin.slug] ?? []).map((field) => [
++                  field,
++                  null,
++                ]),
++              ),
++            })),
++          }
++        } catch {
+           return {
++            status: 'unavailable',
+             coins: [],
+             error:
+-              err instanceof Error
+-                ? err.message
+-                : 'Top coins data requires being signed in.',
++              'Market-cap data could not be retrieved. No market ranking is available; the failure does not identify an account or credential problem.',
+           }
+         }
+       },
+@@ -131,17 +159,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
+       inputSchema: z.object({}),
+       execute: async () => {
+         try {
+-          const fg = await api.getFearGreed()
++          const fg = await fetchFearGreedWithFallback((path) =>
++            fetch(`${appServerUrl}${path}`),
++          )
+           return {
++            status: 'available',
++            source: fg.source,
++            retrievedAt: new Date().toISOString(),
++            fetchedAt: fg.fetchedAt,
+             latest: fg.latest,
+             history: (fg.historical ?? []).slice(0, 14),
+           }
+-        } catch (err) {
++        } catch {
+           return {
++            status: 'unavailable',
+             error:
+-              err instanceof Error
+-                ? err.message
+-                : 'Fear & Greed data requires being signed in.',
++              'Fear & Greed data could not be retrieved. No sentiment reading is available; the failure does not identify an account or credential problem.',
+           }
+         }
+       },
 diff --git a/apps/terminal/src/lib/copilot/index.ts b/apps/terminal/src/lib/copilot/index.ts
 index a34eeca..86a6054 100644
 --- a/apps/terminal/src/lib/copilot/index.ts
@@ -13311,6 +13403,270 @@ index a34eeca..86a6054 100644
      ...buildContextTools(deps),
      ...buildPortfolioTools(deps),
      ...buildChartTools(deps),
+diff --git a/apps/terminal/src/lib/copilot/market-tools.ts b/apps/terminal/src/lib/copilot/market-tools.ts
+index 048abff..489f600 100644
+--- a/apps/terminal/src/lib/copilot/market-tools.ts
++++ b/apps/terminal/src/lib/copilot/market-tools.ts
+@@ -27,7 +27,7 @@ const NO_PROVIDER =
+   'Market data provider unavailable — only the current on-screen pair can be read right now.'
+ 
+ /** Load candles for a target, preferring live context, else fetching history. */
+-async function loadCandles(
++async function fetchCandles(
+   deps: CopilotToolDeps,
+   target: { market: string; pair: string; timeframe: string },
+   limit: number,
+@@ -163,6 +163,120 @@ function fetchTradesSnapshot(
+ }
+ 
+ export function buildMarketTools(deps: CopilotToolDeps) {
++  type Target = ReturnType<typeof resolveTarget>
++  const catalogs = new Map<
++    string,
++    {
++      at: number
++      value: Promise<Array<{ venue: string; symbol: string; base: string }>>
++    }
++  >()
++  async function resolveNativeTarget(target: Target): Promise<Target> {
++    const venue = target.market.replace(/-spot$/, '')
++    if (venue !== 'lighter' && venue !== 'hyperliquid') return target
++    const marketType = target.market.endsWith('-spot') ? 'spot' : 'perpetual'
++    const key = `${venue}:${marketType}`
++    const cached = catalogs.get(key)
++    let catalog =
++      cached && Date.now() - cached.at < 15000 ? cached.value : undefined
++    if (!catalog) {
++      catalog = (async () => {
++        const response = await fetch(
++          `/_quanttrade/api/public/markets?venue=${venue}&marketType=${marketType}`,
++          {
++            credentials: 'same-origin',
++            redirect: 'error',
++            signal: AbortSignal.timeout(15000),
++          },
++        )
++        if (!response.ok)
++          throw new Error(
++            `Venue catalog unavailable (HTTP ${response.status}); no pair was inferred.`,
++          )
++        return z
++          .array(
++            z.object({
++              venue: z.string(),
++              symbol: z.string(),
++              base: z.string(),
++            }),
++          )
++          .parse(await response.json())
++      })()
++      catalogs.set(key, { at: Date.now(), value: catalog })
++    }
++    let rows
++    try {
++      rows = (await catalog).filter((row) => row.venue === venue)
++    } catch (err) {
++      catalogs.delete(key)
++      throw err
++    }
++    const terminalPair = (symbol: string) =>
++      marketType === 'perpetual' ? `${symbol}-USDC` : symbol
++    const exact = rows.filter(
++      (row) =>
++        row.symbol.toUpperCase() === target.pair ||
++        terminalPair(row.symbol).toUpperCase() === target.pair,
++    )
++    const base = target.pair.split('-')[0]
++    const candidates = exact.length
++      ? exact
++      : rows.filter(
++          (row) =>
++            row.base.toUpperCase() === base &&
++            (marketType === 'perpetual' || target.pair === base),
++        )
++    if (candidates.length !== 1)
++      throw new Error(
++        candidates.length
++          ? 'Ambiguous venue instrument; select an exact catalog pair.'
++          : 'Instrument is not listed in the selected venue catalog; no other venue was used.',
++      )
++    return { ...target, pair: terminalPair(candidates[0].symbol) }
++  }
++  async function loadCandles(
++    targetDeps: CopilotToolDeps,
++    target: Target,
++    limit: number,
++  ) {
++    Object.assign(target, await resolveNativeTarget(target))
++    const venue = target.market.replace(/-spot$/, '')
++    if (venue !== 'lighter' && venue !== 'hyperliquid')
++      return fetchCandles(targetDeps, target, limit)
++    const marketType = target.market.endsWith('-spot') ? 'spot' : 'perpetual'
++    const symbol =
++      marketType === 'spot' ? target.pair : target.pair.slice(0, -5)
++    const query = new URLSearchParams({
++      venue,
++      marketType,
++      symbol,
++      interval: target.timeframe,
++      limit: String(limit),
++    })
++    const response = await fetch(`/_quanttrade/api/public/candles?${query}`, {
++      credentials: 'same-origin',
++      redirect: 'error',
++      signal: AbortSignal.timeout(15000),
++    })
++    if (!response.ok)
++      throw new Error(
++        `Selected venue candles unavailable (HTTP ${response.status}); no alternate venue or chart data was used.`,
++      )
++    return z
++      .array(
++        z.object({
++          time: z.number().finite(),
++          open: z.number().finite(),
++          high: z.number().finite(),
++          low: z.number().finite(),
++          close: z.number().finite(),
++          volume: z.number().finite(),
++        }),
++      )
++      .parse(await response.json())
++      .map(({ time, ...candle }) => ({ ...candle, ts: time * 1000 }))
++  }
+   return {
+     get_market_snapshot: tool({
+       description:
+@@ -186,7 +300,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+             target,
+             candles: summarizeCandles(candles),
+             ticker:
+-              current && ctx?.ticker ? ctx.ticker : tickerFromCandles(candles),
++              current &&
++              ![
++                'lighter',
++                'hyperliquid',
++                'lighter-spot',
++                'hyperliquid-spot',
++              ].includes(target.market) &&
++              ctx?.ticker
++                ? ctx.ticker
++                : tickerFromCandles(candles),
+             regime,
+             latestSignal: signal,
+           }
+@@ -236,11 +359,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+       }),
+       execute: async (args) => {
+         const target = resolveTarget(deps, { ...args, timeframe: undefined })
+-        if (isCurrentTarget(deps, { ...target })) {
+-          const ctx = deps.getCtx()
+-          if (ctx?.ticker) return { target, ticker: ctx.ticker }
+-        }
+         try {
++          Object.assign(target, await resolveNativeTarget(target))
++          if (
++            ![
++              'lighter',
++              'hyperliquid',
++              'lighter-spot',
++              'hyperliquid-spot',
++            ].includes(target.market) &&
++            isCurrentTarget(deps, target)
++          ) {
++            const ctx = deps.getCtx()
++            if (ctx?.ticker) return { target, ticker: ctx.ticker }
++          }
+           const candles = await loadCandles(deps, target, 60)
+           return { target, ticker: tickerFromCandles(candles) }
+         } catch (err) {
+@@ -284,7 +416,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+         depth: z.number().int().min(1).max(50).optional().default(15),
+       }),
+       execute: async (args) => {
+-        const target = resolveTarget(deps, { ...args, timeframe: undefined })
++        const requested = resolveTarget(deps, { ...args, timeframe: undefined })
++        let target
++        try {
++          target = await resolveNativeTarget(requested)
++        } catch (err) {
++          return {
++            target: requested,
++            available: false,
++            error: err instanceof Error ? err.message : String(err),
++          }
++        }
+         const snap = await fetchOrderbookSnapshot(
+           deps,
+           target.market,
+@@ -333,7 +475,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+         limit: z.number().int().min(5).max(200).optional().default(50),
+       }),
+       execute: async (args) => {
+-        const target = resolveTarget(deps, { ...args, timeframe: undefined })
++        const requested = resolveTarget(deps, { ...args, timeframe: undefined })
++        let target
++        try {
++          target = await resolveNativeTarget(requested)
++        } catch (err) {
++          return {
++            target: requested,
++            available: false,
++            error: err instanceof Error ? err.message : String(err),
++          }
++        }
+         const trades = await fetchTradesSnapshot(
+           deps,
+           target.market,
+@@ -391,7 +543,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+           .describe('Defaults to 15m, 1h, 4h, 1d'),
+       }),
+       execute: async (args) => {
+-        const base = resolveTarget(deps, args)
++        const requested = resolveTarget(deps, args)
++        let base
++        try {
++          base = await resolveNativeTarget(requested)
++        } catch (err) {
++          return {
++            ...requested,
++            error: err instanceof Error ? err.message : String(err),
++          }
++        }
+         const tfs = args.timeframes ?? ['15m', '1h', '4h', '1d']
+         const results = await Promise.all(
+           tfs.map(async (tf) => {
+@@ -459,12 +620,19 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+               const candles = await loadCandles(deps, target, lookback + 5)
+               const newest = toNewestFirst(candles)
+               if (newest.length < 2)
+-                return { pair: target.pair, error: 'insufficient data' }
++                return {
++                  market: target.market,
++                  pair: target.pair,
++                  requestedPair: rawPair,
++                  error: 'insufficient data',
++                }
+               const last = newest[0].close
+               const past = newest[Math.min(lookback, newest.length - 1)].close
+               const summary = summarizeCandles(candles)
+               return {
++                market: target.market,
+                 pair: target.pair,
++                requestedPair: rawPair,
+                 lastPrice: last,
+                 changePct: past ? ((last - past) / past) * 100 : 0,
+                 trend: summary.shortTermTrend,
+@@ -472,7 +640,9 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+               }
+             } catch (err) {
+               return {
++                market: base.market,
+                 pair: rawPair,
++                available: false,
+                 error: err instanceof Error ? err.message : String(err),
+               }
+             }
 diff --git a/apps/terminal/src/lib/copilot/portfolio-tools.ts b/apps/terminal/src/lib/copilot/portfolio-tools.ts
 index e7631ae..411dcda 100644
 --- a/apps/terminal/src/lib/copilot/portfolio-tools.ts
@@ -14992,6 +15348,149 @@ index c87faaa..98f789b 100644
          : `Plugin '${pluginId}' belongs to a family this deployment does not ship.`,
      )
      this.name = 'BundledPluginUnavailableError'
+diff --git a/apps/terminal/src/lib/public-market-data.ts b/apps/terminal/src/lib/public-market-data.ts
+index b98f7d2..1b2cb45 100644
+--- a/apps/terminal/src/lib/public-market-data.ts
++++ b/apps/terminal/src/lib/public-market-data.ts
+@@ -36,6 +36,7 @@ export type CoinGeckoMarket = {
+   market_cap: number | null
+   market_cap_rank: number | null
+   total_volume: number | null
++  last_updated?: string | null
+   price_change_percentage_1h_in_currency?: number | null
+   price_change_percentage_24h_in_currency?: number | null
+   price_change_percentage_7d_in_currency?: number | null
+@@ -44,9 +45,45 @@ export type CoinGeckoMarket = {
+ 
+ export function normalizeCoinGeckoMarkets(
+   rows: Array<CoinGeckoMarket>,
+-): TopCoinsResponse {
++): TopCoinsResponse & {
++  missingChanges: Record<string, Array<string>>
++  providerUpdatedAt: string | null
++} {
++  const missingChanges: Record<string, Array<string>> = {}
++  for (const row of rows) {
++    missingChanges[row.id] = [
++      row.price_change_percentage_1h_in_currency == null
++        ? 'percentChange1h'
++        : null,
++      (row.price_change_percentage_24h_in_currency ??
++        row.price_change_percentage_24h) == null
++        ? 'percentChange24h'
++        : null,
++      row.price_change_percentage_7d_in_currency == null
++        ? 'percentChange7d'
++        : null,
++    ].filter((value): value is string => value !== null)
++  }
++  const observationTimes = rows
++    .map((row) => row.last_updated)
++    .filter(
++      (value): value is string =>
++        typeof value === 'string' && Number.isFinite(Date.parse(value)),
++    )
++  const providerUpdatedAt =
++    observationTimes.length === rows.length && observationTimes.length > 0
++      ? observationTimes.sort()[0]
++      : null
+   const coins: Array<TopCoin> = rows
+-    .filter((r) => r.current_price !== null && r.market_cap_rank !== null)
++    .filter(
++      (r) =>
++        Number.isFinite(r.current_price) &&
++        Number(r.current_price) > 0 &&
++        Number.isFinite(r.market_cap_rank) &&
++        Number(r.market_cap_rank) > 0 &&
++        Number.isFinite(r.market_cap) &&
++        Number(r.market_cap) > 0,
++    )
+     .map((r) => ({
+       rank: r.market_cap_rank ?? 0,
+       symbol: r.symbol.toUpperCase(),
+@@ -63,7 +100,12 @@ export function normalizeCoinGeckoMarkets(
+       percentChange7d: r.price_change_percentage_7d_in_currency ?? 0,
+       logoUrl: r.image,
+     }))
+-  return { coins, updatedAt: new Date().toISOString() }
++  return {
++    coins,
++    updatedAt: new Date().toISOString(),
++    missingChanges,
++    providerUpdatedAt,
++  }
+ }
+ 
+ export function topCoinsToHeatmap(top: TopCoinsResponse): HeatmapResponse {
+@@ -138,8 +180,18 @@ async function jsonOrThrow<T>(res: Response, label: string): Promise<T> {
+   return (await res.json()) as T
+ }
+ 
+-async function fetchCoinGeckoTopCoins(): Promise<TopCoinsResponse> {
+-  const res = await fetch(COINGECKO_MARKETS_URL)
++type MarketContextSnapshot = TopCoinsResponse & {
++  source: string
++  missingChanges?: Record<string, Array<string>>
++  providerUpdatedAt?: string | null
++}
++
++async function fetchCoinGeckoTopCoins(): Promise<
++  ReturnType<typeof normalizeCoinGeckoMarkets>
++> {
++  const res = await fetch(COINGECKO_MARKETS_URL, {
++    signal: AbortSignal.timeout(PRIMARY_TIMEOUT_MS),
++  })
+   const rows = await jsonOrThrow<Array<CoinGeckoMarket>>(res, 'coingecko')
+   return normalizeCoinGeckoMarkets(rows)
+ }
+@@ -147,12 +199,15 @@ async function fetchCoinGeckoTopCoins(): Promise<TopCoinsResponse> {
+ /** App Server first; CoinGecko when it's unreachable. */
+ export async function fetchTopCoinsWithFallback(
+   apiFetch: ApiFetch,
+-): Promise<TopCoinsResponse> {
++): Promise<MarketContextSnapshot> {
+   try {
+     const res = await primaryDeadline(apiFetch('/api/top-coins'), 'top-coins')
+-    return await jsonOrThrow<TopCoinsResponse>(res, 'top-coins')
++    return {
++      ...(await jsonOrThrow<TopCoinsResponse>(res, 'top-coins')),
++      source: 'App Server',
++    }
+   } catch {
+-    return fetchCoinGeckoTopCoins()
++    return { ...(await fetchCoinGeckoTopCoins()), source: 'CoinGecko' }
+   }
+ }
+ 
+@@ -171,16 +226,24 @@ export async function fetchHeatmapWithFallback(
+ /** App Server first; alternative.me when it's unreachable. */
+ export async function fetchFearGreedWithFallback(
+   apiFetch: ApiFetch,
+-): Promise<FearGreedResponse> {
++): Promise<FearGreedResponse & { source: string }> {
+   try {
+     const res = await primaryDeadline(apiFetch('/api/fear-greed'), 'fear-greed')
+-    return await jsonOrThrow<FearGreedResponse>(res, 'fear-greed')
++    return {
++      ...(await jsonOrThrow<FearGreedResponse>(res, 'fear-greed')),
++      source: 'App Server',
++    }
+   } catch {
+-    const res = await fetch(ALTERNATIVE_FNG_URL)
++    const res = await fetch(ALTERNATIVE_FNG_URL, {
++      signal: AbortSignal.timeout(PRIMARY_TIMEOUT_MS),
++    })
+     const body = await jsonOrThrow<{ data: Array<AlternativeFngEntry> }>(
+       res,
+       'alternative.me',
+     )
+-    return normalizeAlternativeFng(body.data ?? [])
++    return {
++      ...normalizeAlternativeFng(body.data ?? []),
++      source: 'Alternative.me',
++    }
+   }
+ }
 diff --git a/apps/terminal/src/lib/python/__tests__/pairlens_ta.test.ts b/apps/terminal/src/lib/python/__tests__/pairlens_ta.test.ts
 index 983ef14..ef402df 100644
 --- a/apps/terminal/src/lib/python/__tests__/pairlens_ta.test.ts
