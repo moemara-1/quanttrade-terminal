@@ -11,15 +11,20 @@ export const lighterNativeOrderSchema=z.object({requestId:z.string().uuid(),prop
 type Plan=z.infer<typeof lighterNativeOrderSchema>;
 const conditional=(type:string)=>type.startsWith('sl-')||type.startsWith('tp-');
 export class LighterNativeOrders {
-  constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now){}
+  constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly balances?:()=>Promise<{currency:string;available:string}[]>){}
   private authorized(plan:Plan):void{
     const status=this.desk.status();
     if(status.halted||!status.executionConfigured||this.desk.modeFor('lighter')!=='live')throw new Error('Native orders require an enabled Live Lighter connection');
     if(status.accountName!==plan.accountName||this.desk.store.connectionFingerprint(plan.accountName,'lighter')!==plan.connectionRevision)throw new Error('Reviewed account or connection revision changed; prepare a fresh native proposal');
     if(plan.proposedAt>this.clock()+5000||this.clock()-plan.proposedAt>180000)throw new Error('Native proposal expired; prepare a fresh review');
   }
-  async execute(raw:unknown):Promise<{status:'accepted'|'unknown';result:unknown}>{
-    const plan=lighterNativeOrderSchema.parse(raw);this.authorized(plan);
+  async preview(raw:unknown){
+    const reviewed=await this.validate(lighterNativeOrderSchema.parse(raw));
+    if(new Decimal(this.desk.store.used('live',new Date(this.clock()).toISOString().slice(0,10))).plus(reviewed.estimatedNotional).gt(this.desk.status().dailyNotionalLimit))throw new Error('Daily notional limit exceeded');
+    return reviewed;
+  }
+  private async validate(plan:Plan){
+    this.authorized(plan);
     if(plan.legs.length!=={single:1,oto:2,oco:2,otoco:3}[plan.grouping])throw new Error('Native grouping has the wrong number of legs');
     if((plan.leverage===undefined)!==(plan.marginMode===undefined))throw new Error('Review leverage and margin mode together');
     const parent=plan.legs[0]!,children=plan.grouping==='oto'||plan.grouping==='otoco'?plan.legs.slice(1):[];
@@ -42,7 +47,7 @@ export class LighterNativeOrders {
       if(positions.length!==1||!new Decimal(positions[0]!.position).eq(plan.positionSize)||new Decimal(plan.positionSize).lte(0)||plan.legs.some(leg=>leg.side===(positions[0]!.sign===1?'buy':'sell')))throw new Error('Reviewed position size or closing side changed; prepare a fresh OCO');
       existingSize=plan.positionSize;
     }
-    let notional=new Decimal(0);
+    let notional=new Decimal(0),openingNotional=new Decimal(0);
     for(const [index,leg] of plan.legs.entries()){
       const isConditional=conditional(leg.type),isMarket=['market','sl-market','tp-market','twap'].includes(leg.type);
       if(isConditional!==(leg.triggerPrice!==undefined))throw new Error('Only conditional orders require trigger prices');
@@ -58,7 +63,7 @@ export class LighterNativeOrders {
       const reference=new Decimal(leg.triggerPrice??market.price),bound=new Decimal(this.desk.status().maxPriceDeviationBps).div(10000);
       if(isMarket&&(new Decimal(leg.price).minus(reference).abs().div(reference).gt(bound)||(leg.side==='buy'?new Decimal(leg.price).lt(reference):new Decimal(leg.price).gt(reference))))throw new Error('Native execution bound exceeds the reviewed protection band');
       const order={venue:'lighter' as const,marketType:'perpetual' as const,symbol:plan.symbol,side:leg.side,type:isMarket?'market' as const:'limit' as const,size:amount,...(!isMarket?{price:leg.price}:{}),reduceOnly:leg.reduceOnly,...(index===0&&plan.leverage!==undefined?{leverage:plan.leverage,marginMode:plan.marginMode}:{}),...(isConditional?{trigger:{triggerPrice:leg.triggerPrice!,triggerType:leg.type.startsWith('tp-')?'tp' as const:'sl' as const}}:{}),rationale:'Confirmed native Lighter order'};
-      const preview=await this.desk.preview(order);notional=notional.plus(Decimal.max(preview.notional,new Decimal(amount).mul(leg.price)));
+      const preview=await this.desk.preview(order),exposure=Decimal.max(preview.notional,new Decimal(amount).mul(leg.price));notional=notional.plus(exposure);if(!leg.reduceOnly)openingNotional=openingNotional.plus(exposure);
       if(leg.type==='twap'){
         const slice=new Decimal(amount).div(new Decimal(leg.durationSeconds!).div(30).plus(1)).toDecimalPlaces(market.sizeDecimals,Decimal.ROUND_DOWN);
         await this.desk.preview({...order,size:slice.toFixed()});
@@ -66,6 +71,22 @@ export class LighterNativeOrders {
     }
     if(children.length&&parent.expiry!==undefined&&children.some(leg=>leg.expiry!==parent.expiry))throw new Error('Resting parent and child expiries must match');
     if(children.length&&parent.type==='limit'&&parent.timeInForce!=='ioc'&&children.some(leg=>(leg.expiry??-1)!==(parent.expiry??-1)))throw new Error('Resting parent and child expiries must match');
+    this.authorized(plan);
+    let availableMargin:string|null=null;
+    const initialMargin=openingNotional.eq(0)?'0':plan.leverage===undefined?null:openingNotional.div(plan.leverage).toFixed();
+    if(this.balances&&openingNotional.gt(0)){
+      const rows=await this.balances();this.authorized(plan);
+      const collateral=rows.filter(row=>row.currency==='USDC');
+      if(collateral.length!==1)throw new Error('Fresh USDC available margin is unavailable');
+      const available=new Decimal(collateral[0]!.available);
+      if(!available.isFinite()||available.lt(0))throw new Error('Fresh USDC available margin is invalid');
+      availableMargin=available.toFixed();
+      if(initialMargin!==null&&new Decimal(initialMargin).gt(available))throw new Error('Native opening order exceeds fresh available margin');
+    }
+    return {plan,estimatedNotional:notional.toFixed(),openingNotional:openingNotional.toFixed(),initialMargin,availableMargin,marginStatus:initialMargin!==null&&availableMargin!==null?'verified' as const:'unknown' as const};
+  }
+  async execute(raw:unknown):Promise<{status:'accepted'|'unknown';result:unknown}>{
+    const reviewed=await this.validate(lighterNativeOrderSchema.parse(raw)),plan=reviewed.plan,notional=new Decimal(reviewed.estimatedNotional),parent=plan.legs[0]!,children=plan.grouping==='oto'||plan.grouping==='otoco'?plan.legs.slice(1):[];
     this.authorized(plan);
     const fingerprint=createHash('sha256').update(JSON.stringify(plan)).digest('hex'),previous=this.desk.store.claimOperation(plan.requestId,fingerprint);
     if(previous)return previous.state==='completed'?{status:'accepted',result:previous.result}:{status:'unknown',result:{error:'Native outcome is uncertain or in progress; inspect exchange state. This request will not be retried.'}};

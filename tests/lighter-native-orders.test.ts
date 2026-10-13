@@ -14,6 +14,21 @@ function setup(fail=false){
   const plan={requestId:randomUUID(),proposedAt:now,credentialId:'device-lighter',connectionRevision:'a'.repeat(64),accountName:'desk',mode:'live',venue:'lighter',marketType:'perpetual',symbol:'GRAM-USDC',grouping:'single',legs:[{side:'buy',type:'market',amount:'3',price:'2.02',reduceOnly:false,timeInForce:'ioc'}]};
   return {store,desk,service,markets,plan,calls:()=>calls,payload:()=>payload,now};
 }
+test('native preflight validates the exact plan without claiming, reserving or submitting',async()=>{
+ const s=setup();try{const preview=await s.service.preview(s.plan);assert.deepEqual(preview.plan,s.plan);assert.equal(preview.initialMargin,null);assert.equal(preview.marginStatus,'unknown');assert.equal(s.calls(),0);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'0');assert.equal((await s.service.execute(s.plan)).status,'accepted');assert.equal(s.calls(),1);}finally{s.store.close();}
+});
+test('native preflight rejects invalid child amount, time-in-force and expiry before card',async()=>{
+ const s=setup();try{for(const patch of [{legs:[{...s.plan.legs[0],type:'sl-market',triggerPrice:'2',timeInForce:'gtt'}]},{legs:[{...s.plan.legs[0],expiry:s.now+2592000001}]},{grouping:'oto',legs:[s.plan.legs[0],{side:'sell',type:'sl-market',amount:'1',price:'1.77',triggerPrice:'1.78',reduceOnly:true,timeInForce:'ioc'}]}])await assert.rejects(s.service.preview({...s.plan,...patch}));assert.equal(s.calls(),0);}finally{s.store.close();}
+});
+test('native explicit leverage uses conservative actual opening exposure and fresh available margin',async()=>{
+ const s=setup();try{let available='100';const service=new LighterNativeOrders(s.desk,{perform:async()=>{throw Error('No writes');}},s.markets,()=>s.now,async()=>[{currency:'USDC',available}]);const plan={...s.plan,leverage:1,marginMode:'cross'};const preview=await service.preview(plan);assert.equal(preview.openingNotional,'6.06');assert.equal(preview.initialMargin,'6.06');assert.equal(preview.availableMargin,'100');assert.equal(preview.marginStatus,'verified');available='5';await assert.rejects(service.preview(plan),/available margin/);await assert.rejects(service.execute(plan),/available margin/);}finally{s.store.close();}
+});
+test('preflight checks daily exposure without creating an operation claim',async()=>{
+ const s=setup();try{s.store.reserveOperation('used-limit','live',new Date(s.now).toISOString().slice(0,10),'2000','2000');await assert.rejects(s.service.preview(s.plan),/Daily notional limit exceeded/);assert.equal(s.store.claimOperation(s.plan.requestId,'unclaimed-preview'),null);assert.equal(s.calls(),0);}finally{s.store.close();}
+});
+test('reduce-only preview needs no free collateral and does not block closing on unavailable or negative balances',async()=>{
+ const s=setup();try{for(const failure of ['negative','unavailable']){let reads=0;const service=new LighterNativeOrders(s.desk,{perform:async()=>{throw Error('No writes');}},s.markets,()=>s.now,async()=>{reads++;if(failure==='unavailable')throw Error('Balance unavailable');return [{currency:'USDC',available:'-10'}];});const plan={...s.plan,legs:[{...s.plan.legs[0],side:'sell',reduceOnly:true,price:'1.98'}]};const reviewed=await service.preview(plan);assert.equal(reviewed.openingNotional,'0');assert.equal(reviewed.initialMargin,'0');assert.equal(reviewed.availableMargin,null);assert.equal(reviewed.marginStatus,'unknown');assert.equal(reads,0);assert.equal(s.calls(),0);await assert.rejects(service.preview(s.plan),/available margin|Balance unavailable/);assert.equal(reads,1);}}finally{s.store.close();}
+});
 test('native approval pins account, revision, TTL, exact wire fields and reserves the complete plan once',async()=>{
  const s=setup();try{assert.equal((await s.service.execute(s.plan)).status,'accepted');assert.equal((await s.service.execute(s.plan)).status,'accepted');assert.equal(s.calls(),1);assert.equal(s.payload().account_name,'desk');assert.equal(s.payload().request_id,s.plan.requestId);assert.equal(s.payload().connector_name,'lighter_perpetual');assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'6.06');await assert.rejects(s.service.execute({...s.plan,legs:[{...s.plan.legs[0],amount:'4'}]}),/different/);}finally{s.store.close();}
 });

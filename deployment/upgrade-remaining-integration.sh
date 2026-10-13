@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261013-1
-[[ "$previous" == /opt/quanttrade/releases/20261012-1 ]]
+release=/opt/quanttrade/releases/20261013-2
+[[ "$previous" == /opt/quanttrade/releases/20261013-1 ]]
 if test -e "$release"; then
     # A failed, rolled-back candidate may be rebuilt; never overwrite current.
     [[ "$(readlink -f /opt/quanttrade/current)" != "$release" ]]

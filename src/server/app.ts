@@ -23,7 +23,7 @@ interface Services {
   advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
-  lighterNativeOrders?:Pick<LighterNativeOrders,'execute'>;
+  lighterNativeOrders?:Pick<LighterNativeOrders,'execute'> & Partial<Pick<LighterNativeOrders,'preview'>>;
   workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
   liquidations?: Pick<LiquidationCollector,'get'>;
   news?: Pick<NewsService,'get'>;
@@ -254,6 +254,15 @@ export function createApp(services: Services) {
     if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; wait for the connection before changing exchange settings',submissionAttempted:false});return;}
     if (!services.operations) {res.status(503).json({error:'Exchange operations are unavailable'});return;}
     res.json(await services.operations.execute(req.body));
+  });
+  app.post('/api/terminal/lighter-native-preview',operator,async(req,res)=>{
+    if(!services.lighterNativeOrders?.preview){res.status(503).json({error:'Native Lighter preview is unavailable',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh native plan afterwards',submissionAttempted:false});return;}
+    try{res.json(await services.lighterNativeOrders.preview(req.body));}
+    catch(error){
+      const message=error instanceof z.ZodError?error.issues.map(issue=>`${issue.path.join('.')||'request'}: ${issue.message}`).join('; '):error instanceof Error?error.message:'Native order validation failed before submission';
+      res.status(400).json({error:message,submissionAttempted:false});
+    }
   });
   app.post('/api/terminal/lighter-native-orders',operator,async(req,res)=>{
     if(!services.lighterNativeOrders){res.status(503).json({error:'Native Lighter execution is unavailable',submissionAttempted:false});return;}

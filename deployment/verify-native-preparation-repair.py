@@ -38,3 +38,22 @@ auth=base64.b64encode((fields['USERNAME']+':'+fields['PASSWORD']).encode()).deco
 with urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/openapi.json',headers={'Authorization':'Basic '+auth}),timeout=10) as response:
     assert '/quanttrade/connections/{account_name}/{venue}/verified-revision' in json.load(response)['paths']
 print('Existing live Lighter signing scope verified; revision available; no credentials replaced, orders submitted or paused plans resumed.')
+
+# This endpoint only reviews a plan; an invalid linked exit must never reach signing.
+import time, uuid
+plan={'requestId':str(uuid.uuid4()),'proposedAt':int(time.time()*1000),'credentialId':'hosted-preflight-check','connectionRevision':receipt['connectionRevision'],'accountName':account,'mode':'live','venue':'lighter','marketType':'perpetual','symbol':'ZEC-USDC','grouping':'oto','leverage':1,'marginMode':'cross','legs':[{'side':'sell','type':'market','amount':'1','price':'1213','reduceOnly':False,'timeInForce':'ioc'},{'side':'buy','type':'sl-market','amount':'1','price':'1285','triggerPrice':'1285','reduceOnly':True,'timeInForce':'ioc'}]}
+for credential in (None,agent,token):
+    headers={'Content-Type':'application/json'}
+    if credential: headers['Authorization']='Bearer '+credential
+    try:
+        urllib.request.urlopen(urllib.request.Request(base+'/api/terminal/lighter-native-preview',data=json.dumps(plan).encode(),headers=headers),timeout=15)
+        raise AssertionError('Invalid or unauthorized preview accepted')
+    except urllib.error.HTTPError as error:
+        if credential==token:
+            assert error.code==400,error.code
+            body=json.load(error)
+            assert body['submissionAttempted'] is False
+            assert 'Attached exits require zero amount' in body['error'],body['error']
+        else:
+            assert error.code in (401,403),error.code
+print('Hosted read-only preflight rejects invalid linked sizing and enforces operator access; no order submitted.')

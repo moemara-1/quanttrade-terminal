@@ -208,3 +208,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Assistant native execution repair
 - [completed] Confirmed live Lighter had no revision; transcript also used wrong OCO entry grouping, invalid margin sizing and workflow bypass. Reproduced and repaired a stored-versus-running encrypted Lighter tier mismatch using actual adapter tests and private live verification.
 - [completed] Fresh operator-only scope recovery, exact grouping/alias/margin instructions and SDK stop-at-confirmation shipped Hetzner20261013-1. Live signing scope and persisted revision verified; keys unchanged, no trades or old-plan resumes. 3,944 terminal /227 backend /96 signer tests, typecheck/build and hosted guards verified; commit/push authorized.
+
+## Reject invalid native confirmation cards
+- [completed] Match native preparation validation to signer rules for child sizing, time in force and expiry; shared read-only server preflight verifies risk and margin before card.
+- [completed] Read-only preflight, invalid historical cards, exact linked sizing/TIF/expiry and fresh opening margin checks shipped Hetzner20261013-2. 3,951 terminal /232 backend /96 signer tests, TypeScript/lint/build and hosted operator/invalid-plan guards pass. No live orders or old-plan resumes; failed ZEC request was not retried. Commit/push authorized.

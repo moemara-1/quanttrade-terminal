@@ -56,7 +56,7 @@ workflows.startTimer();
 desk.agentConfigured=agent.configured;
 const operationClient=new HummingbotOperations({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT});
 const operations=new VenueOperations(desk,operationClient,markets);
-const lighterNativeOrders=new LighterNativeOrders(desk,operationClient,markets);
+const lighterNativeOrders=new LighterNativeOrders(desk,operationClient,markets,Date.now,()=>execution.balances('lighter','perpetual'));
 const advancedProtection:AdvancedProtection=new AdvancedProtection(resolve('data','advanced-protection.sqlite'),createProtectionAdapter(desk,execution,operationClient,():ChasePlans=>chasePlans));
 const hyperliquidNativeTwap=new HyperliquidNativeTwap(desk,operationClient,markets,Date.now,advancedProtection);
 const chasePlans:ChasePlans=new ChasePlans(resolve('data','chase-runs.sqlite'),desk,execution,operationClient,Date.now,markets,advancedProtection);

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import Decimal from 'decimal.js'
 import { recordTradeSubmission } from './trade-submissions'
 import { assistantOrderAccount, assistantProposalMode } from './order-account'
 import { quantTradeFetch } from '@/lib/plugins/quanttrade-session'
@@ -45,6 +46,15 @@ const planFields = {
   marginMode: z.enum(['cross', 'isolated']).optional(),
   positionSize: positive.optional(),
 }
+const reviewSchema = z
+  .object({
+    estimatedNotional: decimal,
+    openingNotional: decimal,
+    initialMargin: decimal.nullable(),
+    availableMargin: decimal.nullable(),
+    marginStatus: z.enum(['verified', 'unknown']),
+  })
+  .strict()
 export const lighterNativeOrderInputSchema = z
   .object({
     ...planFields,
@@ -70,9 +80,20 @@ const proposalSchema = z
     mode: z.literal('live'),
     venue: z.literal('lighter'),
     marketType: z.literal('perpetual'),
+    review: reviewSchema.optional(),
   })
   .strict()
 export type LighterNativeOrderProposal = z.infer<typeof proposalSchema>
+export function lighterNativeAmountLabel(
+  plan: LighterNativeOrderProposal,
+  index: number,
+): string {
+  const leg = plan.legs[index]
+  if (/[1-9]/.test(leg.amount)) return leg.amount
+  return plan.grouping === 'oco'
+    ? `Whole position (reviewed ${plan.positionSize})`
+    : `Actual entry fill (up to ${plan.legs[0].amount})`
+}
 type Credential = { id: string; market: string; mode: string; label: string }
 type Request = (url: string, init?: RequestInit) => Promise<Response>
 const statusSchema = z.object({
@@ -88,6 +109,7 @@ function validatePlan(
   plan:
     | z.infer<typeof proposalSchema>
     | z.infer<typeof lighterNativeOrderInputSchema>,
+  now: number,
 ) {
   if ((plan.leverage !== undefined) !== (plan.marginMode !== undefined))
     throw new Error('Choose leverage and margin mode together.')
@@ -104,8 +126,37 @@ function validatePlan(
       throw new Error(
         'TWAP requires a reviewed duration; other order types cannot have one.',
       )
-    if (leg.type === 'twap' && plan.grouping !== 'single')
-      throw new Error('Native TWAP cannot be grouped with child orders.')
+    if (
+      leg.type === 'twap' &&
+      (plan.grouping !== 'single' ||
+        leg.timeInForce !== 'gtt' ||
+        leg.expiry !== undefined)
+    )
+      throw new Error(
+        'Native TWAP requires a single GTT order with duration and no expiry. Nothing was submitted.',
+      )
+    if (
+      ['market', 'sl-market', 'tp-market'].includes(leg.type) &&
+      leg.timeInForce !== 'ioc'
+    )
+      throw new Error(
+        'Market and market-trigger orders require IOC. Prepare a corrected draft; nothing was submitted.',
+      )
+    if (
+      leg.expiry !== undefined &&
+      (leg.expiry - now < 300000 || leg.expiry - now > 2592000000)
+    )
+      throw new Error(
+        'Expiry must be five minutes to thirty days away. Prepare a corrected draft; nothing was submitted.',
+      )
+    if (
+      leg.expiry !== undefined &&
+      (leg.type === 'market' ||
+        (leg.type === 'limit' && leg.timeInForce === 'ioc'))
+    )
+      throw new Error(
+        'Immediate orders cannot have expiry. Nothing was submitted.',
+      )
     if (
       leg.timeInForce === 'post-only' &&
       !['limit', 'sl-limit', 'tp-limit'].includes(leg.type)
@@ -136,6 +187,18 @@ function validatePlan(
       throw new Error(
         'Entry groups require an opening entry and opposite-side reduce-only conditional children.',
       )
+    if (children.some((leg) => !new Decimal(leg.amount).eq(0)))
+      throw new Error(
+        'Attached exits require zero amount: Lighter derives their size from the actual entry fill. Prepare a corrected draft; nothing was submitted.',
+      )
+    if (
+      (entry.expiry !== undefined ||
+        (entry.type === 'limit' && entry.timeInForce !== 'ioc')) &&
+      children.some((leg) => (leg.expiry ?? null) !== (entry.expiry ?? null))
+    )
+      throw new Error(
+        'Resting parent and child expiries must match. Nothing was submitted.',
+      )
   }
   if (plan.grouping === 'oco' || plan.grouping === 'otoco') {
     const exits = plan.grouping === 'oco' ? plan.legs : plan.legs.slice(1)
@@ -147,15 +210,39 @@ function validatePlan(
       throw new Error(
         'OCO protects an existing position with paired TP/SL exits. Use OTO for an opening entry plus one protective exit; use OTOCO for an entry plus both TP and SL. Nothing was submitted.',
       )
+    if (
+      !new Decimal(exits[0].amount).eq(exits[1].amount) ||
+      exits[0].expiry !== exits[1].expiry
+    )
+      throw new Error(
+        'OCO TP and SL siblings require matching amounts and expiries. Nothing was submitted.',
+      )
+    const tp = exits.find((leg) => leg.type.startsWith('tp-'))!
+    const sl = exits.find((leg) => leg.type.startsWith('sl-'))!
+    if (
+      tp.side === 'sell'
+        ? new Decimal(tp.triggerPrice!).lte(sl.triggerPrice!)
+        : new Decimal(tp.triggerPrice!).gte(sl.triggerPrice!)
+    )
+      throw new Error(
+        'OCO trigger levels contradict the closing side. Nothing was submitted.',
+      )
   }
   if (plan.positionSize && plan.grouping !== 'oco')
     throw new Error('Reviewed position size is only used for position OCO.')
+  if (
+    plan.leverage !== undefined &&
+    (plan.grouping === 'oco' || plan.legs[0].reduceOnly)
+  )
+    throw new Error(
+      'Leverage requires an opening order. Do not change leverage for position protection; nothing was submitted.',
+    )
 }
 export function parseLighterNativeOrder(
   raw: unknown,
 ): LighterNativeOrderProposal {
   const proposal = proposalSchema.parse(raw)
-  validatePlan(proposal)
+  validatePlan(proposal, proposal.proposedAt)
   return proposal
 }
 async function verifiedStatus(
@@ -246,7 +333,7 @@ async function verifiedStatus(
     )
   return status
 }
-/** Preparation performs account reads only; no trading endpoint is called. */
+/** Preparation performs read-only preflight; no execution endpoint is called. */
 export async function prepareLighterNativeOrder(
   raw: unknown,
   credentials: ReadonlyArray<Credential>,
@@ -254,7 +341,7 @@ export async function prepareLighterNativeOrder(
   now: () => number = Date.now,
 ): Promise<LighterNativeOrderProposal> {
   const input = lighterNativeOrderInputSchema.parse(raw)
-  validatePlan(input)
+  validatePlan(input, now())
   const mode = assistantProposalMode(
     credentials,
     'lighter',
@@ -275,7 +362,7 @@ export async function prepareLighterNativeOrder(
   const status = await verifiedStatus(request, undefined, undefined, true)
   assistantOrderAccount(credentials, 'lighter', mode, account.id)
   const { mode: unusedMode, credentialId: unusedId, ...plan } = input
-  return parseLighterNativeOrder({
+  const proposal = parseLighterNativeOrder({
     ...plan,
     requestId: crypto.randomUUID(),
     proposedAt: now(),
@@ -287,6 +374,48 @@ export async function prepareLighterNativeOrder(
     accountName: status.accountName,
     accountLabel: account.label,
   })
+  const response = await quantTradeFetch(
+    '/_quanttrade/api/terminal/lighter-native-preview',
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proposal),
+      signal: AbortSignal.timeout(35000),
+      redirect: 'error',
+    },
+    request,
+  )
+  const body: unknown = await response.json()
+  if (!response.ok) {
+    const failure = z
+      .object({
+        error: z.string().min(1).max(1000),
+        submissionAttempted: z.literal(false),
+      })
+      .safeParse(body)
+    throw new Error(
+      failure.success
+        ? `${failure.data.error} Nothing was submitted.`
+        : 'Native order preflight could not be verified. Nothing was submitted.',
+    )
+  }
+  const preview = reviewSchema
+    .extend({ plan: proposalSchema })
+    .strict()
+    .safeParse(body)
+  if (
+    !preview.success ||
+    preview.data.plan.review !== undefined ||
+    JSON.stringify(preview.data.plan) !== JSON.stringify(proposal)
+  )
+    throw new Error(
+      'Server preflight did not preserve the exact reviewed plan. Nothing was submitted.',
+    )
+  validatePlan(proposal, now())
+  assistantOrderAccount(credentials, 'lighter', mode, account.id)
+  const { plan: unusedPlan, ...review } = preview.data
+  return parseLighterNativeOrder({ ...proposal, review })
 }
 const evidenceSchema = z.object({
   grouping: z.enum(['single', 'oto', 'oco', 'otoco']),
@@ -318,6 +447,7 @@ export class LighterNativeOrderApproval {
       const age = this.now() - this.proposal.proposedAt
       if (age < 0 || age > 180000)
         throw new Error('This proposal expired. Prepare a fresh native order.')
+      validatePlan(this.proposal, this.now())
       assistantOrderAccount(
         this.credentials(),
         'lighter',
@@ -338,15 +468,17 @@ export class LighterNativeOrderApproval {
       )
       if (this.now() - this.proposal.proposedAt > 180000)
         throw new Error('This proposal expired. Prepare a fresh native order.')
+      validatePlan(this.proposal, this.now())
       this.record('submitting')
       posted = true
+      const { review: unusedReview, ...executionPlan } = this.proposal
       const response = await quantTradeFetch(
         '/_quanttrade/api/terminal/lighter-native-orders',
         {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.proposal),
+          body: JSON.stringify(executionPlan),
           signal: AbortSignal.timeout(35000),
           redirect: 'error',
         },

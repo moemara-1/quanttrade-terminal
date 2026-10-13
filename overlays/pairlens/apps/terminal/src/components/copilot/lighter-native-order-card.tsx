@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react'
 import { Button } from '@pairlens/ui/components/ui/button'
-import { LighterNativeOrderApproval } from '@/lib/copilot/lighter-native-orders'
+import {
+  LighterNativeOrderApproval,
+  lighterNativeAmountLabel,
+} from '@/lib/copilot/lighter-native-orders'
 
 const labels = {
   single: 'Single order',
@@ -18,17 +21,20 @@ export function LighterNativeOrderCard({
     LighterNativeOrderApproval['status'] | 'rejected'
   >('idle')
   let invalid = false
+  let invalidMessage =
+    'Invalid native order proposal. Prepare a new trade. Nothing was submitted.'
   if (!controller.current) {
     try {
       controller.current = new LighterNativeOrderApproval(nativeOrder)
-    } catch {
+    } catch (cause) {
       invalid = true
+      if (cause instanceof Error) invalidMessage = cause.message
     }
   }
   if (invalid || !controller.current)
     return (
       <p role="alert" className="text-xs text-down">
-        Invalid native order proposal. Prepare a new trade.
+        {invalidMessage}
       </p>
     )
   const approval = controller.current
@@ -52,6 +58,16 @@ export function LighterNativeOrderCard({
           {plan.leverage}× leverage · {plan.marginMode}
         </p>
       )}
+      {plan.review && (
+        <p className="mt-1 text-muted-foreground">
+          Estimated entry notional: {plan.review.openingNotional} USDC.{' '}
+          {plan.review.marginStatus === 'verified' &&
+          plan.review.initialMargin !== null &&
+          plan.review.availableMargin !== null
+            ? `Estimated initial margin: ${plan.review.initialMargin} USDC · available margin: ${plan.review.availableMargin} USDC. Excludes fees; checked again at submission.`
+            : 'Initial margin or available margin could not be verified. Do not treat the venue maximum leverage as the selected leverage.'}
+        </p>
+      )}
       <ol className="my-3 space-y-3">
         {plan.legs.map((leg, index) => (
           <li key={index} className="rounded border border-border p-2">
@@ -61,7 +77,9 @@ export function LighterNativeOrderCard({
             <dl className="mt-1 space-y-1 text-muted-foreground">
               <div className="flex justify-between gap-3">
                 <dt>Base amount</dt>
-                <dd className="font-mono text-foreground">{leg.amount}</dd>
+                <dd className="font-mono text-foreground">
+                  {lighterNativeAmountLabel(plan, index)}
+                </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt>

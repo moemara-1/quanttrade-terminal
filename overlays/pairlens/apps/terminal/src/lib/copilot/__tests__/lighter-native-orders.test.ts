@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
 import {
   LighterNativeOrderApproval,
+  lighterNativeAmountLabel,
+  parseLighterNativeOrder,
   prepareLighterNativeOrder,
 } from '../lighter-native-orders'
 
@@ -42,19 +44,272 @@ const status = {
   venueModes: { lighter: 'live' },
   connectionRevisions: { lighter: 'a'.repeat(64) },
 }
+function previewResponse(init?: RequestInit) {
+  return Response.json({
+    plan: JSON.parse(String(init?.body)),
+    estimatedNotional: '256.5',
+    openingNotional: '256.5',
+    initialMargin: '51.3',
+    availableMargin: '243',
+    marginStatus: 'verified',
+  })
+}
+const preparationRequest = async (url: string, init?: RequestInit) =>
+  url.endsWith('/lighter-native-preview')
+    ? previewResponse(init)
+    : Response.json(status)
+
+test('server preflight rejection never produces a native confirmation card', async () => {
+  const paths: Array<string> = []
+  await expect(
+    prepareLighterNativeOrder(
+      order,
+      [account],
+      async (url) => {
+        paths.push(url)
+        return url.endsWith('/lighter-native-preview')
+          ? Response.json(
+              {
+                error: 'Insufficient available margin',
+                submissionAttempted: false,
+              },
+              { status: 409 },
+            )
+          : Response.json(status)
+      },
+      () => 1000,
+    ),
+  ).rejects.toThrow('Insufficient available margin')
+  expect(paths.some((path) => path.endsWith('/lighter-native-orders'))).toBe(
+    false,
+  )
+})
+
+test('server preflight may not rewrite the reviewed plan', async () => {
+  await expect(
+    prepareLighterNativeOrder(
+      order,
+      [account],
+      async (url, init) => {
+        if (!url.endsWith('/lighter-native-preview'))
+          return Response.json(status)
+        const plan = JSON.parse(String(init?.body))
+        return Response.json({
+          plan: { ...plan, leverage: 1 },
+          estimatedNotional: '256.5',
+          openingNotional: '256.5',
+          initialMargin: null,
+          availableMargin: null,
+          marginStatus: 'unknown',
+        })
+      },
+      () => 1000,
+    ),
+  ).rejects.toThrow('reviewed plan')
+})
+
+test('read-only margin review does not leak into the strict execution payload', async () => {
+  const prepared = await prepareLighterNativeOrder(
+    order,
+    [account],
+    preparationRequest,
+    () => 1000,
+  )
+  expect(prepared.review?.initialMargin).toBe('51.3')
+  let submitted: unknown
+  const approval = new LighterNativeOrderApproval(
+    prepared,
+    () => [account],
+    async (_url, init) => {
+      if (init?.method !== 'POST') return Response.json(status)
+      submitted = JSON.parse(String(init.body))
+      return Response.json({
+        status: 'accepted',
+        result: {
+          status: 'accepted',
+          grouping: 'single',
+          connector_name: 'lighter_perpetual',
+          trading_pair: 'GRAM-USDC',
+          tx_hash: 'hash',
+          client_order_ids: ['123'],
+        },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('accepted')
+  expect(submitted).not.toHaveProperty('review')
+  expect(submitted).toMatchObject({ legs: order.legs, leverage: 5 })
+})
+
+const linkedStop = {
+  side: 'sell' as const,
+  type: 'sl-market' as const,
+  amount: '0',
+  price: '1.3',
+  triggerPrice: '1.3',
+  reduceOnly: true,
+  timeInForce: 'ioc' as const,
+}
+const linkedTakeProfit = {
+  ...linkedStop,
+  type: 'tp-market' as const,
+  price: '1.6',
+  triggerPrice: '1.6',
+}
+
+test('invalid native groups never become confirmation cards or perform account reads', async () => {
+  const cases = [
+    {
+      ...order,
+      grouping: 'oto',
+      legs: [order.legs[0], { ...linkedStop, amount: '171' }],
+    },
+    {
+      ...order,
+      grouping: 'oto',
+      legs: [order.legs[0], { ...linkedStop, timeInForce: 'gtt' }],
+    },
+    {
+      ...order,
+      grouping: 'oto',
+      legs: [order.legs[0], { ...linkedStop, expiry: 2592001001 }],
+    },
+    {
+      ...order,
+      grouping: 'oto',
+      legs: [order.legs[0], { ...linkedStop, expiry: 300999 }],
+    },
+    { ...order, legs: [{ ...order.legs[0], expiry: 301000 }] },
+    {
+      ...order,
+      legs: [{ ...order.legs[0], type: 'twap', durationSeconds: 600 }],
+    },
+    {
+      ...order,
+      grouping: 'oco',
+      legs: [
+        { ...linkedTakeProfit, amount: '10' },
+        { ...linkedStop, amount: '9' },
+      ],
+      leverage: undefined,
+      marginMode: undefined,
+    },
+    {
+      ...order,
+      grouping: 'oco',
+      legs: [
+        { ...linkedTakeProfit, amount: '10' },
+        { ...linkedStop, amount: '10', expiry: 301000 },
+      ],
+      leverage: undefined,
+      marginMode: undefined,
+    },
+    {
+      ...order,
+      grouping: 'oco',
+      legs: [
+        { ...linkedTakeProfit, amount: '10', triggerPrice: '1.2' },
+        { ...linkedStop, amount: '10' },
+      ],
+      leverage: undefined,
+      marginMode: undefined,
+    },
+    {
+      ...order,
+      grouping: 'oco',
+      positionSize: '171',
+      legs: [linkedTakeProfit, linkedStop],
+    },
+    {
+      ...order,
+      grouping: 'oto',
+      legs: [
+        { ...order.legs[0], type: 'limit', timeInForce: 'gtt', expiry: 301000 },
+        linkedStop,
+      ],
+    },
+  ]
+  let reads = 0
+  for (const invalid of cases) {
+    await expect(
+      prepareLighterNativeOrder(
+        invalid,
+        [account],
+        async () => {
+          reads++
+          return Response.json(status)
+        },
+        () => 1000,
+      ),
+    ).rejects.toThrow()
+  }
+  expect(reads).toBe(0)
+})
+
+test('a valid entry-linked stop uses zero signed amount without changing the reviewed entry', () => {
+  const prepared = parseLighterNativeOrder({
+    ...proposal,
+    grouping: 'oto',
+    legs: [order.legs[0], linkedStop],
+  })
+  expect(prepared.legs).toEqual([order.legs[0], linkedStop])
+  expect(() =>
+    parseLighterNativeOrder({
+      ...prepared,
+      legs: [order.legs[0], { ...linkedStop, amount: '171' }],
+    }),
+  ).toThrow('zero amount')
+})
+
+test('linked child review describes actual fill coverage instead of zero base units', () => {
+  const plan = parseLighterNativeOrder({
+    ...proposal,
+    grouping: 'oto',
+    legs: [order.legs[0], linkedStop],
+  })
+  expect(lighterNativeAmountLabel(plan, 0)).toBe('171')
+  expect(lighterNativeAmountLabel(plan, 1)).toBe(
+    'Actual entry fill (up to 171)',
+  )
+})
+
+test('expiry is revalidated after the account read without rewriting or submitting the reviewed plan', async () => {
+  let clock = 1000
+  let posts = 0
+  const approval = new LighterNativeOrderApproval(
+    {
+      ...proposal,
+      legs: [
+        { ...order.legs[0], type: 'limit', timeInForce: 'gtt', expiry: 301000 },
+      ],
+    },
+    () => [account],
+    async (_url, init) => {
+      if (init?.method === 'POST') posts++
+      clock = 1001
+      return Response.json(status)
+    },
+    () => clock,
+  )
+  expect(await approval.approve()).toBe('blocked')
+  expect(approval.error).toContain('five minutes')
+  expect(posts).toBe(0)
+  expect(approval.proposal.legs[0].expiry).toBe(301000)
+})
 
 test('native preparation only verifies account read and never submits', async () => {
   const methods: Array<string> = []
   const prepared = await prepareLighterNativeOrder(
     order,
     [account],
-    async (_url, init) => {
+    async (url, init) => {
       methods.push(init?.method ?? 'GET')
-      return Response.json(status)
+      return preparationRequest(url, init)
     },
     () => 1000,
   )
-  expect(methods).toEqual(['GET'])
+  expect(methods).toEqual(['GET', 'POST'])
   expect(prepared).toMatchObject({
     mode: 'live',
     credentialId: account.id,
@@ -215,7 +470,7 @@ test('linked children are explicit and TWAP cannot masquerade as a grouped order
 })
 
 test('all native order types and supported groups prepare for human review only', async () => {
-  const request = async () => Response.json(status)
+  const request = preparationRequest
   for (const type of [
     'market',
     'limit',
@@ -228,6 +483,9 @@ test('all native order types and supported groups prepare for human review only'
     const prepared = await prepareLighterNativeOrder(
       {
         ...order,
+        ...(type.startsWith('sl-') || type.startsWith('tp-')
+          ? { leverage: undefined, marginMode: undefined }
+          : {}),
         legs: [
           {
             ...order.legs[0],
@@ -235,7 +493,9 @@ test('all native order types and supported groups prepare for human review only'
             ...(type.startsWith('sl-') || type.startsWith('tp-')
               ? { triggerPrice: '1.4', reduceOnly: true }
               : {}),
-            ...(type === 'twap' ? { durationSeconds: 600 } : {}),
+            ...(type === 'twap'
+              ? { durationSeconds: 600, timeInForce: 'gtt' }
+              : {}),
           },
         ],
       },
@@ -266,7 +526,9 @@ test('all native order types and supported groups prepare for human review only'
         ...order,
         grouping,
         legs,
-        ...(grouping === 'oco' ? { positionSize: '171' } : {}),
+        ...(grouping === 'oco'
+          ? { positionSize: '171', leverage: undefined, marginMode: undefined }
+          : {}),
       },
       [account],
       request,
@@ -494,7 +756,7 @@ test('terminal perpetual symbol is normalized to the exact native Lighter pair b
   const prepared = await prepareLighterNativeOrder(
     { ...order, symbol: 'GRAM-USDC-USDC' },
     [account],
-    async () => Response.json(status),
+    preparationRequest,
     () => 1000,
   )
   expect(prepared.symbol).toBe('GRAM-USDC')
@@ -542,6 +804,7 @@ test('fresh preparation restores only a missing live revision once and rereads e
     [account],
     async (url, init) => {
       calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (url.endsWith('/lighter-native-preview')) return previewResponse(init)
       if (url.endsWith('/recover')) {
         expect(JSON.parse(String(init?.body))).toEqual({ accountName: 'desk' })
         return Response.json({
@@ -565,7 +828,7 @@ test('fresh preparation restores only a missing live revision once and rereads e
     () => 1000,
   )
   expect(prepared.connectionRevision).toBe('a'.repeat(64))
-  expect(calls).toHaveLength(3)
+  expect(calls).toHaveLength(4)
 })
 
 test('approval never restores a missing revision from an old reviewed card', async () => {
