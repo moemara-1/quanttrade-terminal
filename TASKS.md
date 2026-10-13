@@ -212,3 +212,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Reject invalid native confirmation cards
 - [completed] Match native preparation validation to signer rules for child sizing, time in force and expiry; shared read-only server preflight verifies risk and margin before card.
 - [completed] Read-only preflight, invalid historical cards, exact linked sizing/TIF/expiry and fresh opening margin checks shipped Hetzner20261013-2. 3,951 terminal /232 backend /96 signer tests, TypeScript/lint/build and hosted operator/invalid-plan guards pass. No live orders or old-plan resumes; failed ZEC request was not retried. Commit/push authorized.
+
+## Native pending orders and assistant cancellation routing
+- [completed] Replace local-cache discovery assumptions with fresh native order reads, route Lighter/Hyperliquid cancellation by exact native ID, bind account/revision and surface read failures.
+- [completed] Fresh native discovery, exact large IDs, scoped cancellation and structured tool errors shipped Hetzner20261013-3. 3,956 terminal /236 backend /102 signer tests, TypeScript/lint/build and actual hosted Lighter discovery/access checks pass. No live orders cancelled/created or paused plans resumed; commit/push authorized.

@@ -29,7 +29,7 @@ interface Services {
   news?: Pick<NewsService,'get'>;
   calendars?: Pick<MarketCalendars,'earnings'|'ipos'|'economic'>;
   research?: Pick<VenueResearch,'execute'>;
-  operations?:Pick<VenueOperations,'execute'|'snapshot'>;
+  operations?:Pick<VenueOperations,'execute'|'snapshot'> & Partial<Pick<VenueOperations,'openOrders'>>;
   desk: TradingDesk; markets: MarketService; agent: Pick<ProposalAgent,'prepare'>;
   execution?: Pick<HummingbotExecution,'account'|'connect'|'connections'|'disconnect'|'balances'> & Partial<Pick<HummingbotExecution,'spotConnections'|'verifiedConnectionRevision'>>; operatorToken: string; agentToken: string;
   allowedOrigins?: string[];
@@ -323,6 +323,12 @@ export function createApp(services: Services) {
   app.post('/api/terminal/snapshot',operator,async(req,res)=>{
     if (!services.operations) {res.status(503).json({error:'Exchange account access is unavailable'});return;}
     res.json(await services.operations.snapshot(req.body));
+  });
+  app.post('/api/terminal/open-orders',operator,async(req,res)=>{
+    if(!services.operations?.openOrders){res.status(503).json({error:'Exchange open-order reader is unavailable'});return;}
+    if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; wait before reading current orders'});return;}
+    try{res.json(await services.operations.openOrders(req.body));}
+    catch(error){res.status(error instanceof z.ZodError?400:503).json({error:error instanceof z.ZodError?'Invalid native open-order request or response':error instanceof Error?error.message:'Exchange open-order read failed; current orders are unavailable, not empty'});}
   });
   app.post('/api/proposals/:id/approve',operator,async(req,res)=>{
     if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh proposal afterwards',submissionAttempted:false});return;}

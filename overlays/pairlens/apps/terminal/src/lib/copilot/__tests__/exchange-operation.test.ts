@@ -88,3 +88,113 @@ test('spot margin/leverage and Lighter TIF changes fail before approval', () => 
       }),
   ).toThrow('time in force')
 })
+
+test('native cancellation preparation verifies account scope without submitting', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    expect(String(url)).toBe('/_quanttrade/api/status')
+    return Response.json({
+      accountName: 'desk',
+      venueModes: { lighter: 'live' },
+      connectionRevisions: { lighter: 'a'.repeat(64) },
+    })
+  }) as typeof fetch
+  try {
+    const tools = buildTradingTools({} as CopilotToolDeps)
+    const execute = (
+      tools.prepare_exchange_operation as unknown as {
+        execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+      }
+    ).execute
+    const result = await execute(
+      {
+        venue: 'lighter',
+        marketType: 'perpetual',
+        symbol: 'PRL-USDC-USDC',
+        action: 'cancel',
+        exchangeOrderId: '14918173922809911',
+      },
+      {},
+    )
+    expect(result.status).toBe('awaiting_confirmation')
+    expect(result.operation).toMatchObject({
+      symbol: 'PRL-USDC',
+      accountName: 'desk',
+      connectionRevision: 'a'.repeat(64),
+      mode: 'live',
+    })
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('native cancellation returns a structured error for unavailable scope', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (async () => {
+    throw new Error('Offline')
+  }) as typeof fetch
+  try {
+    const tools = buildTradingTools({} as CopilotToolDeps)
+    const execute = (
+      tools.prepare_exchange_operation as unknown as {
+        execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+      }
+    ).execute
+    const result = await execute(
+      {
+        venue: 'lighter',
+        marketType: 'perpetual',
+        symbol: 'PRL-USDC',
+        action: 'cancel',
+        exchangeOrderId: '12',
+      },
+      {},
+    )
+    expect(result.status).toBe('invalid')
+    expect(result).not.toHaveProperty('operation')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('generic cancellation routes large native ID through scoped operation card', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (async () =>
+    Response.json({
+      accountName: 'desk',
+      venueModes: { lighter: 'live' },
+      connectionRevisions: { lighter: 'a'.repeat(64) },
+    })) as typeof fetch
+  try {
+    const tools = buildTradingTools({
+      getContextInfo: () => ({ market: 'lighter', pair: 'GRASS-USDC-USDC' }),
+    } as CopilotToolDeps)
+    const execute = (
+      tools.cancel_order as unknown as {
+        execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+      }
+    ).execute
+    const result = await execute(
+      {
+        market: 'lighter',
+        pair: 'GRASS-USDC-USDC',
+        orderId: '14918173922809911',
+      },
+      {},
+    )
+    expect(result).not.toHaveProperty('cancel')
+    expect(result.operation).toMatchObject({
+      action: 'cancel',
+      exchangeOrderId: '14918173922809911',
+      symbol: 'GRASS-USDC',
+      accountName: 'desk',
+    })
+    const approval = new ExchangeOperationApproval(result.operation)
+    expect(approval.proposal).toMatchObject({
+      connectionRevision: 'a'.repeat(64),
+      exchangeOrderId: '14918173922809911',
+    })
+  } finally {
+    globalThis.fetch = original
+  }
+})

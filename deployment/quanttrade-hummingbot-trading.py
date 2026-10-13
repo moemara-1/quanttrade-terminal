@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import json
 import time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -82,6 +82,12 @@ class TriggerRequest(Scope):
 
 class CancelRequest(Scope):
     exchange_order_id: str = Field(max_length=30, pattern=r'^[0-9]+$')
+
+
+class OpenOrdersRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_name: Literal['desk'] = 'desk'
+    connector_name: Literal['hyperliquid_perpetual', 'lighter_perpetual', 'hyperliquid', 'lighter']
 
 
 class BracketLeg(BaseModel):
@@ -652,6 +658,95 @@ async def cancel(connector, name, pair, exchange_order_id):
     return {**result, 'exchange_order_id': exchange_order_id}
 
 
+async def open_orders(connector, name):
+    """Read resting orders independently of fills/history and never mutate account state.
+
+    Lighter accountActiveOrders permits omitted market_id for all-market reads.
+    Hyperliquid's empty dex is the standard book; builder books are not covered.
+    """
+    spot = name in ['lighter', 'hyperliquid']
+    is_hl = name.startswith('hyperliquid')
+    scope = 'all-spot-markets' if spot else 'standard-perpetual-markets' if is_hl else 'all-perpetual-markets'
+    complete = not (is_hl and not spot)
+    errors = [] if complete else ['Hyperliquid builder markets are excluded; this is the standard perpetual book only.']
+    if is_hl:
+        raw = await connector._api_post(path_url='/info', data={'type': 'frontendOpenOrders', 'user': connector._auth._api_address, 'dex': ''}, is_auth_required=False)
+        if not isinstance(raw, list):
+            raise ValueError('Native open-order response is malformed')
+    else:
+        await connector._ensure_account_ready()
+        response = await connector._api_get(path_url='/api/v1/accountActiveOrders', params={'account_index': connector._account_index, 'market_type': 'spot' if spot else 'perp'}, is_auth_required=True)
+        if not isinstance(response, dict) or response.get('code') != 200 or not isinstance(response.get('orders'), list):
+            raise ValueError('Native open-order response is unavailable')
+        raw = response['orders']
+        if response.get('next_cursor'):
+            complete = False
+            errors.append('Native open-order response is truncated.')
+    orders, seen = [], set()
+    for row in raw:
+        try:
+            if not isinstance(row, dict):
+                raise ValueError('Malformed order')
+            if is_hl:
+                coin = row.get('coin')
+                if not isinstance(coin, str) or not coin:
+                    raise ValueError('Missing market identity')
+                if spot:
+                    # Standard-dex response includes spot and perpetual rows.
+                    if not coin.startswith('@') and '/' not in coin:
+                        continue
+                    symbol = await connector.trading_pair_associated_to_exchange_symbol(symbol=coin)
+                else:
+                    if coin.startswith('@') or '/' in coin:
+                        continue
+                    if ':' in coin:
+                        raise ValueError('Unexpected builder market in standard book')
+                    symbol = coin + '-USDC'
+                oid = row.get('oid')
+                if isinstance(oid, bool) or not isinstance(oid, (int, str)) or not str(oid).isdigit() or int(oid) <= 0:
+                    raise ValueError('Malformed native identity')
+                identity = str(oid)
+            else:
+                market_id = row.get('market_index', row.get('market_id'))
+                if isinstance(market_id, bool) or not isinstance(market_id, (int, str)) or not str(market_id).isdigit():
+                    raise ValueError('Missing market identity')
+                market = connector.market_info_for_market_id(int(market_id))
+                if market.market_type != ('spot' if spot else 'perp'):
+                    raise ValueError('Wrong market scope')
+                symbol = market.trading_pair
+                identity = lighter_order_id(row)
+            if not isinstance(symbol, str) or '-' not in symbol or identity in seen:
+                raise ValueError('Ambiguous order identity')
+            seen.add(identity)
+            normalized = {'symbol': symbol, 'exchangeOrderId': identity}
+            side = row.get('side')
+            if is_hl and side in ['A', 'B']:
+                normalized['side'] = 'sell' if side == 'A' else 'buy'
+            elif not is_hl and isinstance(row.get('is_ask'), bool):
+                normalized['side'] = 'sell' if row['is_ask'] else 'buy'
+            for output, keys in [('size', ['sz', 'remaining_base_amount', 'initial_base_amount']), ('price', ['limitPx', 'price']), ('triggerPrice', ['triggerPx', 'trigger_price'])]:
+                for key in keys:
+                    value = row.get(key)
+                    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                        number = Decimal(str(value))
+                        if not number.is_finite() or number < 0:
+                            raise ValueError('Invalid order value')
+                        normalized[output] = str(value)
+                        break
+            reduce_only = row.get('reduceOnly' if is_hl else 'reduce_only')
+            if isinstance(reduce_only, bool):
+                normalized['reduceOnly'] = reduce_only
+            order_type = row.get('orderType' if is_hl else 'type')
+            if isinstance(order_type, (str, int)) and not isinstance(order_type, bool):
+                normalized['type'] = str(order_type)
+            orders.append(normalized)
+        except (ValueError, TypeError, KeyError, AttributeError, InvalidOperation, ActionUncertain):
+            complete = False
+            if 'Some native orders could not be identified or mapped; the account book is incomplete.' not in errors:
+                errors.append('Some native orders could not be identified or mapped; the account book is incomplete.')
+    return {'connector_name': name, 'scope': scope, 'complete': complete, 'orders': orders, **({'error': ' '.join(errors)} if errors else {})}
+
+
 async def snapshot(connector, name, pair, history_cursor=None, fills_cursor=None, start_time=0):
     """Raw native account payloads, scoped to the configured account and pair.
 
@@ -862,6 +957,15 @@ async def snapshot_route(dto: SnapshotRequest, request: Request):
         return await snapshot(connector, dto.connector_name, dto.trading_pair, dto.history_cursor, dto.fills_cursor, dto.start_time)
     except Exception:
         raise HTTPException(status_code=503, detail='Native exchange account snapshot is unavailable') from None
+
+
+@router.post('/open-orders')
+async def open_orders_route(dto: OpenOrdersRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
+        return await open_orders(connector, dto.connector_name)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Native open-order read is unavailable; current orders are not known to be empty') from None
 
 
 def install(app, auth_user):

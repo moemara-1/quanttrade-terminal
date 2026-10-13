@@ -12873,7 +12873,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..b1d1c30 100644
+index ce0d317..63272ab 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -60,6 +60,9 @@ const CAPABILITIES = [
@@ -12886,12 +12886,13 @@ index ce0d317..b1d1c30 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +76,19 @@ const WORKING_RULES = [
+@@ -73,8 +76,20 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'For current pending Lighter or Hyperliquid orders, call get_exchange_open_orders for each requested connected venue and market type. get_open_orders is a device-local event cache, never proof of the complete exchange book. Check returned complete/scope and read failures before claiming all orders are listed or the book is empty. Prepare native cancellations using the exact returned symbol and exchangeOrderId, pinned to the freshly verified account and connection revision. Never use local exchange: IDs or a generic CEX cancellation route for native stops. Explicitly disclose that cancelling reduce-only SL/TP removes position protection. A pending confirmation card is not a cancellation receipt; never claim cancelled before confirmed execution and a fresh native read. Preserve specific tool errors and distinguish failed discovery from failed submission; do not say everything is live merely because one public market snapshot succeeded.',
 +  'Connection revisions do not expire with time. A revision identifies a verified account connection; a proposal expiry is separate. An unknown QT-AI error is not proof of expired credentials, disconnected account or failed submission. Report the actual returned error or failed verification, without inventing a cause. Never switch to a workflow to bypass a connection, account, revision or risk error. Stop preparation on a guard failure, refresh verified account settings only when needed, and request reconnect only if the returned verified state actually requires it. A validation error with no submission permits correcting the exact malformed proposal; an uncertain submission requires reconciliation, never a new execution route.',
 +  'Native Lighter grouping: Entry plus stop-loss alone uses OTO; entry plus take-profit and stop-loss uses OTOCO. OCO is exclusively a pair of protective TP/SL exits for an existing position, never an opening entry plus a stop. A standalone order uses single grouping. Keep the entry first and protections reduce-only on the opposite side. For a short, the stop trigger is above entry and the take-profit below; for a long, the reverse. Never invent an expiry timestamp or time-in-force not accepted by the tool. One complete native card is the requested trade, not several single-order confirmations.',
 +  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A native Lighter receipt includes a transaction hash and nativeClientOrderIds; these client IDs are not exchange order IDs or proof of fills. Match client_order_index in the exact instrument snapshot, then inspect its native exchange ID and fill evidence. Never ask for another confirmation solely because a submitted order is absent from open orders. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
@@ -12908,7 +12909,7 @@ index ce0d317..b1d1c30 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +108,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +109,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13311,12 +13312,14 @@ index a34eeca..86a6054 100644
      ...buildPortfolioTools(deps),
      ...buildChartTools(deps),
 diff --git a/apps/terminal/src/lib/copilot/portfolio-tools.ts b/apps/terminal/src/lib/copilot/portfolio-tools.ts
-index e7631ae..5082a86 100644
+index e7631ae..411dcda 100644
 --- a/apps/terminal/src/lib/copilot/portfolio-tools.ts
 +++ b/apps/terminal/src/lib/copilot/portfolio-tools.ts
-@@ -3,11 +3,106 @@
+@@ -2,12 +2,110 @@
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
++import { quantTradeFetch } from '../plugins/quanttrade-session'
  import { api } from '../api'
 +import { hasAppServer } from '../auth-client'
 +import { loadConnectedExchanges } from '../plugins/quanttrade-connections'
@@ -13375,7 +13378,8 @@ index e7631ae..5082a86 100644
 +    mode: credential.mode,
 +    source,
 +  })
-+  const localStatus = local.status === 'fulfilled' ? local.value.status : 'error'
++  const localStatus =
++    local.status === 'fulfilled' ? local.value.status : 'error'
 +  // Server references from a previous load are not current connection evidence.
 +  const accounts = [
 +    ...(local.status === 'fulfilled' && local.value.status === 'ready'
@@ -13388,7 +13392,9 @@ index e7631ae..5082a86 100644
 +      : []),
 +  ]
 +  const scoped = market
-+    ? accounts.filter((account) => account.market === credentialMarketFor(market))
++    ? accounts.filter(
++        (account) => account.market === credentialMarketFor(market),
++      )
 +    : accounts
 +  const modes = new Set(scoped.map((account) => account.mode))
 +  return {
@@ -13415,14 +13421,13 @@ index e7631ae..5082a86 100644
 +        : { status: 'unavailable' },
 +    autoApproval: { paper: false, liveMarkets: [] },
 +    confirmationRequired: true,
-+    note:
-+      'Trading mode belongs to the reviewed exchange account. App Server preferences do not override connected account modes or the hosted session. An unavailable read does not mean signed out or paper mode. Every AI order requires confirmation; confirm submission separately from these settings.',
++    note: 'Trading mode belongs to the reviewed exchange account. App Server preferences do not override connected account modes or the hosted session. An unavailable read does not mean signed out or paper mode. Every AI order requires confirmation; confirm submission separately from these settings.',
 +  }
 +}
  
  // ---------------------------------------------------------------------------
  // Phase 3 (account state) — read-only portfolio, open orders, and the risk
-@@ -15,7 +110,7 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -15,7 +113,7 @@ import type { CopilotToolDeps } from './tool-deps'
  // globally accessible, so these execute directly in the transport.
  // ---------------------------------------------------------------------------
  
@@ -13431,7 +13436,107 @@ index e7631ae..5082a86 100644
    return {
      get_portfolio: tool({
        description:
-@@ -102,27 +197,27 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+@@ -43,7 +141,7 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+ 
+     get_open_orders: tool({
+       description:
+-        'Get the user’s current open orders and recent order history (side, size, price, fill, status, paper/live).',
++        'Read this device cached order events only. This is not the complete exchange book and an empty cache never proves there are no open orders. Use get_exchange_open_orders for all current Lighter/Hyperliquid orders.',
+       inputSchema: z.object({
+         pair: z.string().optional().describe('Filter to one pair'),
+         includeHistory: z.boolean().optional().default(false),
+@@ -68,7 +166,89 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+               )
+               .slice(0, 25)
+           : []
+-        return { openCount: open.length, open, history }
++        return {
++          scope: 'local-cache',
++          complete: false,
++          openCount: open.length,
++          open,
++          history,
++          note: 'Local events are not the complete venue order book. Never infer an empty exchange book from this cache.',
++        }
++      },
++    }),
++
++    get_exchange_open_orders: tool({
++      description:
++        'Read ALL current open orders for one connected Lighter/Hyperliquid account and market type, including orders outside the active chart. Read-only. Repeat for each requested venue and market type. Use exact symbol and exchangeOrderId for cancellation; cancelling protective stops leaves positions unprotected. Only a complete successful venue read can verify an empty book.',
++      inputSchema: z
++        .object({
++          venue: z.enum(['lighter', 'hyperliquid']),
++          marketType: z.enum(['perpetual', 'spot']),
++        })
++        .strict(),
++      execute: async ({ venue, marketType }) => {
++        try {
++          const response = await quantTradeFetch(
++            '/_quanttrade/api/terminal/open-orders',
++            {
++              method: 'POST',
++              credentials: 'same-origin',
++              headers: { 'Content-Type': 'application/json' },
++              body: JSON.stringify({ venue, marketType }),
++              signal: AbortSignal.timeout(35000),
++              redirect: 'error',
++            },
++          )
++          if (!response.ok) {
++            const body: unknown = await response.json().catch(() => null)
++            const detail = z
++              .object({ error: z.string().max(1000) })
++              .safeParse(body)
++            return {
++              status: 'unavailable',
++              httpStatus: response.status,
++              error: detail.success
++                ? detail.data.error
++                : `The complete exchange order book could not be read (HTTP ${response.status}). No orders were cancelled; an empty book is unverified.`,
++            }
++          }
++          const result = z
++            .object({
++              venue: z.literal(venue),
++              marketType: z.literal(marketType),
++              accountName: z.string().min(1),
++              connectionRevision: z.string().regex(/^[a-f0-9]{64}$/),
++              scope: z.string().min(1),
++              complete: z.boolean(),
++              error: z.string().optional(),
++              orders: z.array(
++                z.object({
++                  symbol: z.string().regex(/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/),
++                  exchangeOrderId: z.string().regex(/^[1-9]\d*$/),
++                  side: z.enum(['buy', 'sell']).optional(),
++                  size: z.string().optional(),
++                  price: z.string().optional(),
++                  reduceOnly: z.boolean().optional(),
++                  type: z.string().optional(),
++                  triggerPrice: z.string().optional(),
++                }),
++              ),
++            })
++            .parse(await response.json())
++          return {
++            status: 'available',
++            ...result,
++            note: result.complete
++              ? 'Read-only complete snapshot. Orders were not cancelled. Prepare exact cancellations for human approval.'
++              : 'Partial venue snapshot. Do not claim all orders are listed or the full book is empty. Orders were not cancelled.',
++          }
++        } catch {
++          return {
++            status: 'unavailable',
++            error:
++              'The complete exchange order book could not be verified. Check the hosted exchange connection and retry the read. No orders were cancelled; an empty book is unverified.',
++          }
++        }
+       },
+     }),
+ 
+@@ -102,27 +282,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
  
      get_account_settings: tool({
        description:
@@ -13474,19 +13579,19 @@ index e7631ae..5082a86 100644
 +        return {
 +          status: submissions.length > 0 ? 'recorded' : 'unknown',
 +          submissions,
-+          note:
-+            'These are confirmation results from this browser session, not exchange fill history. No record is proof of neither pending confirmation nor execution. A submitted order is not proof of a fill or a running workflow; verify exchange positions, orders and fills.',
++          note: 'These are confirmation results from this browser session, not exchange fill history. No record is proof of neither pending confirmation nor execution. A submitted order is not proof of a fill or a running workflow; verify exchange positions, orders and fills.',
          }
        },
      }),
 diff --git a/apps/terminal/src/lib/copilot/tool-labels.ts b/apps/terminal/src/lib/copilot/tool-labels.ts
-index fc621a5..018f404 100644
+index fc621a5..028444c 100644
 --- a/apps/terminal/src/lib/copilot/tool-labels.ts
 +++ b/apps/terminal/src/lib/copilot/tool-labels.ts
-@@ -84,6 +84,12 @@ export const COPILOT_TOOL_LABELS = {
+@@ -84,6 +84,13 @@ export const COPILOT_TOOL_LABELS = {
    // ---- Portfolio ----
    get_portfolio: ['read', 'the portfolio'],
    get_open_orders: ['read', 'open orders'],
++  get_exchange_open_orders: ['read', 'current exchange orders'],
 +  get_exchange_snapshot: ['read', 'exchange account and orders'],
 +  get_exchange_research: ['read', 'venue research'],
 +  get_nanogpt_models: ['read', 'NanoGPT models'],
@@ -13496,7 +13601,7 @@ index fc621a5..018f404 100644
    get_risk_limits: ['check', 'risk limits'],
    get_account_settings: ['read', 'account settings'],
  
-@@ -128,6 +134,16 @@ export const COPILOT_TOOL_LABELS = {
+@@ -128,6 +135,16 @@ export const COPILOT_TOOL_LABELS = {
    // ---- Trading (proposals — the user confirms before anything executes) ----
    place_order: ['propose', 'an order'],
    cancel_order: ['propose', 'an order cancellation'],
@@ -13514,7 +13619,7 @@ index fc621a5..018f404 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..57f21a3 100644
+index 2f8e01a..afb3ea5 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
 @@ -2,9 +2,200 @@
@@ -13547,7 +13652,7 @@ index 2f8e01a..57f21a3 100644
 +} from './order-account'
 +import {
 +  exchangeOperationInputSchema,
-+  validateExchangeOperation,
++  prepareExchangeOperation,
 +} from './exchange-operation'
  import type { CopilotToolDeps } from './tool-deps'
 +import { credentialMarketFor } from '@/lib/venues/credential-alias'
@@ -13719,7 +13824,7 @@ index 2f8e01a..57f21a3 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +203,240 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +203,231 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -13927,18 +14032,9 @@ index 2f8e01a..57f21a3 100644
 +    }),
 +    prepare_exchange_operation: tool({
 +      description:
-+        'Prepare an exact Hyperliquid/Lighter live account operation for explicit human approval: leverage, isolated margin adjustment, amendment or native cancellation. Never executes on preparation. Use native order IDs from get_exchange_snapshot. No transfers or withdrawals.',
++        'Prepare an exact Hyperliquid/Lighter live account operation for explicit human approval: leverage, isolated margin adjustment, amendment or native cancellation. Never executes on preparation. Use exact exchangeOrderId and symbol from get_exchange_open_orders (complete venue book) or get_exchange_snapshot. No transfers or withdrawals.',
 +      inputSchema: exchangeOperationInputSchema,
-+      execute: async (raw) => ({
-+        status: 'awaiting_confirmation',
-+        operation: {
-+          ...validateExchangeOperation(raw),
-+          requestId: crypto.randomUUID(),
-+          mode: 'live',
-+        },
-+        message:
-+          'Review the exact operation and explicitly approve it on the card. Nothing has been submitted.',
-+      }),
++      execute: async (raw) => prepareExchangeOperation(raw),
 +    }),
      place_order: tool({
        description:
@@ -13969,7 +14065,7 @@ index 2f8e01a..57f21a3 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +460,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +451,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -13981,7 +14077,7 @@ index 2f8e01a..57f21a3 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +480,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,42 +471,222 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -14151,60 +14247,95 @@ index 2f8e01a..57f21a3 100644
 +        })
 +        .strict(),
 +      execute: async ({ market, pair }) => {
-+        const venue = market.startsWith('hyperliquid')
-+          ? 'hyperliquid'
-+          : 'lighter'
-+        const marketType = market.endsWith('-spot') ? 'spot' : 'perpetual'
-+        const symbol =
-+          marketType === 'perpetual'
-+            ? pair.replace(/-USDC-USDC$/, '-USDC')
-+            : pair
-+        if (!/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/.test(symbol))
-+          return {
-+            status: 'invalid',
-+            error: 'Use the exchange instrument symbol.',
++        try {
++          const venue = market.startsWith('hyperliquid')
++            ? 'hyperliquid'
++            : 'lighter'
++          const marketType = market.endsWith('-spot') ? 'spot' : 'perpetual'
++          const symbol =
++            marketType === 'perpetual'
++              ? pair.replace(/-USDC-USDC$/, '-USDC')
++              : pair
++          if (!/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/.test(symbol))
++            return {
++              status: 'invalid',
++              error: 'Use the exchange instrument symbol.',
++            }
++          const response = await quantTradeFetch(
++            '/_quanttrade/api/terminal/snapshot',
++            {
++              method: 'POST',
++              credentials: 'same-origin',
++              headers: { 'Content-Type': 'application/json' },
++              body: JSON.stringify({ venue, marketType, symbol }),
++              signal: AbortSignal.timeout(35000),
++            },
++          )
++          if (!response.ok) {
++            let detail = `Exchange snapshot request failed (HTTP ${response.status}).`
++            try {
++              const parsed = z
++                .object({ error: z.string() })
++                .safeParse(await response.json())
++              if (parsed.success) detail = parsed.data.error
++            } catch {
++              detail = `Exchange snapshot request failed (HTTP ${response.status}).`
++            }
++            return {
++              status: 'unavailable',
++              httpStatus: response.status,
++              error:
++                response.status === 401
++                  ? 'The hosted exchange session could not be verified after renewal. Refresh the terminal and check the hosted connection; this does not indicate paper mode.'
++                  : detail,
++            }
 +          }
-+        const response = await quantTradeFetch(
-+          '/_quanttrade/api/terminal/snapshot',
-+          {
-+            method: 'POST',
-+            credentials: 'same-origin',
-+            headers: { 'Content-Type': 'application/json' },
-+            body: JSON.stringify({ venue, marketType, symbol }),
-+            signal: AbortSignal.timeout(35000),
-+          },
-+        )
-+        if (!response.ok) {
-+          let detail = `Exchange snapshot request failed (HTTP ${response.status}).`
-+          try {
-+            const parsed = z
-+              .object({ error: z.string() })
-+              .safeParse(await response.json())
-+            if (parsed.success) detail = parsed.data.error
-+          } catch {
-+            detail = `Exchange snapshot request failed (HTTP ${response.status}).`
-+          }
++          return parseNativeSnapshot(
++            await response.json(),
++            venue,
++            marketType,
++            symbol,
++          )
++        } catch {
 +          return {
 +            status: 'unavailable',
-+            httpStatus: response.status,
 +            error:
-+              response.status === 401
-+                ? 'The hosted exchange session could not be verified after renewal. Refresh the terminal and check the hosted connection; this does not indicate paper mode.'
-+                : detail,
++              'Exchange snapshot could not be verified. No orders were submitted or cancelled; retry the account read.',
 +          }
 +        }
-+        return parseNativeSnapshot(
-+          await response.json(),
-+          venue,
-+          marketType,
-+          symbol,
-+        )
 +      },
 +    }),
      cancel_order: tool({
        description:
-         'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. Use get_open_orders to find the order id.',
-@@ -135,4 +718,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+-        'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. Use get_open_orders to find the order id.',
++        'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. For Lighter/Hyperliquid use get_exchange_open_orders and its exact exchangeOrderId and symbol. Local cached order IDs are not venue cancellation IDs. Cancelling stops leaves positions unprotected.',
+       inputSchema: z.object({
+         orderId: z.string(),
+         pair: z.string().optional(),
+@@ -122,6 +704,22 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+               'No pair was given and nothing on screen names one. Read get_open_orders and cancel by its pair.',
+           }
+         }
++        if (
++          target.market === 'lighter' ||
++          target.market === 'hyperliquid' ||
++          target.market === 'lighter-spot' ||
++          target.market === 'hyperliquid-spot'
++        ) {
++          return prepareExchangeOperation({
++            venue: target.market.startsWith('lighter')
++              ? 'lighter'
++              : 'hyperliquid',
++            marketType: target.market.endsWith('-spot') ? 'spot' : 'perpetual',
++            symbol: target.pair,
++            action: 'cancel',
++            exchangeOrderId: args.orderId,
++          })
++        }
+         return {
+           status: 'awaiting_confirmation',
+           cancel: {
+@@ -135,4 +733,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
        },
      }),
    }

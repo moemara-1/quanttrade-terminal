@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
-import { buildPortfolioTools, readTradingAccountSettings } from '../portfolio-tools'
+import {
+  buildPortfolioTools,
+  readTradingAccountSettings,
+} from '../portfolio-tools'
 import { setCredentialAliases } from '../../venues/credential-alias'
 import { recordTradeSubmission } from '../trade-submissions'
 import type { AccountSettingsReaders } from '../portfolio-tools'
@@ -92,7 +95,10 @@ test('account modes are scoped to the requested venue instead of a global paper 
     'lighter',
     readers({
       hasAppServer: true,
-      getUserConfig: async () => ({ tradingMode: 'paper', aiPersona: 'mentor' }),
+      getUserConfig: async () => ({
+        tradingMode: 'paper',
+        aiPersona: 'mentor',
+      }),
       readLocalAccounts: async () => ({
         status: 'ready',
         credentials: [credential('binance', 'paper')],
@@ -101,7 +107,9 @@ test('account modes are scoped to the requested venue instead of a global paper 
   )
   expect(result.tradingMode).toBe('live')
   expect(result.tradingModeScope).toBe('lighter')
-  expect(result.accounts.map((account) => [account.market, account.mode])).toEqual([
+  expect(
+    result.accounts.map((account) => [account.market, account.mode]),
+  ).toEqual([
     ['binance', 'paper'],
     ['lighter', 'live'],
   ])
@@ -212,4 +220,65 @@ test('submission read returns actual reviewed mode and observed result independe
     status: 'recorded',
     submissions: [evidence],
   })
+})
+
+test('exchange orders read fails closed instead of reporting an empty book', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (async () => {
+    throw new Error('Offline')
+  }) as typeof fetch
+  try {
+    const tools = buildPortfolioTools({} as CopilotToolDeps)
+    const execute = (
+      tools as unknown as Record<
+        string,
+        {
+          execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+        }
+      >
+    ).get_exchange_open_orders.execute
+    const result = await execute(
+      { venue: 'lighter', marketType: 'perpetual' },
+      {},
+    )
+    expect(result.status).toBe('unavailable')
+    expect(result).not.toHaveProperty('orders')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('complete exchange book preserves large native IDs and partial scope remains explicit', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (async () =>
+    Response.json({
+      venue: 'lighter',
+      marketType: 'perpetual',
+      accountName: 'desk',
+      connectionRevision: 'a'.repeat(64),
+      scope: 'all-perpetual-markets',
+      complete: false,
+      error: 'Incomplete mapping',
+      orders: [{ symbol: 'GRASS-USDC', exchangeOrderId: '14918173922809911' }],
+    })) as typeof fetch
+  try {
+    const tools = buildPortfolioTools({} as CopilotToolDeps)
+    const execute = (
+      tools.get_exchange_open_orders as unknown as {
+        execute: (a: unknown, b: unknown) => Promise<Record<string, unknown>>
+      }
+    ).execute
+    const result = await execute(
+      { venue: 'lighter', marketType: 'perpetual' },
+      {},
+    )
+    expect(result.status).toBe('available')
+    expect(result.complete).toBe(false)
+    expect(result.orders).toEqual([
+      { symbol: 'GRASS-USDC', exchangeOrderId: '14918173922809911' },
+    ])
+    expect(String(result.note)).toContain('Partial')
+  } finally {
+    globalThis.fetch = original
+  }
 })

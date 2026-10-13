@@ -60,3 +60,49 @@ test('native operation reaches the installed Lighter Python route with the exact
  const client=new HummingbotOperations({url:'http://127.0.0.1:8000',username:'test',password:'test',accountName:'desk'},async(url,init)=>{path=new URL(String(url)).pathname;body=String(init?.body);return new Response(JSON.stringify({status:'accepted'}),{status:200,headers:{'Content-Type':'application/json'}});});
  await client.perform('native-orders',payload);assert.equal(path,'/quanttrade/trading/lighter-native-orders');assert.deepEqual(JSON.parse(body),payload);
 });
+
+test('native open orders preserve exact account revision and never claim or reserve operations',async()=>{
+ const state=setup();try {
+  const revision='a'.repeat(64);state.store.setConnectionFingerprint('desk','lighter',revision);
+  const operations=new VenueOperations(state.desk,{perform:async(action,input)=>{
+   assert.equal(action,'open-orders');assert.deepEqual(input,{account_name:'desk',connector_name:'lighter_perpetual'});
+   return {connector_name:'lighter_perpetual',scope:'all-perpetual-markets',complete:true,orders:[{symbol:'GRAM-USDC',exchangeOrderId:'14918173922809911',side:'sell',reduceOnly:true}]};
+  }},{list:async()=>[]});
+  const result=await operations.openOrders({venue:'lighter',marketType:'perpetual'});
+  assert.equal(result.connectionRevision,revision);assert.equal(result.orders[0]?.exchangeOrderId,'14918173922809911');assert.equal(state.store.used('live',new Date().toISOString().slice(0,10)),'0');
+ }finally{state.store.close();}
+});
+
+test('native open orders reject provider failures, wrong scope and credentials changed during read',async()=>{
+ const state=setup();try {
+  state.store.setConnectionFingerprint('desk','lighter','a'.repeat(64));
+  for(const result of [{connector_name:'hyperliquid_perpetual',scope:'all-perpetual-markets',complete:true,orders:[]},{connector_name:'lighter_perpetual',scope:'all-perpetual-markets',complete:true,orders:[{symbol:'GRAM-USDC',exchangeOrderId:'client:123'}]}]){
+   const operations=new VenueOperations(state.desk,{perform:async()=>result},{list:async()=>[]});await assert.rejects(operations.openOrders({venue:'lighter'}));
+  }
+  const changed=new VenueOperations(state.desk,{perform:async()=>{state.store.setConnectionFingerprint('desk','lighter','b'.repeat(64));return {connector_name:'lighter_perpetual',scope:'all-perpetual-markets',complete:true,orders:[]};}},{list:async()=>[]});
+  await assert.rejects(changed.openOrders({venue:'lighter'}),/changed/);
+  const failed=new VenueOperations(state.desk,{perform:async()=>{throw Error('read failed');}},{list:async()=>[]});await assert.rejects(failed.openOrders({venue:'lighter'}),/read failed/);
+ }finally{state.store.close();}
+});
+
+test('reviewed cancellation rejects stale or changed account before exchange call',async()=>{
+ const state=setup();try {
+  const revision='a'.repeat(64);state.store.setConnectionFingerprint('desk','lighter',revision);
+  const cancel={requestId:'reviewed-cancellation',venue:'lighter',marketType:'perpetual',symbol:'GRAM-USDC',mode:'live',action:'cancel',exchangeOrderId:'14918173922809911',accountName:'desk',connectionRevision:revision,proposedAt:Date.now()};
+  await assert.rejects(state.operations.execute({...cancel,accountName:'other'}),/account/);
+  await assert.rejects(state.operations.execute({...cancel,proposedAt:Date.now()-181000}),/expired/);
+  await assert.rejects(state.operations.execute({...cancel,connectionRevision:'b'.repeat(64)}),/connection/);
+  await assert.rejects(state.operations.execute({...cancel,proposedAt:undefined}));assert.equal(state.calls(),0);
+  assert.equal((await state.operations.execute(cancel)).status,'accepted');assert.equal(state.calls(),1);
+ }finally{state.store.close();}
+});
+
+test('native open-order read preserves partial scope and hides provider response secrets',async()=>{
+ const state=setup();try {
+  state.store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+  const operations=new VenueOperations(state.desk,{perform:async()=>({connector_name:'hyperliquid_perpetual',scope:'standard-perpetual-markets',complete:false,error:'Builder markets excluded',orders:[]})},{list:async()=>[]});
+  const result=await operations.openOrders({venue:'hyperliquid'});assert.equal(result.complete,false);assert.equal(result.error,'Builder markets excluded');
+  const client=new HummingbotOperations({url:'http://127.0.0.1:8000',username:'test',password:'test',accountName:'desk'},async()=>new Response('PRIVATE_SECRET',{status:503}));
+  await assert.rejects(client.perform('open-orders',{}),(error:unknown)=>error instanceof Error&&error.message.includes('HTTP 503')&&!error.message.includes('PRIVATE_SECRET'));
+ }finally{state.store.close();}
+});
