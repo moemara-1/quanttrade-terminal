@@ -11844,6 +11844,52 @@ index 79a24b1..6cdfa13 100644
              previewColors={
                isDark
                  ? DEFAULT_PREVIEW_COLORS.dark
+diff --git a/apps/terminal/src/components/workflows/workflow-builder.tsx b/apps/terminal/src/components/workflows/workflow-builder.tsx
+index d5c7b9d..14c8bd0 100644
+--- a/apps/terminal/src/components/workflows/workflow-builder.tsx
++++ b/apps/terminal/src/components/workflows/workflow-builder.tsx
+@@ -59,7 +59,7 @@ export function WorkflowBuilder({
+     (id: string | null, { replace }: { replace: boolean }) => {
+       void navigate({
+         to: '/workflows',
+-        search: id ? { workflow: id } : {},
++        search: id ? { workflow: id, view: 'builder' } : { view: 'builder' },
+         replace,
+       })
+     },
+diff --git a/apps/terminal/src/components/workflows/workflow-sidebar.tsx b/apps/terminal/src/components/workflows/workflow-sidebar.tsx
+index 1493d74..ef43f25 100644
+--- a/apps/terminal/src/components/workflows/workflow-sidebar.tsx
++++ b/apps/terminal/src/components/workflows/workflow-sidebar.tsx
+@@ -10,6 +10,7 @@ import {
+   Workflow,
+ } from 'lucide-react'
+ import { useEffect, useState } from 'react'
++import { Link } from '@tanstack/react-router'
+ 
+ import { cn } from '@pairlens/ui'
+ import { Button } from '@pairlens/ui/components/ui/button'
+@@ -113,7 +114,7 @@ export function WorkflowSidebar() {
+             )}
+             onClick={() => setTab('runs')}
+           >
+-            {t('workflows.sidebar.tabRuns')}
++            {t('workflows.sidebar.tabRuns')} (local)
+           </button>
+         </div>
+         {tab === 'workflows' && (
+@@ -145,7 +146,10 @@ export function WorkflowSidebar() {
+       </div>
+ 
+       {tab === 'runs' ? (
+-        <RunHistoryList />
++        <div className="flex min-h-0 flex-1 flex-col">
++          <p className="px-3 py-2 text-xs text-muted-foreground">Runs stored on this device. <Link to="/workflows" search={{ view: 'activity' }} className="text-primary underline">View server runs and exchange orders</Link></p>
++          <RunHistoryList />
++        </div>
+       ) : (
+         <div className="flex-1 overflow-y-auto p-1.5">
+           {workflows.length === 0 && (
 diff --git a/apps/terminal/src/components/workspace-store/plugin-requirements.tsx b/apps/terminal/src/components/workspace-store/plugin-requirements.tsx
 index 06bf4d9..8df01eb 100644
 --- a/apps/terminal/src/components/workspace-store/plugin-requirements.tsx
@@ -32420,6 +32466,103 @@ index 4f10b95..a5194fa 100644
    )
  
    return (
+diff --git a/apps/terminal/src/routes/_terminal/workflows.tsx b/apps/terminal/src/routes/_terminal/workflows.tsx
+index 6051327..7c640d0 100644
+--- a/apps/terminal/src/routes/_terminal/workflows.tsx
++++ b/apps/terminal/src/routes/_terminal/workflows.tsx
+@@ -2,7 +2,7 @@
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+ import { useTranslation } from 'react-i18next'
+ import { Suspense } from 'react'
+-import { createFileRoute } from '@tanstack/react-router'
++import { Link, createFileRoute } from '@tanstack/react-router'
+ 
+ import { HEADER_TITLE } from '@/components/chrome/header-chrome'
+ import { PAGE_FRAME } from '@/components/chrome/page-chrome'
+@@ -19,6 +19,11 @@ const WorkflowBuilder = lazyPageChunk(() =>
+     default: m.WorkflowBuilder,
+   })),
+ )
++const LiveActivity = lazyPageChunk(() =>
++  import('@/components/workflows/live-activity').then((m) => ({
++    default: m.LiveActivity,
++  })),
++)
+ 
+ /**
+  * `?workflow=<id>` is which order plan is open on the canvas. The page
+@@ -26,22 +31,56 @@ const WorkflowBuilder = lazyPageChunk(() =>
+  * "which workflow am I looking at" — for a shared link, for the back
+  * button, and for the assistant.
+  */
+-type WorkflowsSearch = { workflow?: string }
++type WorkflowsSearch = { workflow?: string; view?: 'activity' | 'builder' }
+ 
+ export const Route = createFileRoute('/_terminal/workflows')({
+   component: WorkflowsPage,
+   validateSearch: (search: Record<string, unknown>): WorkflowsSearch => ({
+     workflow: parseEntityId(search.workflow),
++    view:
++      search.view === 'activity' || search.view === 'builder'
++        ? search.view
++        : undefined,
+   }),
+ })
+ 
+ function WorkflowsPage() {
+   const { t } = useTranslation()
+-  const { workflow } = Route.useSearch()
++  const { workflow, view } = Route.useSearch()
++  const activity = view === 'activity' || (view !== 'builder' && !workflow)
+   return (
+     <main className={PAGE_FRAME}>
+       <PageHeader>
+         <h1 className={HEADER_TITLE}>{t('nav.workflows')}</h1>
++        <nav
++          aria-label="Workflow views"
++          className="flex items-center gap-1 text-xs"
++        >
++          <Link
++            to="/workflows"
++            search={{ view: 'activity' }}
++            aria-current={activity ? 'page' : undefined}
++            className={
++              activity
++                ? 'rounded bg-accent px-3 py-2 text-accent-foreground'
++                : 'rounded px-3 py-2 text-muted-foreground hover:text-foreground'
++            }
++          >
++            Activity
++          </Link>
++          <Link
++            to="/workflows"
++            search={{ view: 'builder', workflow }}
++            aria-current={!activity ? 'page' : undefined}
++            className={
++              !activity
++                ? 'rounded bg-accent px-3 py-2 text-accent-foreground'
++                : 'rounded px-3 py-2 text-muted-foreground hover:text-foreground'
++            }
++          >
++            Builder
++          </Link>
++        </nav>
+       </PageHeader>
+ 
+       <Suspense
+@@ -54,7 +93,11 @@ function WorkflowsPage() {
+           </PendingAfter>
+         }
+       >
+-        <WorkflowBuilder workflowId={workflow ?? null} />
++        {activity ? (
++          <LiveActivity />
++        ) : (
++          <WorkflowBuilder workflowId={workflow ?? null} />
++        )}
+       </Suspense>
+     </main>
+   )
 diff --git a/apps/terminal/src/stores/__tests__/assistant-conversations-store.test.ts b/apps/terminal/src/stores/__tests__/assistant-conversations-store.test.ts
 index a9fb655..3be575e 100644
 --- a/apps/terminal/src/stores/__tests__/assistant-conversations-store.test.ts

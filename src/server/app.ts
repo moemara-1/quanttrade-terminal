@@ -21,7 +21,7 @@ import type { AdvancedProtection } from './advanced-protection.ts';
 
 interface Services {
   advancedProtection?:Pick<AdvancedProtection,'get'>;
-  hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'>;
+  hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
   lighterNativeOrders?:Pick<LighterNativeOrders,'execute'> & Partial<Pick<LighterNativeOrders,'preview'>>;
   workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
@@ -299,6 +299,10 @@ export function createApp(services: Services) {
     catch(error){res.status(400).json({error:error instanceof Error?error.message:'Chase plan validation failed',submissionAttempted:false});}
   });
   app.get('/api/chase-plans',operator,(_req,res)=>res.json({runs:services.chasePlans?.list()??[]}));
+  app.get('/api/terminal/native-twap-runs',operator,(_req,res)=>{
+    if(!services.hyperliquidNativeTwap?.list){res.status(503).json({error:'Native TWAP receipt history is unavailable'});return;}
+    res.json(services.hyperliquidNativeTwap.list());
+  });
   app.get('/api/advanced-protection',operator,(req,res)=>{
     if(!services.advancedProtection)throw Error('Advanced protection service is unavailable');
     const run=services.advancedProtection.get(z.string().uuid().parse(req.query.requestId));

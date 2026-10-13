@@ -14,6 +14,19 @@ function setup(bps=300,fail=false){
  const plan={requestId:randomUUID(),proposedAt:now,credentialId:'hl',connectionRevision:'a'.repeat(64),accountName:'desk',mode:'live',venue:'hyperliquid',marketType:'perpetual',symbol:'GRAM-USDC',action:'create',side:'buy',size:'60',durationMinutes:5,randomize:false,reduceOnly:false,acceptNativeRisk:true,referenceNotionalBudget:'124'};
  return {store,desk,service,plan,markets,now,calls:()=>calls,payload:()=>payload};
 }
+test('native TWAP activity lists only bounded owned accepted receipts without calling the exchange',async()=>{
+ const s=setup();try{
+  await s.service.execute(s.plan);
+  const before=s.calls(),used=s.store.used('live',new Date(s.now).toISOString().slice(0,10));
+  for(const [state,patch] of [['unknown',{}],['completed',{trading_pair:'BTC-USD'}],['completed',{reviewedPlan:{...s.plan,requestId:randomUUID()}}],['completed',{reviewedPlan:{...s.plan,extra:true}}]] as const){
+   const id=randomUUID();s.store.claimOperation(id,id);s.store.finishOperation(id,state,{status:'accepted',connector_name:'hyperliquid_perpetual',trading_pair:'GRAM-USD',twap_id:'123',reviewedPlan:{...s.plan,requestId:id},...patch});
+  }
+  const listed=s.service.list();assert.equal(listed.runs.length,1);assert.equal(listed.runs[0]?.id,s.plan.requestId);assert.equal(listed.runs[0]?.currentAccount,true);assert.equal(listed.runs[0]?.status,'accepted');assert.equal(listed.complete,false);
+  s.store.setConnectionFingerprint('desk','hyperliquid','b'.repeat(64));assert.equal(s.service.list().runs[0]?.currentAccount,false);
+  assert.equal(s.calls(),before);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),used);
+  assert.equal(s.store.operations(1).length,1);assert.throws(()=>s.store.operations(501));assert.throws(()=>s.store.operations(0));
+ }finally{s.store.close();}
+});
 test('native TWAP one admission reserves full reviewed reference estimate once and never claims fills',async()=>{
  const s=setup();try{const result=await s.service.execute(s.plan);assert.equal(result.status,'accepted');assert(!('fillPrice' in result));assert.equal((await s.service.execute(s.plan)).status,'accepted');assert.equal(s.calls(),1);assert.equal(s.payload().amount,'60');assert.equal(s.payload().duration_minutes,5);assert.equal(s.store.used('live',new Date(s.now).toISOString().slice(0,10)),'123.6');}finally{s.store.close();}
 });

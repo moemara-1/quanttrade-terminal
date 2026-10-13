@@ -65,6 +65,10 @@ export class DeskStore {
     const row=this.db.prepare('SELECT state,result FROM venue_operations WHERE id = ?').get(id);
     return row?{state:String(row.state),result:typeof row.result==='string'?JSON.parse(row.result):null}:null;
   }
+  operations(limit=200):Array<{id:string;state:string;result:unknown}> {
+    if(!Number.isInteger(limit)||limit<1||limit>500)throw Error('Operation read limit must be between 1 and 500');
+    return this.db.prepare('SELECT id,state,result FROM venue_operations ORDER BY rowid DESC LIMIT ?').all(limit).map(row=>({id:String(row.id),state:String(row.state),result:typeof row.result==='string'?JSON.parse(row.result):null}));
+  }
   claimOperation(id:string,fingerprint:string): {state:string;result:unknown}|null {
     const row=this.db.prepare('SELECT fingerprint,state,result FROM venue_operations WHERE id = ?').get(id);
     if (row) {

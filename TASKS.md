@@ -224,3 +224,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Disable backend notional caps as requested
 - [completed] Explicit Off/null backend caps retain daily usage, reservation/idempotency, exchange checks, immutable approved budgets and AI confirmations. Assistant now reads actual hosted caps separately from local controls.
 - [completed] 3,972 terminal /240 backend /2 deployment-configuration tests, native/root TypeScript, lint and build pass. Deployed Hetzner20261014-2; actual caps Off and unrelated bridge.env settings unchanged verified. No trades/cancellations or paused-run resumes; commit/push authorized.
+
+## Live workspace activity
+- [completed] Existing workflow page now defaults to live Activity: native exchange orders, server workflow/Chase runs and bounded native TWAP acknowledgments; Builder and browser-local history retained.
+- [completed] Account scope, partial/error states, polling and catalog-resolved deep links verified: 3,982 terminal /241 backend tests, TypeScript, lint and production build pass. Hetzner20261014-3 actual read-only activity feeds and approval guards verified; no trades, cancellations, credential changes or paused-plan resumes.

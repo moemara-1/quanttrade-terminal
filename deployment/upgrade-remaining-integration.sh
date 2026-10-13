@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261014-2
-[[ "$previous" == /opt/quanttrade/releases/20261014-1 ]]
+release=/opt/quanttrade/releases/20261014-3
+[[ "$previous" == /opt/quanttrade/releases/20261014-2 ]]
 if test -e "$release"; then
     # A failed, rolled-back candidate may be rebuilt; never overwrite current.
     [[ "$(readlink -f /opt/quanttrade/current)" != "$release" ]]
@@ -60,6 +60,7 @@ python3 deployment/verify-remaining-integration.py
 python3 deployment/verify-native-preparation-repair.py
 python3 deployment/verify-assistant-open-orders.py
 python3 deployment/verify-assistant-market-scan.py
+python3 deployment/verify-live-activity.py
 if [[ -n "$cap_env_backup" ]]; then python3 deployment/verify-notional-limits-off.py; fi
 curl -fsS https://quanttrade.azurestore.shop/version.json | cmp - frontend/version.json
 trap - ERR

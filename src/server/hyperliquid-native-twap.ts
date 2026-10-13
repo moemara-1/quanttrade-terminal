@@ -17,6 +17,17 @@ type Plan=z.infer<typeof hyperliquidNativeTwapSchema>;
 /** Native slices are venue-managed; this admission estimate is not a future price cap. */
 export class HyperliquidNativeTwap {
  constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection){}
+ list(){
+  const receiptSchema=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.string(),twap_id:z.string().regex(/^[1-9]\d*$/).refine(value=>Number.isSafeInteger(Number(value))),reviewedPlan:hyperliquidNativeTwapSchema});
+  const runs=this.desk.store.operations().flatMap(operation=>{
+   const receipt=receiptSchema.safeParse(operation.result);
+   if(operation.state!=='completed'||!receipt.success||receipt.data.reviewedPlan.action!=='create')return [];
+   const plan=receipt.data.reviewedPlan;
+   if(plan.requestId!==operation.id||receipt.data.trading_pair!==plan.symbol.replace(/-USDC$/,'-USD'))return [];
+   return [{id:operation.id,accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,marketType:plan.marketType,symbol:plan.symbol,side:plan.side,size:plan.size,mode:plan.mode,twapId:receipt.data.twap_id,proposedAt:plan.proposedAt,status:'accepted' as const,currentAccount:this.desk.status().accountName===plan.accountName&&this.desk.modeFor(plan.venue)==='live'&&this.desk.store.connectionFingerprint(plan.accountName,plan.venue)===plan.connectionRevision}];
+  });
+  return {runs,scope:'quanttrade-accepted-native-twap-receipts',complete:false,note:'Latest 200 recorded operations only. Accepted is a submission acknowledgment, not proof a TWAP is running or filled. External and uncertain native TWAP submissions are not included.'};
+ }
  recoverOwnedEntry(input:ProtectionInput):string|undefined {
   const operation=this.desk.store.operation(input.id);
   if(operation?.state!=='completed')return;

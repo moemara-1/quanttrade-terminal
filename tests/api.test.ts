@@ -20,6 +20,8 @@ test('agent credential can draft but cannot approve, cancel, halt or impersonate
   const headers={Authorization:'Bearer agent-token','Content-Type':'application/json'};
   try {
     assert.equal((await fetch(`${url}/api/status`)).status,401);
+    assert.equal((await fetch(`${url}/api/terminal/native-twap-runs`)).status,401);
+    assert.equal((await fetch(`${url}/api/terminal/native-twap-runs`,{headers})).status,403);
     assert.equal((await fetch(`${url}/api/status`,{headers:{...headers,Origin:'https://quanttrade.example'}})).status,200);
     assert.equal((await fetch(`${url}/api/status`,{headers:{...headers,Origin:'https://quanttrade.example.attacker.test'}})).status,403);
     const created=await fetch(`${url}/api/proposals`,{method:'POST',headers,body:JSON.stringify({venue:'hyperliquid',symbol:'BTC-USDC',side:'buy',type:'limit',size:'1',price:'100',rationale:'test'})});
