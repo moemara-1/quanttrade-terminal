@@ -31,7 +31,7 @@ interface Services {
   research?: Pick<VenueResearch,'execute'>;
   operations?:Pick<VenueOperations,'execute'|'snapshot'>;
   desk: TradingDesk; markets: MarketService; agent: Pick<ProposalAgent,'prepare'>;
-  execution?: Pick<HummingbotExecution,'account'|'connect'|'connections'|'disconnect'|'balances'> & Partial<Pick<HummingbotExecution,'spotConnections'>>; operatorToken: string; agentToken: string;
+  execution?: Pick<HummingbotExecution,'account'|'connect'|'connections'|'disconnect'|'balances'> & Partial<Pick<HummingbotExecution,'spotConnections'|'verifiedConnectionRevision'>>; operatorToken: string; agentToken: string;
   allowedOrigins?: string[];
   webSession?: {origin:string;proxySecret:string;loginFile?:string;sessionFile?:string;credentials?:()=>WebCredentials};
 }
@@ -175,6 +175,25 @@ export function createApp(services: Services) {
     res.json(await services.execution.balances(venueSchema.parse(req.params.venue),marketTypeSchema.parse(req.query.marketType)));
   });
   const connecting=new Set<string>();
+  app.post('/api/connections/lighter/recover',operator,async(req,res)=>{
+    const input=z.object({accountName:z.string().min(1).max(128)}).strict().parse(req.body);
+    const account=desk.status().accountName;
+    if(input.accountName!==account||desk.modeFor('lighter')!=='live'||!desk.status().executionConfigured){res.status(409).json({error:'Existing live Lighter account does not match this preparation',submissionAttempted:false});return;}
+    if(connecting.size){res.status(409).json({error:'An exchange connection is being updated',submissionAttempted:false});return;}
+    const existing=desk.store.connectionFingerprint(account,'lighter');
+    if(existing){res.json({venue:'lighter',accountName:account,connectionRevision:existing,connected:true,mode:'live'});return;}
+    if(!services.execution?.verifiedConnectionRevision){res.status(503).json({error:'Existing connection verification is unavailable',submissionAttempted:false});return;}
+    connecting.add('lighter');
+    try {
+      const revision=z.string().regex(/^[a-f0-9]{64}$/).parse(await services.execution.verifiedConnectionRevision('lighter'));
+      if(desk.status().accountName!==account||desk.modeFor('lighter')!=='live'||desk.store.connectionFingerprint(account,'lighter')!==null)throw Error('Account or connection changed during recovery');
+      // Recovery grants fresh preparation only; previously paused plans stay paused.
+      services.workflows?.pauseVenue('lighter');
+      desk.store.setConnectionFingerprint(account,'lighter',revision);
+      desk.store.record('connection-revision-recovered',null,account+':lighter');
+      res.json({venue:'lighter',accountName:account,connectionRevision:revision,connected:true,mode:'live'});
+    } finally {connecting.delete('lighter');}
+  });
   // Persist only hashes after verification, scoped to this execution account.
   // Identical reconnects after a bridge restart are not credential changes.
   app.post('/api/connections',operator,async(req,res)=>{

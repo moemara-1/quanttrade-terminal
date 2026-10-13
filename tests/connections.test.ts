@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { HummingbotExecution } from '../src/server/execution.ts';
 
+test('existing revision recovery verifies exact account and returns no credentials',async()=>{
+  const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{
+    assert.equal(new URL(String(url)).pathname,'/quanttrade/connections/desk/lighter/verified-revision');
+    assert.equal(init?.method,'POST');
+    return Response.json({accountName:'desk',venue:'lighter',connectionRevision:'a'.repeat(64)});
+  });
+  assert.equal(await client.verifiedConnectionRevision('lighter'),'a'.repeat(64));
+  const wrong=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async()=>Response.json({accountName:'other',venue:'lighter',connectionRevision:'a'.repeat(64)}));
+  await assert.rejects(()=>wrong.verifiedConnectionRevision('lighter'),/identity/);
+});
+
 test('connection stores exact venue credentials in fixed account and returns no signing secret',async()=>{
   const calls: {path:string;body:unknown}[]=[];
   const client=new HummingbotExecution({url:'http://127.0.0.1:8000',username:'u',password:'p',accountName:'desk'},async(url,init)=>{

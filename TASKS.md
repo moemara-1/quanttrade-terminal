@@ -204,3 +204,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Calendar panels standalone transport repair
 - [completed] Reproduced the standalone client refusal before any request; routed earnings, IPO and macro calls to existing same-origin feeds and added a narrowly scoped local proxy. Provider failure distinctions and unsupported company/insider behavior preserved.
 - [completed] Seven focused regressions, 3,932 terminal tests, native typecheck, changed-file ESLint and production build pass. Deployed Hetzner20261012-1; live earnings/IPO/macro feeds, login, asset hashes, approval guards and build identity verified. No trades or credential changes. Commit/push authorized.
+
+## Assistant native execution repair
+- [completed] Confirmed live Lighter had no revision; transcript also used wrong OCO entry grouping, invalid margin sizing and workflow bypass. Reproduced and repaired a stored-versus-running encrypted Lighter tier mismatch using actual adapter tests and private live verification.
+- [completed] Fresh operator-only scope recovery, exact grouping/alias/margin instructions and SDK stop-at-confirmation shipped Hetzner20261013-1. Live signing scope and persisted revision verified; keys unchanged, no trades or old-plan resumes. 3,944 terminal /227 backend /96 signer tests, typecheck/build and hosted guards verified; commit/push authorized.

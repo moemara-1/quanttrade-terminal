@@ -30,6 +30,12 @@ export class HummingbotExecution implements ExecutionClient {
   async disconnect(venue:Venue): Promise<void> {
     await this.post(`/quanttrade/connections/${encodeURIComponent(this.config.accountName)}/${venue}`,{},220_000,'DELETE');
   }
+  async verifiedConnectionRevision(venue:Venue):Promise<string> {
+    if(venue!=='lighter')throw new Error('Existing connection recovery is supported for Lighter only');
+    const result=z.object({accountName:z.string(),venue:z.literal('lighter'),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(await this.post(`/quanttrade/connections/${encodeURIComponent(this.config.accountName)}/lighter/verified-revision`,{},55_000));
+    if(result.accountName!==this.config.accountName)throw new Error('Verified connection identity does not match the reviewed account');
+    return result.connectionRevision;
+  }
   async balances(venue:Venue,marketType:MarketType='perpetual') {
     const connector=marketType==='spot'?venue:connectors[venue];
     const result=z.record(z.record(z.array(z.object({token:z.string().min(1),units:z.union([z.number().finite(),z.string()]),available_units:z.union([z.number().finite(),z.string()])})))).parse(await this.post('/portfolio/state',{account_names:[this.config.accountName],connector_names:[connector],skip_gateway:true,refresh:true}));

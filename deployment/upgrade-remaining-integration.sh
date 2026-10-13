@@ -2,10 +2,15 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261011-5
-[[ "$previous" == /opt/quanttrade/releases/20261011-4 ]]
-test ! -e "$release"
-mkdir "$release"
+release=/opt/quanttrade/releases/20261013-1
+[[ "$previous" == /opt/quanttrade/releases/20261012-1 ]]
+if test -e "$release"; then
+    # A failed, rolled-back candidate may be rebuilt; never overwrite current.
+    [[ "$(readlink -f /opt/quanttrade/current)" != "$release" ]]
+    test -d "$release"
+else
+    mkdir "$release"
+fi
 tar -C "$previous" --exclude='./frontend-before-*' --exclude='./node_modules' --exclude='./upstream' -cf - . | tar -C "$release" -xf -
 cd "$release"
 tar -xzf /opt/quanttrade/remaining-integration-source.tar.gz
@@ -46,6 +51,7 @@ python3 deployment/verify-workflow-runtime.py
 python3 deployment/verify-quanttrade-brand.py
 python3 deployment/verify-audit.py
 python3 deployment/verify-remaining-integration.py
+python3 deployment/verify-native-preparation-repair.py
 curl -fsS https://quanttrade.azurestore.shop/version.json | cmp - frontend/version.json
 trap - ERR
 printf '\nQuantTrade single-approval plans active: %s\n' "$release"

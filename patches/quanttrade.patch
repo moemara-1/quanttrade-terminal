@@ -12873,15 +12873,27 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..dc98fe7 100644
+index ce0d317..b1d1c30 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -73,8 +73,17 @@ const WORKING_RULES = [
+@@ -60,6 +60,9 @@ const CAPABILITIES = [
+ ]
+ 
+ const WORKING_RULES = [
++  'Explicit execution requests take priority over further research. Once the user specifies the instrument, direction and entry intent, use the exact connected account and prepare the requested single confirmation card after only the necessary account, fresh quote, instrument precision and risk checks. Do not restart market discovery, re-read the same charts or open unrelated instruments. Do not ask whether to prepare after the user already asked to open, set up or send the trade. Opening a chart is navigation, not preparation or execution. If a material field is missing, ask one concise question containing all missing choices and then prepare. A request for a good entry or stop zone permits a focused fresh chart read, not another market-wide search.',
++  'For explicit research requests, scope the scan to the requested venue and exact assets. Reuse successful current-turn reads rather than repeating them. Stop when enough evidence answers the request; do not keep expanding the search or retrying the same failed tool. Never replace W with WIF or S with SOL: resolve exact listings or ask about an ambiguous ticker. Keep venue-native instrument identifiers and market type intact, including perpetual settlement suffixes; a spot pair on Binance does not establish the same instrument on Lighter.',
++  'Position sizing: half my cash means half the verified available collateral as margin when discussing a leveraged position, not half the wallet balance in base units and not an arbitrary one contract. Resolve the account and leverage before computing quote exposure = margin × leverage, then base quantity = quote exposure / entry reference price, rounded down to venue size precision and checked against fees and risk limits. Never infer leverage from maximum leverage or initial margin requirements. Ask for a missing material leverage choice rather than silently using 1×. Cash allocation is different from maximum stop-loss risk; if the user means loss at the stop, size from that explicit loss budget. Carry verified existing exchange leverage/margin settings only when the user explicitly requests keeping them or they are already established for this trade.',
+   'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
+   'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
+   'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
+@@ -73,8 +76,19 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Connection revisions do not expire with time. A revision identifies a verified account connection; a proposal expiry is separate. An unknown QT-AI error is not proof of expired credentials, disconnected account or failed submission. Report the actual returned error or failed verification, without inventing a cause. Never switch to a workflow to bypass a connection, account, revision or risk error. Stop preparation on a guard failure, refresh verified account settings only when needed, and request reconnect only if the returned verified state actually requires it. A validation error with no submission permits correcting the exact malformed proposal; an uncertain submission requires reconciliation, never a new execution route.',
++  'Native Lighter grouping: Entry plus stop-loss alone uses OTO; entry plus take-profit and stop-loss uses OTOCO. OCO is exclusively a pair of protective TP/SL exits for an existing position, never an opening entry plus a stop. A standalone order uses single grouping. Keep the entry first and protections reduce-only on the opposite side. For a short, the stop trigger is above entry and the take-profit below; for a long, the reverse. Never invent an expiry timestamp or time-in-force not accepted by the tool. One complete native card is the requested trade, not several single-order confirmations.',
 +  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A native Lighter receipt includes a transaction hash and nativeClientOrderIds; these client IDs are not exchange order IDs or proof of fills. Match client_order_index in the exact instrument snapshot, then inspect its native exchange ID and fill evidence. Never ask for another confirmation solely because a submitted order is absent from open orders. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
 +  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
@@ -12896,7 +12908,7 @@ index ce0d317..dc98fe7 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +103,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +108,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -12906,18 +12918,19 @@ index ce0d317..dc98fe7 100644
      `Today's date: ${today} (UTC).`,
      '',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..752fe35 100644
+index 26e075b..009e4ee 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -14,6 +14,7 @@
+@@ -14,6 +14,8 @@
  import { convertToModelMessages, stepCountIs, streamText } from 'ai'
  
  import { buildAssistantSystemPrompt } from './assistant-brain'
 +import { encodeAssistantError } from './assistant-error'
++import { tradePreparationReady } from './trade-preparation-stop'
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -36,6 +37,7 @@ import type {
+@@ -36,6 +38,7 @@ import type {
    UIMessage,
    UIMessageChunk,
  } from 'ai'
@@ -12925,7 +12938,7 @@ index 26e075b..752fe35 100644
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -101,7 +103,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -101,7 +104,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
          venues: deps
            .getMarketData()
            ?.availableMarkets.map((market) => market.marketId),
@@ -12937,7 +12950,16 @@ index 26e075b..752fe35 100644
        }),
        messages: await convertToModelMessages(options.messages),
        tools,
-@@ -124,8 +129,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -114,7 +120,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+           CHART_TOOLS,
+         ),
+       }),
+-      stopWhen: stepCountIs(MAX_STEPS),
++      stopWhen: [stepCountIs(MAX_STEPS), tradePreparationReady],
+       onStepFinish: (step) => {
+         for (const call of step.toolCalls) {
+           track('assistant_tool_used', { tool: call.toolName })
+@@ -124,8 +130,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
      })
  
      return result.toUIMessageStream({
@@ -13034,14 +13056,15 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..042d2d6 100644
+index bf4d768..12a83e6 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
-@@ -17,12 +17,19 @@
+@@ -17,12 +17,20 @@
  
  export const WORKFLOW_GUIDE = [
    '## What a workflow is',
 -  'A workflow is an order plan that hangs off a trade the USER places. The step with id "trigger" is that order, arriving from the trade panel with its side, size, pair and market; every other step reacts to it. So workflows are brackets, ladders, scale-outs and timed follow-ups, never price watchers. A rule that should fire on its own is an alert, and belongs on the Notifications page.',
++  'For an explicit trade, prepare the supported native or managed order type directly as one complete approval card. Do not build a workflow unless the requested timing or conditions require a managed plan, or the user explicitly requests a workflow. Never use a workflow as a fallback around failed connection, revision, account or risk checks. A failed tool read is not an expired connection. On Lighter, an entry plus one SL or TP is OTO; entry plus paired TP/SL is OTOCO. OCO is for two protective exits, never an entry plus a stop-loss. Preserve the exact venue-native perpetual symbol, approved sizing, leverage and margin mode.',
 +  'A QuantTrade server workflow is an explicitly approved order graph. The step with id "trigger" only seeds the reviewed side, base-unit size, pair and market. It NEVER submits an order and has no fill. The surrounding place_order input also does not submit a separate entry when a graph is supplied. Only explicit market-order, limit-order, stop-loss and take-profit nodes submit orders. A rule that should watch prices continuously is an alert, and belongs on the Notifications page.',
    '- Steps come from the installed plugins. Call get_step_reference first, then build each step by copying its `defaults` object and changing only the keys you mean to change. Type ids and config keys are exact, and they are NOT the display labels ("Close %" is the label, `sizePercent` is the key). Inventing either is how a graph ends up invalid.',
 -  '- Sizes downstream are usually percentages of what the trigger filled, which is what makes one workflow work at any order size.',
@@ -13060,7 +13083,7 @@ index bf4d768..042d2d6 100644
  ].join('\n')
  
  export const NOTIFICATION_GUIDE = [
-@@ -39,6 +46,6 @@ export const NOTIFICATION_GUIDE = [
+@@ -39,6 +47,6 @@ export const NOTIFICATION_GUIDE = [
  /** The pointer that stands in for the full SDK guide off the workbench. */
  export const SCRIPT_GUIDE_POINTER = [
    '## Writing indicators and strategies',
@@ -13491,7 +13514,7 @@ index fc621a5..018f404 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..bfc3d33 100644
+index 2f8e01a..5279975 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
 @@ -2,9 +2,200 @@
@@ -13696,7 +13719,7 @@ index 2f8e01a..bfc3d33 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +203,233 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +203,240 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -13871,16 +13894,23 @@ index 2f8e01a..bfc3d33 100644
 +    }),
 +    prepare_lighter_native_order: tool({
 +      description:
-+        'Prepare one exact native Lighter perpetual order or OTO/OCO/OTOCO group for human confirmation in chat. Native types: market, limit, stop-loss market/limit, take-profit market/limit and TWAP. TWAP is single only. A grouped child with zero amount follows its parent entry fill; position OCO zero size protects the whole position dynamically and requires the user-reviewed current positionSize. Always state exact buy/sell, base amount, price bound/limit, trigger, reduce-only, time in force, expiry and TWAP duration. No workflow editor and no order is sent by this tool. Native acceptance is not fill evidence. Do not substitute this for scheduled DCA or claim chase/advanced TWAP support.',
++        'Prepare one exact native Lighter perpetual order or OTO/OCO/OTOCO group for human confirmation in chat. Group semantics: single = one order; OTO = opening market/limit entry followed by ONE opposite-side reduce-only SL or TP; OTOCO = opening entry followed by BOTH TP and SL; OCO = TP and SL for an ALREADY OPEN position, never entry plus SL. Native symbol is BASE-USDC (terminal BASE-USDC-USDC is normalized). Native types: market, limit, stop-loss market/limit, take-profit market/limit and TWAP. TWAP is single only. A grouped child with zero amount follows its parent entry fill; position OCO zero size protects the whole position dynamically and requires the user-reviewed current positionSize. Always state exact buy/sell, base amount, price bound/limit, trigger, reduce-only, time in force, expiry and TWAP duration. No workflow editor and no order is sent by this tool. Connection revisions do not expire. Report the exact tool error; do not invent credential expiry or use workflow as a connection-check bypass. When sizing from cash/margin, base amount = approved margin times explicitly reviewed leverage divided by entry price; 1x is not the market maximum leverage. Native acceptance is not fill evidence. Do not substitute this for scheduled DCA or claim chase/advanced TWAP support.',
 +      inputSchema: lighterNativeOrderInputSchema,
 +      execute: async (input) => {
 +        try {
++          const nativeOrder = await prepareLighterNativeOrder(
++            input,
++            useCredentialsStore.getState().credentials,
++          )
++          assistantOrderAccount(
++            useCredentialsStore.getState().credentials,
++            'lighter',
++            'live',
++            nativeOrder.credentialId,
++          )
 +          return {
 +            status: 'awaiting_confirmation',
-+            nativeOrder: await prepareLighterNativeOrder(
-+              input,
-+              useCredentialsStore.getState().credentials,
-+            ),
++            nativeOrder,
 +            message:
 +              'Review every leg, live account and margin settings, then click Confirm native order. Nothing has been submitted. Native transaction acceptance is not a fill.',
 +          }
@@ -13939,7 +13969,7 @@ index 2f8e01a..bfc3d33 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +453,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +460,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -13951,7 +13981,7 @@ index 2f8e01a..bfc3d33 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,39 +473,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,39 +480,211 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -14174,7 +14204,7 @@ index 2f8e01a..bfc3d33 100644
      cancel_order: tool({
        description:
          'Prepare a cancellation of an open order for the user to confirm. Does NOT cancel directly — the user must approve it. Use get_open_orders to find the order id.',
-@@ -135,4 +711,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -135,4 +718,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
        },
      }),
    }

@@ -48,6 +48,12 @@ const planFields = {
 export const lighterNativeOrderInputSchema = z
   .object({
     ...planFields,
+    symbol: z
+      .string()
+      .min(3)
+      .max(100)
+      .regex(/^[A-Za-z0-9:_.]+-USDC(?:-USDC)?$/)
+      .transform((symbol) => symbol.replace(/-USDC-USDC$/, '-USDC')),
     credentialId: z.string().min(1).optional(),
     mode: z.enum(['live', 'paper']).optional(),
   })
@@ -139,7 +145,7 @@ function validatePlan(
       exits[0].type.startsWith('tp-') === exits[1].type.startsWith('tp-')
     )
       throw new Error(
-        'OCO requires opposite TP/SL types closing the same position side.',
+        'OCO protects an existing position with paired TP/SL exits. Use OTO for an opening entry plus one protective exit; use OTOCO for an entry plus both TP and SL. Nothing was submitted.',
       )
   }
   if (plan.positionSize && plan.grouping !== 'oco')
@@ -156,6 +162,7 @@ async function verifiedStatus(
   request: Request,
   accountName?: string,
   connectionRevision?: string,
+  recoverMissing = false,
 ) {
   const response = await quantTradeFetch(
     '/_quanttrade/api/status',
@@ -172,10 +179,58 @@ async function verifiedStatus(
     throw new Error(
       'Unable to verify the hosted live account. Nothing was submitted.',
     )
-  const parsed = statusSchema.safeParse(await response.json())
+  const body: unknown = await response.json()
+  const mode = z
+    .object({ venueModes: z.object({ lighter: z.string() }) })
+    .safeParse(body)
+  if (mode.success && mode.data.venueModes.lighter !== 'live')
+    throw new Error(
+      'The hosted Lighter account is configured for paper, not live execution. Select the live account before preparing a native order. Nothing was submitted.',
+    )
+  const parsed = statusSchema.safeParse(body)
+  const missing = z
+    .object({
+      accountName: z.string().min(1),
+      executionConfigured: z.literal(true),
+      venueModes: z.object({ lighter: z.literal('live') }),
+      connectionRevisions: z.object({ lighter: z.null().optional() }),
+    })
+    .safeParse(body)
+  if (!parsed.success && recoverMissing && missing.success) {
+    const recovered = await quantTradeFetch(
+      '/_quanttrade/api/connections/lighter/recover',
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountName: missing.data.accountName }),
+        signal: AbortSignal.timeout(65000),
+        redirect: 'error',
+      },
+      request,
+    )
+    const receipt = z
+      .object({
+        venue: z.literal('lighter'),
+        accountName: z.literal(missing.data.accountName),
+        connectionRevision: z.string().regex(/^[a-f0-9]{64}$/),
+        connected: z.literal(true),
+        mode: z.literal('live'),
+      })
+      .safeParse(await recovered.json())
+    if (!recovered.ok || !receipt.success)
+      throw new Error(
+        'The configured Lighter connection could not be verified. Nothing was submitted. Do not switch to a workflow to bypass this check.',
+      )
+    return verifiedStatus(
+      request,
+      receipt.data.accountName,
+      receipt.data.connectionRevision,
+    )
+  }
   if (!parsed.success)
     throw new Error(
-      'The live Lighter account has no verified connection revision. Reconnect Lighter in Connect Exchange and prepare a fresh native order. Nothing was submitted.',
+      'The hosted Lighter connection revision could not be verified. This does not mean the API credentials expired. Read the account status and resolve the verification failure; a workflow cannot bypass it. Nothing was submitted.',
     )
   const status = parsed.data
   if (accountName && status.accountName !== accountName)
@@ -217,7 +272,8 @@ export async function prepareLighterNativeOrder(
     input.credentialId,
   )
   if (!account) throw new Error('Connect the exact live Lighter account first.')
-  const status = await verifiedStatus(request)
+  const status = await verifiedStatus(request, undefined, undefined, true)
+  assistantOrderAccount(credentials, 'lighter', mode, account.id)
   const { mode: unusedMode, credentialId: unusedId, ...plan } = input
   return parseLighterNativeOrder({
     ...plan,

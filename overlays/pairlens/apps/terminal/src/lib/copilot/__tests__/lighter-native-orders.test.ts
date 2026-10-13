@@ -489,3 +489,124 @@ test('native unknown and blocked receipts remain visible without another submiss
     ).toBe(failure === 'unknown' ? 'unverified' : 'blocked')
   }
 })
+
+test('terminal perpetual symbol is normalized to the exact native Lighter pair before review', async () => {
+  const prepared = await prepareLighterNativeOrder(
+    { ...order, symbol: 'GRAM-USDC-USDC' },
+    [account],
+    async () => Response.json(status),
+    () => 1000,
+  )
+  expect(prepared.symbol).toBe('GRAM-USDC')
+})
+
+test('entry plus stop-loss rejects OCO with the supported OTO correction', async () => {
+  await expect(
+    prepareLighterNativeOrder(
+      {
+        ...order,
+        grouping: 'oco',
+        legs: [
+          order.legs[0],
+          {
+            ...order.legs[0],
+            side: 'sell',
+            type: 'sl-market',
+            triggerPrice: '1.3',
+            reduceOnly: true,
+          },
+        ],
+      },
+      [account],
+    ),
+  ).rejects.toThrow('Use OTO for an opening entry plus one protective exit')
+})
+
+test('missing revision and paper mode produce distinct errors without claiming expired credentials', async () => {
+  await expect(
+    prepareLighterNativeOrder(order, [account], async () =>
+      Response.json({ ...status, connectionRevisions: {} }),
+    ),
+  ).rejects.toThrow('could not be verified')
+  await expect(
+    prepareLighterNativeOrder(order, [account], async () =>
+      Response.json({ ...status, venueModes: { lighter: 'paper' } }),
+    ),
+  ).rejects.toThrow('configured for paper')
+})
+
+test('fresh preparation restores only a missing live revision once and rereads exact account scope', async () => {
+  const calls: Array<string> = []
+  const prepared = await prepareLighterNativeOrder(
+    order,
+    [account],
+    async (url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (url.endsWith('/recover')) {
+        expect(JSON.parse(String(init?.body))).toEqual({ accountName: 'desk' })
+        return Response.json({
+          venue: 'lighter',
+          accountName: 'desk',
+          connectionRevision: 'a'.repeat(64),
+          connected: true,
+          mode: 'live',
+        })
+      }
+      return Response.json(
+        calls.length === 1
+          ? {
+              ...status,
+              executionConfigured: true,
+              connectionRevisions: { lighter: null },
+            }
+          : status,
+      )
+    },
+    () => 1000,
+  )
+  expect(prepared.connectionRevision).toBe('a'.repeat(64))
+  expect(calls).toHaveLength(3)
+})
+
+test('approval never restores a missing revision from an old reviewed card', async () => {
+  let posts = 0
+  const approval = new LighterNativeOrderApproval(
+    proposal,
+    () => [account],
+    async (_url, init) => {
+      if (init?.method === 'POST') posts++
+      return Response.json({
+        ...status,
+        executionConfigured: true,
+        connectionRevisions: { lighter: null },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('blocked')
+  expect(posts).toBe(0)
+})
+
+test('malformed revisions, disabled execution and paper accounts never trigger connection recovery', async () => {
+  for (const replacement of [
+    {
+      connectionRevisions: { lighter: 'malformed' },
+      executionConfigured: true,
+    },
+    { connectionRevisions: { lighter: null }, executionConfigured: false },
+    {
+      connectionRevisions: { lighter: null },
+      executionConfigured: true,
+      venueModes: { lighter: 'paper' },
+    },
+  ]) {
+    let mutations = 0
+    await expect(
+      prepareLighterNativeOrder(order, [account], async (_url, init) => {
+        if (init?.method === 'POST') mutations++
+        return Response.json({ ...status, ...replacement })
+      }),
+    ).rejects.toThrow()
+    expect(mutations).toBe(0)
+  }
+})
