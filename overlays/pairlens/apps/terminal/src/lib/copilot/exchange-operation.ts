@@ -42,6 +42,12 @@ export const exchangeOperationInputSchema = z.discriminatedUnion('action', [
       ...scope,
       action: z.literal('amend'),
       exchangeOrderId: orderId,
+      accountName: z.string().min(1).optional(),
+      connectionRevision: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+      proposedAt: z.number().int().positive().optional(),
       amount: decimal,
       price: decimal,
       timeInForce: z.enum(['Gtc', 'Alo']).optional(),

@@ -36,7 +36,7 @@ for credential in (None, agent):
     except HTTPError as error:
         assert error.code in (401, 403)
 scripts = '\n'.join(path.read_text() for path in (root / 'frontend/assets').glob('*.js'))
-assert 'Server runs & exchange orders' in scripts
+assert 'Orders & plans' in scripts
 assert 'Native TWAP receipts' in scripts
 assert 'quanttrade-live-workflows' in scripts
 assert 'quanttrade-live-orders' in scripts

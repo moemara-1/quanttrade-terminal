@@ -79,7 +79,8 @@ export class WorkflowRuns {
     if(this.list().filter(item=>item.status==='active').length>=20)throw new Error('Too many active workflows');
     this.save(run);return run;
   }
-  cancel(id:string):WorkflowRun {const run=this.get(id);run.status='cancelled';run.error='Future workflow steps cancelled. Existing exchange orders and positions are unchanged.';this.save(run);return run;}
+  pause(id:string,fingerprint:string):WorkflowRun {const run=this.get(id);if(run.fingerprint!==fingerprint)throw Error('Reviewed workflow changed; refresh before managing it');if(!['active','paused'].includes(run.status))throw Error('Only active or paused workflows can be paused');run.status='paused';run.error='Paused by you. Future steps will not run; existing exchange orders and positions are unchanged.';this.save(run);return run;}
+  cancel(id:string,fingerprint?:string):WorkflowRun {const run=this.get(id);if(fingerprint!==undefined&&run.fingerprint!==fingerprint)throw Error('Reviewed workflow changed; refresh before managing it');run.status='cancelled';run.error='Future workflow steps cancelled. Existing exchange orders and positions are unchanged.';this.save(run);return run;}
   pauseVenue(venue:string):void {this.connectionRevision++;for(const run of this.list().filter(item=>item.status==='active'&&(item.plan.input??item.plan.steps![0].order).venue===venue)){run.status='paused';run.error='Exchange connection was disconnected, reconfigured, or its trading mode changed. This does not prove your API keys changed. Check the account and approve a fresh plan.';this.save(run);}}
   private async tickGraph(run:WorkflowRun):Promise<void>{
     const graph=run.plan.graph!,input=run.plan.input!,state=run.graphState!;

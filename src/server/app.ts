@@ -24,7 +24,7 @@ interface Services {
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
   lighterNativeOrders?:Pick<LighterNativeOrders,'execute'> & Partial<Pick<LighterNativeOrders,'preview'>>;
-  workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'>;
+  workflows?:Pick<WorkflowRuns,'start'|'list'|'cancel'|'pauseVenue'> & Partial<Pick<WorkflowRuns,'pause'>>;
   liquidations?: Pick<LiquidationCollector,'get'>;
   news?: Pick<NewsService,'get'>;
   calendars?: Pick<MarketCalendars,'earnings'|'ipos'|'economic'>;
@@ -248,7 +248,13 @@ export function createApp(services: Services) {
   });
   app.post('/api/workflow-runs/:id/cancel',operator,(req,res)=>{
     if(!services.workflows){res.status(503).json({error:'Workflow execution is unavailable'});return;}
-    res.json(services.workflows.cancel(z.string().min(1).max(100).parse(req.params.id)));
+    const fingerprint=z.object({fingerprint:z.string().regex(/^[a-f0-9]{64}$/).optional()}).parse(req.body??{}).fingerprint;
+    res.json(services.workflows.cancel(z.string().min(1).max(100).parse(req.params.id),fingerprint));
+  });
+  app.post('/api/workflow-runs/:id/pause',operator,(req,res)=>{
+    if(!services.workflows?.pause){res.status(503).json({error:'Workflow management is unavailable'});return;}
+    const {fingerprint}=z.object({fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);
+    res.json(services.workflows.pause(z.string().min(1).max(100).parse(req.params.id),fingerprint));
   });
   app.post('/api/terminal/operations',operator,async(req,res)=>{
     if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; wait for the connection before changing exchange settings',submissionAttempted:false});return;}

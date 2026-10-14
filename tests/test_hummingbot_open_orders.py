@@ -35,6 +35,17 @@ class OpenOrdersTests(unittest.IsolatedAsyncioTestCase):
         result = await module.open_orders(c, 'lighter_perpetual')
         self.assertFalse(result['complete']); self.assertIn('error', result)
 
+    async def test_lighter_total_size_is_verified_and_never_invented_from_remaining(self):
+        c = self.lighter([{'market_index': 9, 'order_index': 1, 'remaining_base_amount': '60', 'initial_base_amount': '100'}, {'market_index': 9, 'order_index': 2, 'remaining_base_amount': '60'}])
+        result = await module.open_orders(c, 'lighter_perpetual')
+        self.assertEqual(result['orders'][0]['size'], '60')
+        self.assertEqual(result['orders'][0]['totalSize'], '100')
+        self.assertNotIn('totalSize', result['orders'][1])
+        c = self.lighter([{'market_index': 9, 'order_index': 1, 'remaining_base_amount': '60', 'initial_base_amount': '20'}])
+        result = await module.open_orders(c, 'lighter_perpetual')
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['orders'], [])
+
     async def test_provider_error_is_not_empty_book(self):
         c = self.lighter([]); c._api_get.return_value = {'code': 400, 'orders': []}
         with self.assertRaises(ValueError): await module.open_orders(c, 'lighter_perpetual')

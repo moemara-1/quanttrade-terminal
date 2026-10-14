@@ -23,6 +23,22 @@ test('kill switch during leverage metadata read blocks the exchange mutation',as
  }finally{state.store.close();}
 });
 const leverage={requestId:'operation-identifier',venue:'hyperliquid',marketType:'perpetual',symbol:'BTC-USDC',mode:'live',action:'leverage',leverage:3,marginMode:'isolated'};
+test('reviewed amendments bind account and connection and reject stale scope before mutation',async()=>{
+ const s=setup();try{
+  s.store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+  const amendment={requestId:'amend-reviewed-identifier',venue:'hyperliquid',marketType:'perpetual',symbol:'BTC-USDC',mode:'live',action:'amend',exchangeOrderId:'14918173922809911',amount:'1',price:'100',accountName:'desk',connectionRevision:'a'.repeat(64),proposedAt:Date.now()};
+  assert.equal((await s.operations.execute(amendment)).status,'accepted');assert.equal(s.calls(),1);
+  for(const patch of [{accountName:'other'},{connectionRevision:'b'.repeat(64)},{proposedAt:Date.now()-200000}])await assert.rejects(s.operations.execute({...amendment,requestId:'another-amend-reviewed-id',...patch}),/Reviewed/);
+  assert.equal(s.calls(),1);
+ }finally{s.store.close();}
+});
+test('native order reads preserve verified total size separately from remaining size',async()=>{
+ const s=setup();try{
+  s.store.setConnectionFingerprint('desk','lighter','a'.repeat(64));
+  const operations=new VenueOperations(s.desk,{perform:async()=>({connector_name:'lighter_perpetual',scope:'all-perpetual-markets',complete:true,orders:[{symbol:'BTC-USDC',exchangeOrderId:'14918173922809911',size:'60',totalSize:'100',type:'limit'}]})},{list:async()=>[]});
+  const book=await operations.openOrders({venue:'lighter',marketType:'perpetual'});assert.equal(book.orders[0]?.size,'60');assert.equal(book.orders[0]?.totalSize,'100');
+ }finally{s.store.close();}
+});
 test('exchange mutations keep exact account/pair and durable duplicate keys cannot resubmit',async()=>{
   const state=setup();try {
     assert.equal((await state.operations.execute(leverage)).status,'accepted');

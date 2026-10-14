@@ -12,9 +12,9 @@ export const operationSchema=z.discriminatedUnion('action',[
   z.object({...scope,action:z.literal('leverage'),leverage:z.number().int().min(1).max(125),marginMode:z.enum(['cross','isolated'])}).strict(),
   z.object({...scope,action:z.literal('margin'),amount:decimal,direction:z.enum(['add','remove'])}).strict(),
   z.object({...scope,action:z.literal('cancel'),exchangeOrderId:z.string().regex(/^[1-9]\d*$/).max(30),accountName:z.string().min(1).max(100).optional(),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),proposedAt:z.number().int().nonnegative().optional()}).strict(),
-  z.object({...scope,action:z.literal('amend'),exchangeOrderId:z.string().regex(/^\d+$/).max(30),amount:decimal,price:decimal,timeInForce:z.enum(['Gtc','Alo']).optional()}).strict(),
+  z.object({...scope,action:z.literal('amend'),exchangeOrderId:z.string().regex(/^[1-9]\d*$/).max(30),amount:decimal,price:decimal,timeInForce:z.enum(['Gtc','Alo']).optional(),accountName:z.string().min(1).max(100).optional(),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/).optional(),proposedAt:z.number().int().nonnegative().optional()}).strict(),
 ]).superRefine((input,context)=>{
-  if(input.action!=='cancel')return;
+  if(input.action!=='cancel'&&input.action!=='amend')return;
   const count=[input.accountName,input.connectionRevision,input.proposedAt].filter(value=>value!==undefined).length;
   if(count!==0&&count!==3)context.addIssue({code:'custom',message:'Reviewed cancellation requires account, connection revision and review time together'});
 });
@@ -45,10 +45,10 @@ export class VenueOperations {
     const accountName=this.desk.status().accountName;
     const revision=this.desk.store.connectionFingerprint(accountName,input.venue);
     const authorized=()=>{
-      if(input.action==='cancel'&&input.accountName!==undefined){
-        if(input.accountName!==accountName)throw new Error('Reviewed cancellation account changed');
-        if(input.connectionRevision!==revision)throw new Error('Reviewed cancellation connection changed');
-        if(input.proposedAt===undefined||input.proposedAt>Date.now()+5000||Date.now()-input.proposedAt>180000)throw new Error('Reviewed cancellation expired; prepare a fresh cancellation');
+      if((input.action==='cancel'||input.action==='amend')&&input.accountName!==undefined){
+        if(input.accountName!==accountName)throw new Error('Reviewed operation account changed');
+        if(input.connectionRevision!==revision)throw new Error('Reviewed operation connection changed');
+        if(input.proposedAt===undefined||input.proposedAt>Date.now()+5000||Date.now()-input.proposedAt>180000)throw new Error('Reviewed operation expired; prepare a fresh review');
       }
       if(this.desk.status().accountName!==accountName||this.desk.store.connectionFingerprint(accountName,input.venue)!==revision)throw new Error('Exchange credentials changed during review');
       if(input.action!=='cancel'&&(this.desk.store.halted||this.desk.modeFor(input.venue)!=='live'))throw new Error('Execution is halted or the Live mode changed');
@@ -116,7 +116,7 @@ export class VenueOperations {
     };
     authorized();
     const connector=input.marketType==='spot'?input.venue:input.venue+'_perpetual';
-    const result=z.object({connector_name:z.string(),scope:z.enum(['all-perpetual-markets','all-spot-markets','standard-perpetual-markets']),complete:z.boolean(),error:z.string().max(300).optional(),orders:z.array(z.object({symbol:z.string().min(3).max(100).regex(/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/),exchangeOrderId:z.string().max(30).regex(/^[1-9]\d*$/),side:z.enum(['buy','sell']).optional(),type:z.string().max(50).optional(),size:z.string().max(80).optional(),price:z.string().max(80).optional(),reduceOnly:z.boolean().optional(),triggerPrice:z.string().max(80).optional()}).strict())}).strict().parse(await this.client.perform('open-orders',{account_name:accountName,connector_name:connector}));
+    const result=z.object({connector_name:z.string(),scope:z.enum(['all-perpetual-markets','all-spot-markets','standard-perpetual-markets']),complete:z.boolean(),error:z.string().max(300).optional(),orders:z.array(z.object({symbol:z.string().min(3).max(100).regex(/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/),exchangeOrderId:z.string().max(30).regex(/^[1-9]\d*$/),side:z.enum(['buy','sell']).optional(),type:z.string().max(50).optional(),size:z.string().max(80).optional(),totalSize:decimal.optional(),price:z.string().max(80).optional(),reduceOnly:z.boolean().optional(),triggerPrice:z.string().max(80).optional()}).strict())}).strict().parse(await this.client.perform('open-orders',{account_name:accountName,connector_name:connector}));
     authorized();
     if(result.connector_name!==connector)throw new Error('Exchange open-order response does not match the reviewed market');
     const expectedScope=input.marketType==='spot'?'all-spot-markets':input.venue==='lighter'?'all-perpetual-markets':'standard-perpetual-markets';

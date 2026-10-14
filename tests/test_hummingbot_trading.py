@@ -344,6 +344,34 @@ class TradingTests(unittest.IsolatedAsyncioTestCase):
                 await module.amend(self.lighter(), 'lighter', 'ETH-USDC', '456', '0.5', '3000', 'Alo')
             read.assert_not_awaited()
 
+    async def test_lighter_amend_total_size_preserves_partial_fill_and_rejects_consumed_total(self):
+        c = self.lighter()
+        c._signer_client.modify_order = AsyncMock(return_value=(None, SimpleNamespace(code=200, tx_hash='hash'), None))
+        order = {'order_index': 456, 'type': 'limit', 'initial_base_amount': '100', 'remaining_base_amount': '60'}
+        with patch.object(module, 'snapshot', AsyncMock(return_value={'open_orders': [order]})):
+            await module.amend(c, 'lighter_perpetual', 'BTC-USDC', '456', '100', '3000')
+            self.assertEqual(c._signer_client.modify_order.call_args.kwargs['base_amount'], 100000)
+            for amount in ['20', '40']:
+                with self.assertRaisesRegex(module.ActionRejected, 'filled'):
+                    await module.amend(c, 'lighter_perpetual', 'BTC-USDC', '456', amount, '3000')
+        self.assertEqual(c._signer_client.modify_order.await_count, 1)
+
+    async def test_lighter_amend_missing_or_inconsistent_fill_metadata_fails_closed(self):
+        c = self.lighter()
+        c._signer_client.modify_order = AsyncMock()
+        for order in [{'order_index': 456, 'type': 'limit'}, {'order_index': 456, 'type': 'limit', 'initial_base_amount': '10', 'remaining_base_amount': '20'}]:
+            with patch.object(module, 'snapshot', AsyncMock(return_value={'open_orders': [order]})):
+                with self.assertRaises(module.ActionRejected):
+                    await module.amend(c, 'lighter_perpetual', 'BTC-USDC', '456', '100', '3000')
+        c._signer_client.modify_order.assert_not_awaited()
+
+    async def test_hl_amend_missing_reduce_only_fails_closed(self):
+        c = self.hl()
+        with patch.object(module, 'snapshot', AsyncMock(return_value={'open_orders': [{'oid': 456, 'side': 'B', 'tif': 'Alo'}]})):
+            with self.assertRaisesRegex(module.ActionRejected, 'reduce-only'):
+                await module.amend(c, 'hyperliquid_perpetual', 'BTC-USD', '456', '1', '100')
+        c._api_post.assert_not_awaited()
+
     def test_installed_routes_require_auth_and_fixed_scope(self):
         app = FastAPI()
         async def forbidden():

@@ -28,7 +28,7 @@ test('agent credential can draft but cannot approve, cancel, halt or impersonate
     assert.equal(created.status,201);
     const proposal=await created.json() as {id:string;source:string};
     assert.equal(proposal.source,'agent');
-    for (const route of [`/api/proposals/${proposal.id}/approve`,`/api/proposals/${proposal.id}/cancel`,'/api/halt','/api/terminal/orders','/api/terminal/operations','/api/terminal/lighter-native-orders','/api/terminal/lighter-native-preview','/api/terminal/hyperliquid-twap','/api/terminal/chase-plans','/api/terminal/chase-cancel','/api/terminal/hyperliquid-twap-evidence','/api/chase-plans/test/cancel','/api/terminal/snapshot','/api/terminal/open-orders','/api/workflow-runs','/api/workflow-runs/test/cancel']) {
+    for (const route of [`/api/proposals/${proposal.id}/approve`,`/api/proposals/${proposal.id}/cancel`,'/api/halt','/api/terminal/orders','/api/terminal/operations','/api/terminal/lighter-native-orders','/api/terminal/lighter-native-preview','/api/terminal/hyperliquid-twap','/api/terminal/chase-plans','/api/terminal/chase-cancel','/api/terminal/hyperliquid-twap-evidence','/api/chase-plans/test/cancel','/api/terminal/snapshot','/api/terminal/open-orders','/api/workflow-runs','/api/workflow-runs/test/cancel','/api/workflow-runs/test/pause']) {
       assert.equal((await fetch(`${url}${route}`,{method:'POST',headers,body:'{}'})).status,403);
     }
     const approved=await fetch(`${url}/api/proposals/${proposal.id}/approve`,{method:'POST',headers:{...headers,Authorization:'Bearer operator-token'},body:'{}'});

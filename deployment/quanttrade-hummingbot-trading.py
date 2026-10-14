@@ -734,6 +734,13 @@ async def open_orders(connector, name):
                         normalized[output] = str(value)
                         break
             reduce_only = row.get('reduceOnly' if is_hl else 'reduce_only')
+            if not is_hl and row.get('initial_base_amount') is not None:
+                initial = Decimal(str(row['initial_base_amount']))
+                remaining = Decimal(normalized.get('size', '0'))
+                if not initial.is_finite() or initial < 0 or remaining > initial:
+                    raise ValueError('Remaining order size exceeds total size')
+                if initial > 0:
+                    normalized['totalSize'] = str(row['initial_base_amount'])
             if isinstance(reduce_only, bool):
                 normalized['reduceOnly'] = reduce_only
             order_type = row.get('orderType' if is_hl else 'type')
@@ -821,6 +828,8 @@ async def amend(connector, name, pair, exchange_order_id, amount, price, time_in
         side = existing.get('side')
         if side not in ['A', 'B']:
             raise ActionRejected('Order side is unavailable; cannot amend safely')
+        if not isinstance(existing.get('reduceOnly'), bool):
+            raise ActionRejected('Order reduce-only flag is unavailable; cannot amend safely')
         tif = time_in_force if time_in_force is not None else existing.get('tif')
         if tif not in ['Gtc', 'Alo', 'Ioc']:
             raise ActionRejected('Order time in force is unavailable; cannot amend safely')
@@ -840,6 +849,17 @@ async def amend(connector, name, pair, exchange_order_id, amount, price, time_in
     market = connector.market_info_for_trading_pair(pair)
     if existing.get('type') not in ['limit', 'limit-maker', 'LIMIT', 0]:
         raise ActionRejected('Only native resting limit orders can be amended')
+    try:
+        initial = positive_decimal(existing['initial_base_amount'])
+        remaining = Decimal(existing['remaining_base_amount'])
+        if not remaining.is_finite() or remaining < 0 or remaining > initial:
+            raise ValueError('Invalid remaining order size')
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        raise ActionRejected('Verified original and remaining order quantities are required to amend safely') from None
+    # Lighter's modified base_amount includes quantities already matched.
+    # Sending remaining size here silently shrinks a partially filled order.
+    if positive_decimal(amount) <= initial - remaining:
+        raise ActionRejected('Amended total quantity must exceed already filled quantity; cancel explicitly to remove the remainder')
     async with connector._tx_lock:
         result = lighter_ack(await connector._signer_client.modify_order(market_index=market.market_id,
             order_index=int(exchange_order_id), base_amount=units(amount, market.size_decimals), price=units(price, market.price_decimals), trigger_price=0))

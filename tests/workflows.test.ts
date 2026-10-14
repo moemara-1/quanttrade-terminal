@@ -19,6 +19,17 @@ function setup(venue:'lighter'|'hyperliquid'='lighter'){
   const input={clientOrderId:'approved-plan',proposedAt:now,plan:{name:'PRL DCA',accountName:'desk',mode:'live' as const,maxTotalNotional:'25',steps:[{delaySeconds:0,order},{delaySeconds:10800,order}]}};
   return {store,desk,input,evidenceUnavailable:(value:boolean)=>{evidenceUnavailable=value;},filled:()=>{filled=true;},brackets:()=>brackets,get now(){return now;},price:(value:string)=>{quote.price=value;},advance:(seconds:number)=>{now+=seconds*1000;},calls:()=>calls,fail:()=>{fail=true;}};
 }
+test('operator pause preserves immutable workflow and prevents future slices without cancelling venue orders',async()=>{
+ const f=setup(),runs=new WorkflowRuns(':memory:',f.desk,()=>f.now);
+ try{
+  const run=await runs.start(f.input);await runs.tick();assert.equal(f.calls(),1);
+  assert.throws(()=>runs.pause(run.id,'wrong-fingerprint'),/reviewed/i);
+  const paused=runs.pause(run.id,run.fingerprint);assert.equal(paused.status,'paused');assert.deepEqual(paused.plan,run.plan);
+  f.advance(10800);await runs.tick();assert.equal(f.calls(),1);assert.equal(runs.pause(run.id,run.fingerprint).status,'paused');
+  assert.throws(()=>runs.cancel(run.id,'wrong-fingerprint'),/reviewed/i);
+  assert.equal(runs.cancel(run.id,run.fingerprint).status,'cancelled');
+ }finally{runs.close();f.store.close();}
+});
 test('rising prices cannot exceed the reviewed aggregate budget on later steps',async()=>{
   const f=setup();const runs=new WorkflowRuns(':memory:',f.desk,()=>f.now);
   try{await runs.start(f.input);await runs.tick();assert.equal(f.calls(),1);f.price('2');f.advance(10800);await runs.tick();assert.equal(f.calls(),1);assert.equal(runs.get(f.input.clientOrderId).status,'paused');assert.match(runs.get(f.input.clientOrderId).error??'',/budget/);}
