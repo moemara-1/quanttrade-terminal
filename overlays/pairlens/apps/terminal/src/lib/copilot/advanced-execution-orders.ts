@@ -381,6 +381,7 @@ export class AdvancedExecutionApproval {
               connector_name: z.literal('hyperliquid_perpetual'),
               twap_id: z.string().regex(/^[1-9]\d*$/),
               trading_pair: z.string(),
+              protectionWarning: z.string().min(1).optional(),
             }),
           })
           .safeParse(body)
@@ -402,6 +403,7 @@ export class AdvancedExecutionApproval {
           )
         this.status = 'accepted'
         this.evidence = accepted.data.result.twap_id
+        this.error = accepted.data.result.protectionWarning ?? null
       }
     } catch (cause) {
       this.status = posted ? 'unknown' : 'blocked'

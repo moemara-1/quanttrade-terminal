@@ -7,6 +7,13 @@ import { WORKFLOW_GUIDE } from '../guides'
 describe('assistant trade preparation contract', () => {
   const prompt = buildAssistantSystemPrompt({ guides: [WORKFLOW_GUIDE] })
 
+  test('protected TWAP requires explicit managed disclosure and preserves native-only intent', () => {
+    expect(prompt).toContain('Native Lighter TWAP cannot attach a TP/SL ladder')
+    expect(WORKFLOW_GUIDE).toContain(
+      'Never silently substitute a managed TWAP for a native-only request',
+    )
+  })
+
   test('prepares explicit instructions without restarting research or asking again', () => {
     expect(prompt).toContain(
       'Explicit execution requests take priority over further research',

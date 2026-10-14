@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { DeskStore } from '../src/server/store.ts';
 import { TradingDesk } from '../src/server/trading.ts';
 import { HyperliquidNativeTwap } from '../src/server/hyperliquid-native-twap.ts';
+import { AdvancedProtection } from '../src/server/advanced-protection.ts';
 
 function setup(bps=300,fail=false){
  const now=Date.now(),store=new DeskStore(':memory:');store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
@@ -14,6 +15,37 @@ function setup(bps=300,fail=false){
  const plan={requestId:randomUUID(),proposedAt:now,credentialId:'hl',connectionRevision:'a'.repeat(64),accountName:'desk',mode:'live',venue:'hyperliquid',marketType:'perpetual',symbol:'GRAM-USDC',action:'create',side:'buy',size:'60',durationMinutes:5,randomize:false,reduceOnly:false,acceptNativeRisk:true,referenceNotionalBudget:'124'};
  return {store,desk,service,plan,markets,now,calls:()=>calls,payload:()=>payload};
 }
+
+test('accepted native TWAP receipt survives a protection binding failure and never replays the entry',async()=>{
+ const s=setup();let submissions=0;
+ class BindingFailure extends AdvancedProtection { override bindEntry(){throw Error('Local binding unavailable');} }
+ const protection=new BindingFailure(':memory:',{authorize:()=>{},previewExit:async()=>({notional:'1'}),submitPair:async()=>{throw Error('Unexpected protection submission');},exitEvidence:async()=>({status:'pending'}),cancelExit:async()=>{throw Error('Unexpected cancellation');},stopEntry:async()=>false});
+ try{
+  const service=new HyperliquidNativeTwap(s.desk,{perform:async()=>{submissions++;return {status:'accepted',connector_name:'hyperliquid_perpetual',trading_pair:'GRAM-USD',twap_id:'123'};}},s.markets,()=>s.now,protection);
+  const plan={...s.plan,protection:{activation:'after-full-entry-fill',management:'managed',stopLossPrice:'1.8',takeProfits:[{price:'2.2',sizePercent:'100'}],maxExitNotional:'250'}};
+  const result=await service.execute(plan);
+  assert.equal(result.status,'accepted');assert.match(JSON.stringify(result.result),/binding pending/i);
+  assert.equal(s.store.operation(plan.requestId)?.state,'completed');
+  assert.equal(service.recoverOwnedEntry(protection.get(plan.requestId).input),'123');
+  assert.equal((await service.execute(plan)).status,'accepted');assert.equal(submissions,1);
+ }finally{protection.close();s.store.close();}
+});
+
+test('native TWAP checks fresh collateral and revalidates scope before any submission',async()=>{
+ const s=setup();let submissions=0;
+ try{
+  const client={perform:async()=>{submissions++;return {status:'accepted',connector_name:'hyperliquid_perpetual',trading_pair:'GRAM-USD',twap_id:'123'};}};
+  const low=new HyperliquidNativeTwap(s.desk,client,s.markets,()=>s.now,undefined,async()=>[{currency:'USDC',available:'10'}]);
+  const plan={...s.plan,leverage:5,marginMode:'cross'};
+  await assert.rejects(low.execute(plan),/available margin/);assert.equal(submissions,0);
+  const changed=new HyperliquidNativeTwap(s.desk,client,s.markets,()=>s.now,undefined,async()=>{s.store.setConnectionFingerprint('desk','hyperliquid','b'.repeat(64));return [{currency:'USDC',available:'100'}];});
+  await assert.rejects(changed.execute(plan),/revision changed/);assert.equal(submissions,0);
+  assert.equal(s.store.operation(plan.requestId),null);
+  s.store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+  const funded=new HyperliquidNativeTwap(s.desk,client,s.markets,()=>s.now,undefined,async()=>[{currency:'USD',available:'100'}]);
+  assert.equal((await funded.execute(plan)).status,'accepted');assert.equal(submissions,1);
+ }finally{s.store.close();}
+});
 test('native TWAP activity lists only bounded owned accepted receipts without calling the exchange',async()=>{
  const s=setup();try{
   await s.service.execute(s.plan);

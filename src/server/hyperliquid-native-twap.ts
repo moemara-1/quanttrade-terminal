@@ -16,7 +16,7 @@ type Plan=z.infer<typeof hyperliquidNativeTwapSchema>;
 
 /** Native slices are venue-managed; this admission estimate is not a future price cap. */
 export class HyperliquidNativeTwap {
- constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection){}
+ constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection,private readonly balances?:()=>Promise<{currency:string;available:string}[]>){}
  list(){
   const receiptSchema=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.string(),twap_id:z.string().regex(/^[1-9]\d*$/).refine(value=>Number.isSafeInteger(Number(value))),reviewedPlan:hyperliquidNativeTwapSchema});
   const runs=this.desk.store.operations().flatMap(operation=>{
@@ -74,6 +74,14 @@ export class HyperliquidNativeTwap {
    const latestReferenceNotional=new Decimal(preview.notional).div(ordinaryMultiplier);
    if(latestReferenceNotional.lt(100))throw new Error('Native Hyperliquid TWAP requires at least 100 USDC reference notional');
    notional=latestReferenceNotional.mul(Decimal.max('1.03',ordinaryMultiplier));
+   if(this.balances&&!plan.reduceOnly&&plan.leverage!==undefined){
+    const balances=await this.balances();this.authorize(plan);
+    const collateral=balances.filter(row=>row.currency==='USDC'||row.currency==='USD');
+    if(collateral.length!==1)throw Error('Fresh Hyperliquid USDC available margin is unavailable');
+    const available=new Decimal(collateral[0]!.available);
+    if(!available.isFinite()||available.lt(0))throw Error('Fresh Hyperliquid available margin is invalid');
+    if(notional.div(plan.leverage).gt(available))throw Error('Native TWAP opening order exceeds fresh available margin');
+   }
    if(plan.protection){const referencePrice=latestReferenceNotional.div(plan.size),stop=new Decimal(plan.protection.stopLossPrice);if(plan.side==='buy'?stop.gte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).lte(referencePrice)):stop.lte(referencePrice)||plan.protection.takeProfits.some(p=>new Decimal(p.price).gte(referencePrice)))throw Error('Native protection triggers are already crossed at the latest admission reference price');if(!this.protection)throw Error('Advanced protection service is unavailable');await this.protection.prepare({id:plan.requestId,kind:'native-twap',accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,symbol:plan.symbol,side:plan.side,size:plan.size,sizeDecimals:market.sizeDecimals,reduceOnly:plan.reduceOnly,protection:plan.protection});this.authorize(plan);}
    const orderLimit=this.desk.status().maxOrderNotional;
    if(notional.gt(plan.referenceNotionalBudget)||(orderLimit!==null&&notional.gt(orderLimit)))throw new Error('Native TWAP reference admission estimate exceeds reviewed or configured notional limit');
@@ -88,7 +96,12 @@ export class HyperliquidNativeTwap {
    const result=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.literal(plan.symbol.replace(/-USDC$/,'-USD')),twap_id:z.string().regex(/^[1-9]\d*$/)}).passthrough().parse(await this.client.perform(plan.action==='create'?'hyperliquid-twap':'hyperliquid-twap-cancel',{request_id:plan.requestId,account_name:plan.accountName,connector_name:'hyperliquid_perpetual',trading_pair:plan.symbol.replace(/-USDC$/,'-USD'),...(plan.action==='create'?{side:plan.side,amount:plan.size,duration_minutes:plan.durationMinutes,randomize:plan.randomize,reduce_only:plan.reduceOnly,...(plan.leverage!==undefined?{leverage:plan.leverage,margin_mode:plan.marginMode}:{})}:{twap_id:plan.twapId})}));
    if(plan.action==='cancel'&&result.twap_id!==plan.twapId)throw new Error('TWAP cancellation acknowledgment identity mismatch');
    const receipt=plan.action==='create'?{...result,reviewedPlan:plan}:result;
-   this.desk.store.finishOperation(plan.requestId,'completed',receipt);if(plan.action==='create'&&plan.protection)this.protection!.bindEntry(plan.requestId,result.twap_id);return {status:'accepted',result:receipt};
+   this.desk.store.finishOperation(plan.requestId,'completed',receipt);
+   if(plan.action==='create'&&plan.protection){
+    try{this.protection!.bindEntry(plan.requestId,result.twap_id);}
+    catch{return {status:'accepted',result:{...receipt,protectionWarning:'Entry accepted; protection binding pending. The monitor will recover the owned receipt. Protection is not yet verified.'}};}
+   }
+   return {status:'accepted',result:receipt};
   }catch(error){
    const result={error:attempted?'Native TWAP submission outcome is uncertain. Inspect exchange state; this request will not be retried.':'Native TWAP blocked before submission; prepare a fresh proposal.'};
    try{this.desk.store.finishOperation(plan.requestId,'unknown',result);}catch{result.error+=' Durable status could not be updated; the request remains claimed.';}

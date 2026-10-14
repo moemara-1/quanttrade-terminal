@@ -12919,7 +12919,7 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..0fe66eb 100644
+index ce0d317..d090ea6 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -60,6 +60,9 @@ const CAPABILITIES = [
@@ -12946,7 +12946,7 @@ index ce0d317..0fe66eb 100644
 +  'Before answering whether a user-confirmed order ran, call get_trade_submissions and inspect its actual mode and submission status, then verify live exchange orders/fills/positions as needed. A native Lighter receipt includes a transaction hash and nativeClientOrderIds; these client IDs are not exchange order IDs or proof of fills. Match client_order_index in the exact instrument snapshot, then inspect its native exchange ID and fill evidence. Never ask for another confirmation solely because a submitted order is absent from open orders. A paper UUID is simulation evidence only. A missing order from open orders is not evidence that a market order failed: it may already be filled. No submission record means unknown, not awaiting confirmation or success.',
 +  'QuantTrade hosted operator login, upstream App Server profile login and exchange account mode are separate. A missing upstream profile does not mean the operator is signed out, does not disable live exchange trading and must never change live to paper. Read get_account_settings for per-account verified state; do not invent a Sign In button or require a second unrelated account login.',
 +  'Committing a workflow only saves its definition. A single place_order card does not launch follow-ups. For Hyperliquid/Lighter workflows, use place_order.workflow.graph with every original node, data and edge unchanged, or workflow.steps with ALL exact scheduled orders and chronological delaySeconds. Include a user-approved maxTotalNotional. One fresh human confirmation registers that entire plan on the persistent server scheduler. Preserve conditions, branching, relative prices, percentage sizes and protective orders. graph.oco supports native perpetual OCO. Hyperliquid submits a market/limit entry plus paired TP/SL together with normalTpsl grouping: optional Split, same-sized 100% exits; percentage targets use the entry limit price or a fresh pre-submission quote, not a future fill. Lighter groups paired TP/SL after confirmed entry fill, using actual parent fill for percentage targets. Complete OCO topology is validated before any entry is sent. Spot OCO is unavailable. Never silently drop steps. Ask for missing size, budget, account, leverage or margin mode. Read get_workflow_runs for actual per-leg outcomes; registered/scheduled is not filled. Old saved drafts do not auto-start.',
-+  'For native Lighter order types and entry-attached OTO/OTOCO use prepare_lighter_native_order. Native TWAP must use that tool, not a scheduled graph. For other single orders or custom scheduled graphs, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
++  'For native Lighter order types and entry-attached OTO/OTOCO use prepare_lighter_native_order. Native TWAP must use that tool, not a scheduled graph. Native Lighter TWAP cannot attach a TP/SL ladder. If the user requests TWAP plus bundled protection without requiring native execution, disclose that QuantTrade will manage timed slices and protection, then prepare one prepare_position_plan twap card containing the complete approved setup. If they explicitly require native-only execution, report the protection limitation and ask for the missing execution choice; never silently substitute a managed plan or prepare separate unapproved exits. For other single orders or custom scheduled graphs, use place_order to prepare the exact order approval card. Their confirmation submits that order directly; never send them to the Workflow builder or ask them to re-enter the trade in the ticket. Use create_workflow only when they explicitly request a reusable workflow or automation.',
 +  'For a Scale ladder or fill-gated Iceberg on Lighter or Hyperliquid, use prepare_position_plan: one card approves every slice and optional exact multi-TP/SL allocation. Use its twap kind only when the user wants a QuantTrade-managed timed plan with a gross budget or custom multi-TP protection; clearly call it Managed TWAP. A native Lighter TWAP remains prepare_lighter_native_order. Use prepare_advanced_execution kind hyperliquid-twap for native Hyperliquid TWAP, after explicit acceptance of fixed 3% slice slippage and unbounded future quote risk. The configured risk band must permit 3%. Its reference budget is only an admission estimate; never call managed TWAP native. The card includes entry dependencies, account revision and gross cap. Paired protection covers each allocated entry, excluding prior holdings. Protective exits do not cancel other entry slices. Do not create individual approval cards for each child. Use prepare_advanced_execution kind chase for bounded managed Chase Limit on Lighter/Hyperliquid: one card, verified cancel/reconcile/replace, no automatic retry on uncertainty. Optional bundled protection on native Hyperliquid TWAP or managed Chase requires protection.stopLossPrice, protection.takeProfits with positive exact decimal STRING sizePercent summing to 100 and absolute price, and protection.maxExitNotional. One confirmation approves entry plus all protective allocations; never create separate child approvals. Native TWAP protection starts only after verified FULL entry fills; partial fills remain unprotected. Chase protection starts after each verified settled attempt fill. Lighter uses native OCO pairs per allocation; Hyperliquid siblings are managed and sibling cancellation requires verification. Entry acknowledgments do not prove exits exist; exit acknowledgments do not prove active status or fills. Protection status acceptedExitCoverageSize counts only remaining accepted allocations, verifiedClosedSize is closed quantity, and uncoveredVerifiedEntrySize is verified entries without accepted remaining coverage. Never count retired closed quantity as current coverage or describe accepted coverage as active exchange proof. Paused Chase orders may remain open beyond expiry; cancellation must be proved. Use prepare_advanced_execution kind chase-cancel for explicit one-card cancellation of a reviewed owned run; never cancel from a read tool. Native TWAP slice evidence is available through get_native_twap_evidence; truncated history or observed fills do not prove completion or active status. Read get_chase_runs for actual entry outcomes. Read get_advanced_protection_status with the original reviewed requestId, credentialId, accountName, connectionRevision, venue, symbol, side and size for bundled exit coverage; accepted coverage is not active exchange proof. Use prepare_advanced_execution kind hyperliquid-twap-cancel only for an explicitly reviewed native TWAP ID from venue acknowledgment or user-provided ID; cancellation leaves prior fills in the position. Read get_advanced_order_capabilities before proposing native execution. Native Atomic all-or-none baskets remain unavailable: do not substitute sequential batches or claim atomicity. Never switch an uncertain limit entry to a market entry or recreate its proposal: reconcile the original exchange identity first.',
 +  'Server graph trigger is only input metadata and NEVER places an entry or has a fill. An immediate entry requires an explicit market-order or limit-order directly after trigger. Count only actual entry nodes as DCA slices. Old conversation claims that trigger is a buy are incorrect; inspect the current graph and correct those claims. A saved graph may need a freshly reviewed correction rather than executing its unchanged mistaken topology.',
 +  'The manual Workflow ticket and the chat workflow card register through the SAME QuantTrade workflow endpoint. Do not tell the user manual selection bypasses the scheduler or makes trigger submit a buy. Check get_workflow_runs and the exact account snapshot to diagnose missing orders. A balance difference alone is not fill evidence. Public venue research and funding data cannot establish private order outcomes. Tool errors are failed reads, never proof an order was placed or that the exchange connection failed. Report uncertainty precisely, without retrying orders.',
@@ -13105,12 +13105,14 @@ index 74cf26a..5fbf941 100644
          }
        },
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
-index bf4d768..12a83e6 100644
+index bf4d768..2c08c5b 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
 +++ b/apps/terminal/src/lib/assistant-core/guides.ts
-@@ -17,12 +17,20 @@
+@@ -16,13 +16,22 @@
+ // written the way we want it to write. No dashes for punctuation.
  
  export const WORKFLOW_GUIDE = [
++  '- Native Lighter TWAP cannot attach a TP/SL ladder. For TWAP with protection when native execution is not required, disclose QuantTrade-managed timed slices and prepare the entire setup through prepare_position_plan kind twap with one confirmation. Never silently substitute a managed TWAP for a native-only request; report the limitation and obtain the execution choice before preparing a replacement.',
    '## What a workflow is',
 -  'A workflow is an order plan that hangs off a trade the USER places. The step with id "trigger" is that order, arriving from the trade panel with its side, size, pair and market; every other step reacts to it. So workflows are brackets, ladders, scale-outs and timed follow-ups, never price watchers. A rule that should fire on its own is an alert, and belongs on the Notifications page.',
 +  'For an explicit trade, prepare the supported native or managed order type directly as one complete approval card. Do not build a workflow unless the requested timing or conditions require a managed plan, or the user explicitly requests a workflow. Never use a workflow as a fallback around failed connection, revision, account or risk checks. A failed tool read is not an expired connection. On Lighter, an entry plus one SL or TP is OTO; entry plus paired TP/SL is OTOCO. OCO is for two protective exits, never an entry plus a stop-loss. Preserve the exact venue-native perpetual symbol, approved sizing, leverage and margin mode.',
@@ -13132,7 +13134,7 @@ index bf4d768..12a83e6 100644
  ].join('\n')
  
  export const NOTIFICATION_GUIDE = [
-@@ -39,6 +47,6 @@ export const NOTIFICATION_GUIDE = [
+@@ -39,6 +48,6 @@ export const NOTIFICATION_GUIDE = [
  /** The pointer that stands in for the full SDK guide off the workbench. */
  export const SCRIPT_GUIDE_POINTER = [
    '## Writing indicators and strategies',
@@ -14059,15 +14061,16 @@ index fc621a5..028444c 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..afb3ea5 100644
+index 2f8e01a..82777ec 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,200 @@
+@@ -2,9 +2,201 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { useTradeConsentStore } from '../../stores/trade-consent-store'
 +import { requiresAttendedTrading } from '../attended-trading'
++import { advancedOrderCapabilities } from './advanced-order-capabilities'
 +import {
 +  advancedExecutionInputSchema,
 +  prepareAdvancedExecution,
@@ -14264,7 +14267,7 @@ index 2f8e01a..afb3ea5 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +203,231 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +204,206 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -14358,32 +14361,7 @@ index 2f8e01a..afb3ea5 100644
 +        })
 +        if (!response.ok)
 +          return { error: 'Capabilities could not be verified.' }
-+        const parsed = z
-+          .object({
-+            maxPriceDeviationBps: z.number(),
-+            nativeTwapRiskAllowed: z.boolean().optional(),
-+          })
-+          .safeParse(await response.json())
-+        return {
-+          atomic: {
-+            available: false,
-+            reason:
-+              'No verified publicly supported signed all-or-none contract. Ordinary batches are not atomic.',
-+          },
-+          chase: {
-+            available: true,
-+            implementation:
-+              'QuantTrade-managed cancel-verify-replace on Lighter and Hyperliquid',
-+          },
-+          hyperliquidNativeTwap: {
-+            available:
-+              parsed.success &&
-+              (parsed.data.nativeTwapRiskAllowed === true ||
-+                parsed.data.maxPriceDeviationBps >= 300),
-+            minimumRiskBandBps: 300,
-+            risk: 'Fixed 3% slice slippage; no absolute future price or quote cap; explicit user acceptance required.',
-+          },
-+        }
++        return advancedOrderCapabilities(await response.json())
 +      },
 +    }),
 +    get_native_twap_evidence: tool({
@@ -14505,7 +14483,7 @@ index 2f8e01a..afb3ea5 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +451,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +427,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -14517,7 +14495,7 @@ index 2f8e01a..afb3ea5 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,42 +471,222 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,42 +447,222 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -14752,7 +14730,7 @@ index 2f8e01a..afb3ea5 100644
        inputSchema: z.object({
          orderId: z.string(),
          pair: z.string().optional(),
-@@ -122,6 +704,22 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -122,6 +680,22 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one. Read get_open_orders and cancel by its pair.',
            }
          }
@@ -14775,7 +14753,7 @@ index 2f8e01a..afb3ea5 100644
          return {
            status: 'awaiting_confirmation',
            cancel: {
-@@ -135,4 +733,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -135,4 +709,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
        },
      }),
    }

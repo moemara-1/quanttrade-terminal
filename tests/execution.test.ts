@@ -163,6 +163,19 @@ test('Lighter filled database row without averages reconciles native quote/base 
   assert.deepEqual(await client.orderEvidence(order,'231496392805437'),{status:'filled',fillSize:'171',fillPrice:'1.46547'});
 });
 
+test('native Lighter receipts reconcile directly when generic connector history is unavailable',async()=>{
+  for(const receipt of ['native-client:lighter:42','native:lighter:987']){
+    const paths:string[]=[];
+    const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+      const path=new URL(String(url)).pathname;paths.push(path);
+      if(path.endsWith('/search'))throw Error('Connector history unavailable');
+      return Response.json({connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',open_orders:[],order_history:[{exchange_order_id:'987',client_order_index:'42',status:'filled',filled_base_amount:'3',filled_quote_amount:'6'}],fills:[],account:{accounts:[{account_index:12}]}});
+    });
+    assert.deepEqual(await client.orderEvidence({venue:'lighter',symbol:'GRAM-USDC',side:'buy',type:'market',size:'3',rationale:'test'},receipt),{status:'filled',fillSize:'3',fillPrice:'2'});
+    assert.deepEqual(paths,['/quanttrade/trading/snapshot']);
+  }
+});
+
 test('Lighter missing eventual fill totals remains pending and read-only until later reconciliation',async()=>{
   let complete=false;const paths:string[]=[];
   const client=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{

@@ -182,6 +182,40 @@ export function createNanogptInferencePlugin(
       name: 'nanogpt',
       baseURL: NANOGPT_BASE_URL,
       apiKey: String(config['apiKey'] ?? ''),
+      fetch: async (url, init) => {
+        // DeepSeek thinking requires this field on every assistant turn
+        // when tools are present. The generic SDK omits empty reasoning,
+        // including text-only history produced before a provider switch.
+        // Preserve supplied reasoning exactly; an absent value stays empty.
+        if (typeof init?.body === 'string') {
+          const body: Record<string, unknown> = JSON.parse(init.body)
+          if (
+            /^deepseek\//i.test(String(body.model)) &&
+            /:thinking(?:$|:)/i.test(String(body.model)) &&
+            Array.isArray(body.tools) &&
+            body.tools.length > 0 &&
+            Array.isArray(body.messages)
+          ) {
+            body.messages = body.messages.map((message: unknown) => {
+              if (typeof message !== 'object' || message === null)
+                return message
+              const record = message as Record<string, unknown>
+              if (record.role !== 'assistant') return record
+              return {
+                ...record,
+                reasoning_content:
+                  typeof record.reasoning_content === 'string'
+                    ? record.reasoning_content
+                    : typeof record.reasoning === 'string'
+                      ? record.reasoning
+                      : '',
+              }
+            })
+            return fetch(url, { ...init, body: JSON.stringify(body) })
+          }
+        }
+        return fetch(url, init)
+      },
     }).chatModel(configuredModel())
   }
 

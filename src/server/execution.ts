@@ -273,6 +273,9 @@ export class HummingbotExecution implements ExecutionClient {
   async orderEvidence(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
     const connector=order.marketType==='spot'?order.venue:connectors[order.venue];
     const pair=order.venue==='hyperliquid'&&order.marketType!=='spot'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;
+    // Native submissions are not recorded in Hummingbot's connector order DB.
+    // Their exact receipt identity is already sufficient for a scoped venue read.
+    if(order.venue==='lighter'&&order.marketType!=='spot'&&/^native(?:-client)?:lighter:[1-9]\d*$/.test(orderId))return this.lighterEvidence(order,orderId);
     if(orderId.startsWith('native:hyperliquid:')){
       if(order.venue!=='hyperliquid'||order.marketType==='spot')throw new Error('Native bracket evidence does not match the reviewed venue');
       const id=z.string().regex(/^[1-9]\d*$/).parse(orderId.slice('native:hyperliquid:'.length));

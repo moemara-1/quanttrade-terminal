@@ -24,6 +24,40 @@ const status = {
   connectionRevisions: { hyperliquid: 'a'.repeat(64) },
   venueModes: { hyperliquid: 'live' },
 }
+
+test('accepted native entry keeps protection warning visible without permitting retry', async () => {
+  const proposal = await prepareAdvancedExecution(
+    input,
+    credentials,
+    async () => Response.json(status),
+    () => 1000,
+  )
+  let submissions = 0
+  const approval = new AdvancedExecutionApproval(
+    proposal,
+    () => credentials,
+    async (url) => {
+      if (url.endsWith('/status')) return Response.json(status)
+      submissions++
+      return Response.json({
+        status: 'accepted',
+        result: {
+          status: 'accepted',
+          connector_name: 'hyperliquid_perpetual',
+          twap_id: '10',
+          trading_pair: 'BTC-USD',
+          protectionWarning: 'Entry accepted; protection binding pending.',
+        },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('accepted')
+  expect(approval.evidence).toBe('10')
+  expect(approval.error).toContain('protection binding pending')
+  expect(await approval.approve()).toBe('accepted')
+  expect(submissions).toBe(1)
+})
 test('bundled protection survives one confirmation unchanged and invalid allocations never prepare', async () => {
   const protection = {
     stopLossPrice: '50000',

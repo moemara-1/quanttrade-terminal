@@ -8,6 +8,7 @@ import { TradingDesk } from '../src/server/trading.ts';
 import { DeskStore } from '../src/server/store.ts';
 import type { Market,OrderDraft } from '../src/shared/types.ts';
 import { DatabaseSync } from 'node:sqlite';
+import { HummingbotExecution } from '../src/server/execution.ts';
 
 const order:OrderDraft={venue:'lighter',symbol:'PRL-USDC',side:'buy',type:'market',size:'10',leverage:3,marginMode:'cross',rationale:'Reviewed DCA'};
 function setup(venue:'lighter'|'hyperliquid'='lighter'){
@@ -109,4 +110,23 @@ test('temporary fill read failure waits durably and never resubmits the entry',a
     await runs.tick();assert.equal(f.calls(),1);assert.equal(runs.get(f.input.clientOrderId).status,'active');
     f.evidenceUnavailable(false);f.filled();await runs.tick();assert.equal(f.calls(),1);assert.equal(runs.get(f.input.clientOrderId).graphState?.nodes.entry.status,'executed');assert.equal(runs.get(f.input.clientOrderId).graphState?.nodes.wait.status,'waiting');
   }finally{runs.close();f.store.close();}
+});
+
+test('native receipt fills drive a delayed DCA and full-workflow protection without connector history',async()=>{
+  let now=100000,entries=0,exits=0;
+  const store=new DeskStore(':memory:');
+  const native=new HummingbotExecution({url:'http://localhost:8000',username:'u',password:'p',accountName:'desk'},async(url)=>{
+    assert.equal(new URL(String(url)).pathname,'/quanttrade/trading/snapshot');
+    return Response.json({connector_name:'lighter_perpetual',trading_pair:'PRL-USDC',open_orders:[],order_history:Array.from({length:entries},(_,i)=>({exchange_order_id:String(987+i),client_order_index:String(42+i),status:'filled',filled_base_amount:'10',filled_quote_amount:'10'})),fills:[],account:{accounts:[{account_index:12}]}});
+  });
+  const market:Market={venue:'lighter',symbol:'PRL-USDC',base:'PRL',price:'1',change24h:0,volume24h:'1',fundingRate:null,openInterest:null,sizeDecimals:2,priceDecimals:4,minSize:'1',minNotional:'1',maxLeverage:3,updatedAt:now};
+  const desk=new TradingDesk(store,{list:async()=>[{...market,updatedAt:now}]},{configured:true,place:async draft=>{if(draft.trigger){exits++;assert.equal(draft.size,'20');return 'native-client:lighter:99';}return 'native-client:lighter:'+String(42+entries++);},cancel:async()=>{},orderEvidence:(draft,id)=>native.orderEvidence(draft,id)},{mode:'live',accountName:'desk',maxOrderNotional:'100',dailyNotionalLimit:'1000',maxPriceDeviationBps:50,proposalTtlSeconds:180,pairlensUrl:'http://localhost'},()=>now);
+  const runs=new WorkflowRuns(':memory:',desk,()=>now);
+  const graph={steps:[{id:'t',type:'trigger',data:{}},{id:'a',type:'market-order',data:{side:'inherit',sizeMode:'absolute',size:10}},{id:'w',type:'wait',data:{duration:2,unit:'hours'}},{id:'b',type:'market-order',data:{side:'inherit',sizeMode:'absolute',size:10}},{id:'sl',type:'stop-loss',data:{triggerMode:'percent',triggerValue:6,sizePercent:100,orderType:'market',sizeScope:'workflow'}}],edges:[{id:'1',source:'t',target:'a'},{id:'2',source:'a',target:'w'},{id:'3',source:'w',target:'b'},{id:'4',source:'b',target:'sl'}]};
+  try{
+    await runs.start({clientOrderId:'native-dca',proposedAt:now,plan:{name:'Native DCA',accountName:'desk',mode:'live',maxTotalNotional:'100',graph,input:order}});
+    await runs.tick();assert.equal(entries,1);assert.equal(exits,0);assert.equal(runs.get('native-dca').graphState?.nodes.w.status,'waiting');
+    now+=7200000;await runs.tick();assert.equal(entries,2);assert.equal(exits,1);assert.equal(runs.get('native-dca').status,'completed');
+    await runs.tick();assert.equal(entries,2);assert.equal(exits,1);
+  }finally{runs.close();store.close();}
 });

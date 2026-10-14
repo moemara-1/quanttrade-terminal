@@ -228,3 +228,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Live workspace activity
 - [completed] Existing workflow page now defaults to live Activity: native exchange orders, server workflow/Chase runs and bounded native TWAP acknowledgments; Builder and browser-local history retained.
 - [completed] Account scope, partial/error states, polling and catalog-resolved deep links verified: 3,982 terminal /241 backend tests, TypeScript, lint and production build pass. Hetzner20261014-3 actual read-only activity feeds and approval guards verified; no trades, cancellations, credential changes or paused-plan resumes.
+
+## Remaining assistant execution fixes
+- [completed] Reproduced missing DeepSeek reasoning history, generic-history dependency blocking native Lighter fills, and accepted native TWAP receipt corruption after protection binding failure. Official venue/API capability review distinguishes native orders, managed plans and unsupported atomic baskets.
+- [completed] Fixed reproduced protocol/fill/receipt bugs and capability routing with red/green regressions, one approval, no uncertain retries; fresh Hyperliquid TWAP margin guard and recovery warning preserve exact accepted identities.
+- [completed] 3,990 terminal /245 backend tests, TypeScript, lint and production build pass; Hetzner20261014-4 runtime/approval/native-source checks verified. No live provider key or test trades; historical paused plans unchanged. Atomic and native TWAP partial-fill protection limits documented; commit/push authorized.
