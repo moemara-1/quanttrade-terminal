@@ -9320,20 +9320,31 @@ index 57af918..b739acf 100644
        input.description?.trim() ||
        `Custom Python chart indicator: ${descriptor.meta.title}`,
 diff --git a/apps/terminal/src/components/layout/pane-pair-picker.tsx b/apps/terminal/src/components/layout/pane-pair-picker.tsx
-index 367bea8..20c56f5 100644
+index 367bea8..f713eec 100644
 --- a/apps/terminal/src/components/layout/pane-pair-picker.tsx
 +++ b/apps/terminal/src/components/layout/pane-pair-picker.tsx
-@@ -59,7 +59,7 @@ export function PanePairPicker() {
+@@ -59,7 +59,10 @@ export function PanePairPicker() {
        if (entry.assetClass) {
          setAssetClassMap((prev) => ({ ...prev, [symbol]: entry.assetClass! }))
        }
 -      const pairValue = { pairKey: symbol, market: selectedMarket }
-+      const pairValue = { pairKey: symbol, market: entry.market ?? selectedMarket }
++      const pairValue = {
++        pairKey: symbol,
++        market: entry.market ?? selectedMarket,
++      }
        if (isBoundToVariable) {
          setVariableValue(pairValue)
        } else {
+@@ -235,6 +238,7 @@ export function PanePairPicker() {
+       </div>
+       <div className="flex-1 overflow-y-auto py-1">
+         <PairSearchResults
++          market={selectedMarket}
+           searchValue={searchValue}
+           watchedSymbols={watchedSymbols}
+           onSelect={handleSelect}
 diff --git a/apps/terminal/src/components/layout/workspace-variable-bar.tsx b/apps/terminal/src/components/layout/workspace-variable-bar.tsx
-index dc0d680..b4b8df6 100644
+index dc0d680..712e408 100644
 --- a/apps/terminal/src/components/layout/workspace-variable-bar.tsx
 +++ b/apps/terminal/src/components/layout/workspace-variable-bar.tsx
 @@ -166,7 +166,7 @@ function PairVariableDropdown({
@@ -9345,6 +9356,14 @@ index dc0d680..b4b8df6 100644
        setOpen(false)
        setSearchValue('')
      },
+@@ -235,6 +235,7 @@ function PairVariableDropdown({
+         </div>
+         <div className="max-h-64 overflow-y-auto py-1">
+           <PairSearchResults
++            market={selectedMarket}
+             searchValue={searchValue}
+             watchedSymbols={watchedSymbols}
+             onSelect={handleSelect}
 diff --git a/apps/terminal/src/components/onboarding/spotlight-tour/scenes/scenes.tsx b/apps/terminal/src/components/onboarding/spotlight-tour/scenes/scenes.tsx
 index b4d2252..c6cacfb 100644
 --- a/apps/terminal/src/components/onboarding/spotlight-tour/scenes/scenes.tsx
@@ -9509,10 +9528,10 @@ index fc94a3d..2ddb6ec 100644
  
  /** `0x532f…-WETH` → `['0x532f…', 'WETH']`. The base is the address. */
 diff --git a/apps/terminal/src/components/pair-picker/pair-search-results.tsx b/apps/terminal/src/components/pair-picker/pair-search-results.tsx
-index a390999..e21c883 100644
+index a390999..0654755 100644
 --- a/apps/terminal/src/components/pair-picker/pair-search-results.tsx
 +++ b/apps/terminal/src/components/pair-picker/pair-search-results.tsx
-@@ -1,14 +1,19 @@
+@@ -1,14 +1,21 @@
  // Copyright (c) 2026 Juan Ignacio Molina Estrada
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 -import { memo, useMemo } from 'react'
@@ -9524,16 +9543,75 @@ index a390999..e21c883 100644
 +import { ALL_PAIR_RESULTS, filterPairResults } from './pair-result-filter'
 +import { PairResultFilters } from './pair-result-filters'
 +import { PairResultMore } from './pair-result-more'
++import { rowsForSelectedVenue } from './pair-venue-scope'
 +import { usePairResultWindow } from './use-pair-result-window'
  import type { PairEntry } from '@/components/pair-picker/pair-picker-data'
  import type { InstrumentRef } from '@pairlens/shared/market-ref'
++import { isQuantTradeVenue } from '@/lib/venue-instrument'
  import { PairLogo, PairSymbol } from '@/components/pair-picker/pair-avatar'
  import {
 +  catalogClassOf,
    instrumentToPairEntry,
    isPredictionEntry,
    pairEntryForRef,
-@@ -84,7 +89,6 @@ export function usePairSearchData(
+@@ -28,14 +35,17 @@ export type PairSearchResultsProps = {
+   /** The whole row. A token's identity is its chain+address, which a
+    * symbol string cannot carry, so callers get the entry. */
+   onSelect: (entry: PairEntry) => void
++  market?: string
+   maxResults?: number
+ }
+ 
+ export function usePairSearchData(
+   searchValue: string,
+   watchedSymbols: Set<string>,
++  market?: string,
+ ) {
+-  const { items: instruments } = useMarketInstruments()
++  const scopedMarket = market && isQuantTradeVenue(market) ? market : undefined
++  const { items: instruments } = useMarketInstruments({ market: scopedMarket })
+   const { data: searchResults, isSearchActive } =
+     useInstrumentSearch(searchValue)
+   const [recentPairs] = useRecentPairs()
+@@ -45,10 +55,12 @@ export function usePairSearchData(
+ 
+   const allPairs: Array<PairEntry> = useMemo(() => {
+     if (instruments && instruments.length > 0) {
+-      return instruments.map(instrumentToPairEntry)
++      return rowsForSelectedVenue(instruments, scopedMarket).map(
++        instrumentToPairEntry,
++      )
+     }
+     return []
+-  }, [instruments])
++  }, [instruments, scopedMarket])
+ 
+   const pairsBySymbol = useMemo(
+     () => new Map(allPairs.map((p) => [p.symbol, p])),
+@@ -58,13 +70,15 @@ export function usePairSearchData(
+   // Server search results (query >= 2 chars)
+   const serverResults = useMemo(() => {
+     if (!isSearchActive || !searchResults) return []
+-    return searchResults.map(instrumentToPairEntry).sort((a, b) => {
+-      const aFav = watchedSymbols.has(a.symbol) ? 0 : 1
+-      const bFav = watchedSymbols.has(b.symbol) ? 0 : 1
+-      if (aFav !== bFav) return aFav - bFav
+-      return a.rank - b.rank
+-    })
+-  }, [isSearchActive, searchResults, watchedSymbols])
++    return rowsForSelectedVenue(searchResults, scopedMarket)
++      .map(instrumentToPairEntry)
++      .sort((a, b) => {
++        const aFav = watchedSymbols.has(a.symbol) ? 0 : 1
++        const bFav = watchedSymbols.has(b.symbol) ? 0 : 1
++        if (aFav !== bFav) return aFav - bFav
++        return a.rank - b.rank
++      })
++  }, [isSearchActive, searchResults, watchedSymbols, scopedMarket])
+ 
+   // Client-side filter for 1-char queries
+   const clientResults = useMemo(() => {
+@@ -84,7 +98,6 @@ export function usePairSearchData(
          if (aFav !== bFav) return aFav - bFav
          return a.rank - b.rank
        })
@@ -9541,7 +9619,33 @@ index a390999..e21c883 100644
    }, [searchValue, allPairs, watchedSymbols])
  
    const recentEntries = useMemo(
-@@ -116,6 +120,7 @@ export function usePairSearchData(
+@@ -92,8 +105,11 @@ export function usePairSearchData(
+       recentPairs
+         .map((ref) => pairEntryForRef(ref, pairsBySymbol))
+         .filter((p): p is PairEntry => p !== null)
++        .filter(
++          (entry) => rowsForSelectedVenue([entry], scopedMarket).length > 0,
++        )
+         .slice(0, 8),
+-    [recentPairs, pairsBySymbol],
++    [recentPairs, pairsBySymbol, scopedMarket],
+   )
+ 
+   const watchedEntries = useMemo(
+@@ -103,8 +119,11 @@ export function usePairSearchData(
+         .filter((ref): ref is InstrumentRef => ref !== null)
+         .map((ref) => pairEntryForRef(ref, pairsBySymbol))
+         .filter((p): p is PairEntry => p !== null)
++        .filter(
++          (entry) => rowsForSelectedVenue([entry], scopedMarket).length > 0,
++        )
+         .slice(0, 8),
+-    [watchedEntryKeys, pairsBySymbol],
++    [watchedEntryKeys, pairsBySymbol, scopedMarket],
+   )
+ 
+   const hasQuery = searchValue.trim().length > 0
+@@ -116,6 +135,7 @@ export function usePairSearchData(
      showResults,
      recentEntries,
      watchedEntries,
@@ -9549,11 +9653,12 @@ index a390999..e21c883 100644
      hasQuery,
    }
  }
-@@ -124,24 +129,60 @@ export function PairSearchResults({
+@@ -124,24 +144,48 @@ export function PairSearchResults({
    searchValue,
    watchedSymbols,
    onSelect,
 -  maxResults = 20,
++  market,
  }: PairSearchResultsProps) {
    const { t } = useTranslation()
 +  const [filter, setFilter] = useState(ALL_PAIR_RESULTS)
@@ -9563,8 +9668,9 @@ index a390999..e21c883 100644
      recentEntries,
      watchedEntries,
      hasQuery,
+-  } = usePairSearchData(searchValue, watchedSymbols)
 +    catalogEntries,
-   } = usePairSearchData(searchValue, watchedSymbols)
++  } = usePairSearchData(searchValue, watchedSymbols, market)
  
 +  const matchingResults = useMemo(
 +    () => filterPairResults(showResults, filter),
@@ -9595,6 +9701,20 @@ index a390999..e21c883 100644
          <ResultSection label={t('search.results')}>
 -          {showResults.slice(0, maxResults).map((pair) => (
 +          {visibleResults.map((pair) => (
+             <PairResultItem
+-              key={pair.id}
++              key={`${pair.market ?? ''}:${pair.id}`}
+               pair={pair}
+               isWatched={watchedSymbols.has(pair.symbol)}
+               onSelect={onSelect}
+@@ -150,11 +194,35 @@ export function PairSearchResults({
+         </ResultSection>
+       )}
+ 
+-      {!hasQuery && recentEntries.length > 0 && (
++      {browsing && browse.length > 0 && (
++        <ResultSection label="Markets">
++          {browse.map((pair) => (
 +            <PairResultItem
 +              key={`${pair.market ?? ''}:${pair.id}`}
 +              pair={pair}
@@ -9605,20 +9725,6 @@ index a390999..e21c883 100644
 +        </ResultSection>
 +      )}
 +
-+      {browsing && browse.length > 0 && (
-+        <ResultSection label="Markets">
-+          {browse.map((pair) => (
-             <PairResultItem
--              key={pair.id}
-+              key={`${pair.market ?? ''}:${pair.id}`}
-               pair={pair}
-               isWatched={watchedSymbols.has(pair.symbol)}
-               onSelect={onSelect}
-@@ -150,11 +191,22 @@ export function PairSearchResults({
-         </ResultSection>
-       )}
- 
--      {!hasQuery && recentEntries.length > 0 && (
 +      <PairResultMore
 +        remaining={
 +          hasQuery
@@ -9640,7 +9746,7 @@ index a390999..e21c883 100644
                pair={pair}
                isWatched={watchedSymbols.has(pair.symbol)}
                onSelect={onSelect}
-@@ -163,11 +215,11 @@ export function PairSearchResults({
+@@ -163,11 +231,11 @@ export function PairSearchResults({
          </ResultSection>
        )}
  
@@ -9655,7 +9761,7 @@ index a390999..e21c883 100644
                pair={pair}
                isWatched={watchedSymbols.has(pair.symbol)}
                onSelect={onSelect}
-@@ -176,13 +228,15 @@ export function PairSearchResults({
+@@ -176,13 +244,15 @@ export function PairSearchResults({
          </ResultSection>
        )}
  
@@ -9673,7 +9779,7 @@ index a390999..e21c883 100644
          recentEntries.length === 0 &&
          watchedEntries.length === 0 && (
            <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-@@ -283,7 +337,14 @@ const PairResultItem = memo(function PairResultItem({
+@@ -283,7 +353,14 @@ const PairResultItem = memo(function PairResultItem({
        {/* Token rows only. The venue badge is symbol-keyed and has nothing to
            say about a mint, which is exactly the row that needs saying. */}
        <TokenIdentityBadge entry={pair} />
@@ -10361,7 +10467,7 @@ index d9d3262..470c83a 100644
        <ChartToolbar />
        {/* Backstop only: a venue that DECLARES `requiresDesktop` never gets
 diff --git a/apps/terminal/src/components/terminal/chart-symbol-chip.tsx b/apps/terminal/src/components/terminal/chart-symbol-chip.tsx
-index ba7128d..4b58d95 100644
+index ba7128d..4ffe4b9 100644
 --- a/apps/terminal/src/components/terminal/chart-symbol-chip.tsx
 +++ b/apps/terminal/src/components/terminal/chart-symbol-chip.tsx
 @@ -36,6 +36,7 @@ import {
@@ -10372,7 +10478,17 @@ index ba7128d..4b58d95 100644
  import { entryToMarketRef } from '@/lib/market-ref/entry'
  import { PaneContext } from '@/lib/layout/pane-context'
  import { track } from '@/lib/analytics-events'
-@@ -102,7 +103,7 @@ export function ChartSymbolChip() {
+@@ -73,6 +74,9 @@ export function ChartSymbolChip() {
+   const resolved = pane?.resolvedPair ?? null
+   const source = pane?.pairSource ?? null
+   const pinned = source === 'override' || source === 'variable'
++  const venueLabel =
++    markets.find((market) => market.value === resolved?.market)?.label ??
++    resolved?.market
+ 
+   const [selectedMarket, setSelectedMarket] = useState(
+     resolved?.market ?? defaultMarket,
+@@ -102,7 +106,7 @@ export function ChartSymbolChip() {
    )
  
    const handleFollowBoard = useCallback(() => {
@@ -10381,7 +10497,33 @@ index ba7128d..4b58d95 100644
      setOpen(false)
      setSearchValue('')
    }, [pane])
-@@ -222,7 +223,8 @@ export function ChartSymbolChip() {
+@@ -138,6 +142,8 @@ export function ChartSymbolChip() {
+                   // to a bare chevron.
+                   className="flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-xs font-medium outline-hidden select-none hover:bg-muted aria-expanded:bg-muted"
+                   aria-label={t('chart.symbolChip.aria')}
++                  data-chart-source-venue={resolved.market}
++                  data-chart-source-symbol={resolved.pairKey}
+                 />
+               }
+             />
+@@ -159,7 +165,7 @@ export function ChartSymbolChip() {
+             // The one thing a glance has to answer on a four-chart board:
+             // which of these still follows the bar above them.
+             <span className="rounded-[3px] bg-muted px-1 text-[9.5px] leading-[14px] text-muted-foreground">
+-              {t('chart.symbolChip.pinnedBadge')}
++              {t('chart.symbolChip.pinnedBadge')} · {venueLabel}
+             </span>
+           )}
+           <ChevronDown className="size-3 shrink-0 text-muted-foreground/55" />
+@@ -207,6 +213,7 @@ export function ChartSymbolChip() {
+ 
+         <div className="max-h-80 overflow-y-auto py-1">
+           <PairSearchResults
++            market={selectedMarket}
+             searchValue={searchValue}
+             watchedSymbols={watchedSymbols}
+             onSelect={handleSelect}
+@@ -222,7 +229,8 @@ export function ChartSymbolChip() {
                  variable: pane.boundVariableLabel ?? pane.boundVariableName,
                })}
              </p>
@@ -13249,14 +13391,14 @@ index a2db257..9684123 100644
      this.log(bot.id, 'warning', 'guard-blocked', 'Waiting for unlock', detail)
      useBotRunsStore
 diff --git a/apps/terminal/src/lib/chart-terminal-context.tsx b/apps/terminal/src/lib/chart-terminal-context.tsx
-index a445de9..30d91d8 100644
+index a445de9..263f001 100644
 --- a/apps/terminal/src/lib/chart-terminal-context.tsx
 +++ b/apps/terminal/src/lib/chart-terminal-context.tsx
 @@ -4,6 +4,9 @@ import { createContext, useContext, useMemo } from 'react'
  import type { ReactNode } from 'react'
  import type { InstrumentClass } from '@pairlens/shared/market-ref'
  import type { MarketOption } from '@/hooks/use-available-markets'
-+import { isPerpPairKey } from '@/lib/pairs'
++import { paneInstrumentRef } from '@/lib/chart-pane-navigation'
 +import { panePairForVenueSwitch } from '@/lib/pane-venue-target'
 +import { useVenueInstrumentTargets } from '@/hooks/use-venue-instrument-targets'
  import { CompareFeeds } from '@/components/terminal/compare-feeds'
@@ -13286,7 +13428,7 @@ index a445de9..30d91d8 100644
      scope: stateScope,
      marketOverride,
      instrumentClass,
-@@ -427,8 +433,27 @@ export function ChartTerminalAutoProvider({
+@@ -427,8 +433,21 @@ export function ChartTerminalAutoProvider({
  }: {
    children: ReactNode
  }) {
@@ -13294,13 +13436,7 @@ index a445de9..30d91d8 100644
 +  const { activePair, setActivePair } = useActivePair()
    const { markets, defaultMarket } = useAvailableMarkets()
 +  const venueTargets = useVenueInstrumentTargets(
-+    activePair
-+      ? {
-+          cls: isPerpPairKey(activePair.pairKey) ? 'perp' : 'spot',
-+          market: activePair.market,
-+          id: activePair.pairKey,
-+        }
-+      : null,
++    activePair ? paneInstrumentRef(activePair) : null,
 +    markets,
 +  )
 +  const changeVenue = (market: string) => {
@@ -13315,7 +13451,7 @@ index a445de9..30d91d8 100644
  
    if (!activePair || markets.length === 0) {
      return <>{children}</>
-@@ -439,6 +464,8 @@ export function ChartTerminalAutoProvider({
+@@ -439,6 +458,8 @@ export function ChartTerminalAutoProvider({
        pairKey={activePair.pairKey}
        markets={markets}
        defaultMarket={activePair.market ?? defaultMarket}
@@ -15084,40 +15220,37 @@ index eb2c132..8782e9e 100644
    const run = chain.then(async (): Promise<KeepAwakeResult> => {
      if (!isStandalone) {
 diff --git a/apps/terminal/src/lib/layout/pane-context.tsx b/apps/terminal/src/lib/layout/pane-context.tsx
-index 0b03708..d7dd19c 100644
+index 0b03708..4aa6a63 100644
 --- a/apps/terminal/src/lib/layout/pane-context.tsx
 +++ b/apps/terminal/src/lib/layout/pane-context.tsx
-@@ -16,6 +16,10 @@ import {
+@@ -16,6 +16,13 @@ import {
    useOptionalChartConfig,
  } from '@/lib/chart-terminal-context'
  import { useAvailableMarkets } from '@/hooks/use-available-markets'
 +import { useVenueInstrumentTargets } from '@/hooks/use-venue-instrument-targets'
-+import { isPerpPairKey } from '@/lib/pairs'
-+import { paneStreamMarket, writePaneTimeframe } from '@/lib/chart-pane-navigation'
++import {
++  paneInstrumentRef,
++  paneStreamMarket,
++  writePaneTimeframe,
++} from '@/lib/chart-pane-navigation'
 +import { panePairForVenueSwitch } from '@/lib/pane-venue-target'
  
  type ActivePairState = { pairKey: string; market: string }
  
-@@ -194,6 +198,18 @@ export function PaneContextProvider({
+@@ -194,6 +201,12 @@ export function PaneContextProvider({
      [boundVarName, varCtx],
    )
  
 +  const { markets: venueOptions } = useAvailableMarkets()
 +  const venueTargets = useVenueInstrumentTargets(
-+    resolvedPair
-+      ? {
-+          cls: isPerpPairKey(resolvedPair.pairKey) ? 'perp' : 'spot',
-+          market: resolvedPair.market,
-+          id: resolvedPair.pairKey,
-+        }
-+      : null,
++    resolvedPair ? paneInstrumentRef(resolvedPair) : null,
 +    venueOptions,
 +  )
 +
    // A pane holding its own pair holds its own VENUE with it: pair and venue
    // are one instrument, and a pane whose chart kept a separately persisted
    // venue would chart OKX under a `BTC-USDT on Binance` badge. Switching venue
-@@ -202,7 +218,12 @@ export function PaneContextProvider({
+@@ -202,7 +215,12 @@ export function PaneContextProvider({
    const setPaneMarket = useCallback(
      (market: string) => {
        if (!resolvedPair || resolvedPair.market === market) return
@@ -15131,7 +15264,7 @@ index 0b03708..d7dd19c 100644
        if (pairSource === 'variable') setVariableValue(next)
        else if (pairSource === 'override') {
          dispatch({
-@@ -213,9 +234,24 @@ export function PaneContextProvider({
+@@ -213,7 +231,27 @@ export function PaneContextProvider({
          })
        }
      },
@@ -15144,20 +15277,23 @@ index 0b03708..d7dd19c 100644
 +      paneId,
 +      venueTargets,
 +    ],
++  )
++
++  const setPaneTimeframe = useCallback(
++    (timeframe: string) => {
++      writePaneTimeframe(timeframe, {
++        override: timeframeOverride,
++        variable: boundTimeframeVarName,
++        setOverride: (value) => setPaneOverride('active-timeframe', value),
++        setVariable: (name, value) =>
++          varCtx?.store.getState().setVariableValue(name, value),
++      })
++    },
++    [timeframeOverride, boundTimeframeVarName, setPaneOverride, varCtx],
    )
  
-+  const setPaneTimeframe = useCallback((timeframe: string) => {
-+    writePaneTimeframe(timeframe, {
-+      override: timeframeOverride, variable: boundTimeframeVarName,
-+      setOverride: value => setPaneOverride('active-timeframe', value),
-+      setVariable: (name, value) => varCtx?.store.getState().setVariableValue(name, value),
-+    })
-+  }, [timeframeOverride, boundTimeframeVarName, setPaneOverride, varCtx])
-+
    const value = useMemo<PaneContextValue>(
-     () => ({
-       paneId,
-@@ -261,6 +297,7 @@ export function PaneContextProvider({
+@@ -261,6 +299,7 @@ export function PaneContextProvider({
          pairSource={pairSource}
          resolvedTimeframe={resolvedTimeframe}
          onMarketChange={setPaneMarket}
@@ -15165,7 +15301,7 @@ index 0b03708..d7dd19c 100644
        >
          {children}
        </PaneStreamProvider>
-@@ -282,6 +319,7 @@ function PaneStreamProvider({
+@@ -282,6 +321,7 @@ function PaneStreamProvider({
    pairSource,
    resolvedTimeframe,
    onMarketChange,
@@ -15173,7 +15309,7 @@ index 0b03708..d7dd19c 100644
    children,
  }: {
    paneId: string
-@@ -289,6 +327,7 @@ function PaneStreamProvider({
+@@ -289,6 +329,7 @@ function PaneStreamProvider({
    pairSource: 'override' | 'variable' | 'global' | null
    resolvedTimeframe: string | null
    onMarketChange: (market: string) => void
@@ -15181,7 +15317,7 @@ index 0b03708..d7dd19c 100644
    children: ReactNode
  }) {
    // Presence check only — chart config changes on user interaction, unlike
-@@ -320,8 +359,9 @@ function PaneStreamProvider({
+@@ -320,8 +361,9 @@ function PaneStreamProvider({
        markets={markets}
        defaultMarket={resolvedPair.market ?? defaultMarket}
        defaultTimeframe={resolvedTimeframe ?? undefined}

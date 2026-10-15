@@ -238,3 +238,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Compact market groups, Current/History, search and venue filters; diagnostic and empty-provider noise behind disclosure, zero triggers suppressed.
 - [completed] Explicit reviews for native limit amendments/cancellations and workflow pause/stop; saved graph copies open Builder. Lighter total quantity includes fills and unsupported edit types explain limits; uncertain actions never replay.
 - [completed] 4,005 terminal /248 backend /106 Hummingbot Python tests, TypeScript, lint and fingerprinted build pass. Hetzner20261014-6 hosted checks and actual browser Current/History/edit-review/compact layout verified without final live confirmations. Recovered disk-full bridge failure by clearing obsolete generated frontend caches; trading data and rollback releases retained; deployment now requires 512 MiB headroom. Commit/push authorized.
+
+## Chart connector mismatch
+- [completed] Reproduced global search rows being rebound onto native venues; fixed venue-scoped search and explicit pin venue labels. Legacy two-part native pins resolve perpetual catalog targets for recovery.
+- [completed] 4,009 terminal tests, TypeScript, lint and production build pass; Hetzner 20261015-1 deployed and hosted checks pass. Browser verified stale PUFFER pin cleared with Follow the board: binance-futures / PUFFER-USDT-USDT. No trading actions performed.
