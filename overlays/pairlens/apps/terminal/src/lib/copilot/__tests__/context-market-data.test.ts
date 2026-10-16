@@ -1,16 +1,137 @@
+import { fileURLToPath } from 'node:url'
 import { afterEach, expect, test } from 'bun:test'
 import { buildContextTools } from '../context-tools'
+import { buildWorkspaceTools } from '../workspace-tools'
 import type { CopilotToolDeps } from '../tool-deps'
 
 const originalFetch = globalThis.fetch
+const originalStorage = globalThis.localStorage
 afterEach(() => {
   globalThis.fetch = originalFetch
+  if (process.env['QT_JOURNAL_TEST_PROCESS'] === '1')
+    globalThis.localStorage = originalStorage
 })
 const tools = () => buildContextTools({} as CopilotToolDeps)
 async function call(tool: unknown, args: unknown) {
   return (
     tool as { execute: (a: unknown, b: unknown) => Promise<unknown> }
   ).execute(args, { toolCallId: 'test', messages: [] })
+}
+
+// Other suites mock hasAppServer at module scope. Exercise the real standalone
+// API in a fresh process so the build-time flag and journal assertions cannot
+// inherit those unrelated cloud-auth mocks.
+if (process.env['QT_JOURNAL_TEST_PROCESS'] !== '1') {
+  test('standalone journal API and tools pass in an isolated standalone process', () => {
+    const child = Bun.spawnSync(
+      [process.execPath, 'test', fileURLToPath(import.meta.url)],
+      {
+        env: {
+          ...process.env,
+          VITE_APP_SERVER_URL: '',
+          QT_JOURNAL_TEST_PROCESS: '1',
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+        timeout: 15000,
+      },
+    )
+    expect(child.exitCode, new TextDecoder().decode(child.stderr)).toBe(0)
+  }, 20000)
+} else {
+  test('standalone journal is device-only and never calls unavailable cloud API', async () => {
+    const values = new Map<string, string>()
+    globalThis.localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value)
+      },
+    } as Storage
+    let requests = 0
+    globalThis.fetch = (() => {
+      requests++
+      return Promise.resolve(new Response(null, { status: 503 }))
+    }) as typeof fetch
+    const { api } = await import('../../api')
+    const entry = await api.addTradeJournalEntry({
+      market: 'lighter',
+      pairKey: 'GRAM-USDC-USDC',
+      side: 'buy',
+      price: 1.4,
+      quantity: 100,
+    })
+    expect(await call(tools().get_trade_journal, { limit: 50 })).toMatchObject({
+      status: 'available',
+      source: 'device-journal',
+      completeExchangeHistory: false,
+      recordKind: 'manually-logged-trades',
+      entries: [entry],
+      count: 1,
+    })
+    expect(requests).toBe(0)
+  })
+
+  test('journal storage failure is unknown rather than an empty successful history', async () => {
+    globalThis.localStorage = {
+      getItem: () => {
+        throw new Error('blocked')
+      },
+    } as Storage
+    const result = await call(tools().get_trade_journal, { limit: 50 })
+    expect(result).toMatchObject({
+      status: 'unavailable',
+      completeExchangeHistory: false,
+    })
+    expect(result).not.toHaveProperty('entries')
+  })
+
+  test('journal write tool labels saved records device-only without placing orders', async () => {
+    const values = new Map<string, string>()
+    globalThis.localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value)
+      },
+    } as Storage
+    const workspace = buildWorkspaceTools({
+      getContextInfo: () => ({}),
+    } as CopilotToolDeps)
+    expect(
+      await call(workspace.add_journal_entry, {
+        market: 'lighter',
+        pair: 'GRAM-USDC-USDC',
+        side: 'buy',
+        price: 1.4,
+        quantity: 100,
+      }),
+    ).toMatchObject({
+      ok: true,
+      source: 'device-journal',
+      recordKind: 'manually-logged-trades',
+      orderPlaced: false,
+    })
+  })
+
+  test('journal write tool rejects failed persistence without acknowledging a saved entry', async () => {
+    globalThis.localStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('quota')
+      },
+    } as Storage
+    const workspace = buildWorkspaceTools({
+      getContextInfo: () => ({}),
+    } as CopilotToolDeps)
+    const result = await call(workspace.add_journal_entry, {
+      market: 'lighter',
+      pair: 'GRAM-USDC-USDC',
+      side: 'buy',
+      price: 1.4,
+      quantity: 100,
+    })
+    expect(result).toMatchObject({ ok: false })
+    expect(result).not.toHaveProperty('entryId')
+  })
 }
 test('assistant top coins falls back from standalone 503 to actual market-cap feed', async () => {
   globalThis.fetch = ((input: RequestInfo | URL) =>

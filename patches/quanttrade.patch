@@ -10250,7 +10250,7 @@ index 82704db..553dbf3 100644
              </div>
  
 diff --git a/apps/terminal/src/components/settings/cloud-sync-section.tsx b/apps/terminal/src/components/settings/cloud-sync-section.tsx
-index db8d45d..843637f 100644
+index db8d45d..8961a62 100644
 --- a/apps/terminal/src/components/settings/cloud-sync-section.tsx
 +++ b/apps/terminal/src/components/settings/cloud-sync-section.tsx
 @@ -19,7 +19,7 @@ import { useTranslation } from 'react-i18next'
@@ -10262,10 +10262,11 @@ index db8d45d..843637f 100644
  import {
    setCloudSyncEnabled,
    setDomainSyncEnabled,
-@@ -27,6 +27,11 @@ import {
+@@ -27,6 +27,12 @@ import {
  import { useCloudSyncPreferences, useSyncStatus } from '@/hooks/use-cloud-sync'
  import { useOptimisticSession } from '@/lib/session'
  import { track } from '@/lib/analytics-events'
++import { hasAppServer } from '@/lib/auth-client'
 +import {
 +  HOSTED_SYNC_DOMAINS,
 +  hasHostedSync,
@@ -10274,7 +10275,7 @@ index db8d45d..843637f 100644
  
  /**
   * Cloud Sync — what this device is willing to put in the account.
-@@ -55,7 +60,7 @@ export function CloudSyncSection() {
+@@ -55,7 +61,7 @@ export function CloudSyncSection() {
  
    // The nav entry is hidden without an App Server, so the only way to land
    // here with nothing to sync is being signed out.
@@ -10283,7 +10284,7 @@ index db8d45d..843637f 100644
      return (
        <div className="max-w-4xl space-y-5">
          <section className="rounded-xl border border-dashed p-5">
-@@ -96,7 +101,9 @@ export function CloudSyncSection() {
+@@ -96,7 +102,9 @@ export function CloudSyncSection() {
                {t('settings.cloudSync.masterTitle')}
              </h3>
              <p className="mt-1 text-sm text-muted-foreground">
@@ -10294,7 +10295,7 @@ index db8d45d..843637f 100644
              </p>
            </div>
            <Switch checked={master} onCheckedChange={onMasterChange} />
-@@ -107,13 +114,19 @@ export function CloudSyncSection() {
+@@ -107,13 +115,21 @@ export function CloudSyncSection() {
        <section className="rounded-xl border p-4">
          <h3 className="font-medium">{t('settings.cloudSync.title')}</h3>
          <p className="mt-1 text-sm text-muted-foreground">
@@ -10308,31 +10309,35 @@ index db8d45d..843637f 100644
            {SYNC_DOMAINS.map((domain) => {
              const Icon = DOMAIN_ICONS[domain.id]
 -            const on = preferences.domains[domain.id] !== false
++            const deviceJournal = domain.id === 'trades' && !hasAppServer
 +            const supported =
-+              !hasHostedSync || HOSTED_SYNC_DOMAINS.has(domain.id)
++              !deviceJournal &&
++              (!hasHostedSync || HOSTED_SYNC_DOMAINS.has(domain.id))
 +            const on =
 +              supported &&
 +              (preferences.domains[domain.id] ?? syncDomainDefault(domain.id))
              return (
                <div
                  key={domain.id}
-@@ -125,11 +138,13 @@ export function CloudSyncSection() {
+@@ -125,11 +141,15 @@ export function CloudSyncSection() {
                  <div className="min-w-0 flex-1">
                    <p className="text-sm font-medium">{t(domain.labelKey)}</p>
                    <p className="mt-0.5 text-xs text-muted-foreground">
 -                    {t(domain.descriptionKey)}
-+                    {supported
-+                      ? t(domain.descriptionKey)
-+                      : 'Unavailable in this deployment; kept on this device.'}
++                    {deviceJournal
++                      ? 'Manually logged trades are saved on this device only. Journal sync is unavailable; this switch does not control device storage. These records are not exchange fill history or realized profit/loss.'
++                      : supported
++                        ? t(domain.descriptionKey)
++                        : 'Unavailable in this deployment; kept on this device.'}
                    </p>
                    {/* Shown whether the row is on or off: the point is to warn
                      before the switch is flipped, not to explain afterwards. */}
 -                  {domain.cloudOnly ? (
-+                  {domain.cloudOnly && !hasHostedSync ? (
++                  {domain.cloudOnly && !hasHostedSync && hasAppServer ? (
                      <p
                        className={`mt-1.5 flex items-start gap-1.5 text-xs ${
                          !on && master
-@@ -153,7 +168,7 @@ export function CloudSyncSection() {
+@@ -153,7 +173,7 @@ export function CloudSyncSection() {
                  <Switch
                    className="mt-0.5"
                    checked={on}
@@ -10341,7 +10346,7 @@ index db8d45d..843637f 100644
                    onCheckedChange={(next) => onDomainChange(domain.id, next)}
                  />
                </div>
-@@ -162,7 +177,11 @@ export function CloudSyncSection() {
+@@ -162,7 +182,11 @@ export function CloudSyncSection() {
          </div>
  
          <div className="mt-4 space-y-1.5 border-t pt-3 text-xs text-muted-foreground">
@@ -10354,7 +10359,7 @@ index db8d45d..843637f 100644
            <p>{t('settings.cloudSync.nothingDeleted')}</p>
            <p>{t('settings.cloudSync.resumeNote')}</p>
          </div>
-@@ -178,7 +197,9 @@ export function CloudSyncSection() {
+@@ -178,7 +202,9 @@ export function CloudSyncSection() {
   */
  function SyncStatusLine({ paused }: { paused: boolean }) {
    const { t } = useTranslation()
@@ -12930,10 +12935,17 @@ index 5484a85..4f17ead 100644
 +  ).toBe('unavailable')
 +})
 diff --git a/apps/terminal/src/lib/api.ts b/apps/terminal/src/lib/api.ts
-index 39aaa14..cc1ff07 100644
+index 39aaa14..c1aeed0 100644
 --- a/apps/terminal/src/lib/api.ts
 +++ b/apps/terminal/src/lib/api.ts
-@@ -395,14 +395,19 @@ export class EquityFundamentalsUnavailableError extends Error {
+@@ -1,5 +1,6 @@
+ // Copyright (c) 2026 Juan Ignacio Molina Estrada
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
++import { deviceTradeJournal } from './device-trade-journal'
+ import type {
+   TerminalLayout,
+   WorkspaceVariableDefinition,
+@@ -395,14 +396,19 @@ export class EquityFundamentalsUnavailableError extends Error {
    }
  }
  
@@ -12958,7 +12970,7 @@ index 39aaa14..cc1ff07 100644
  
    if (!response.ok) {
      // An App Server built before these routes existed answers 404. Same seam:
-@@ -628,20 +633,22 @@ export const api = {
+@@ -628,20 +634,22 @@ export const api = {
      const suffix = qs.toString() ? `?${qs.toString()}` : ''
      return fetchFundamentals<EarningsCalendarResponse>(
        `/api/earnings-calendar${suffix}`,
@@ -12983,7 +12995,7 @@ index 39aaa14..cc1ff07 100644
      ),
  
    /**
-@@ -652,6 +659,7 @@ export const api = {
+@@ -652,6 +660,7 @@ export const api = {
    getIpoCalendar: (params?: { days?: number }) =>
      fetchFundamentals<IpoCalendarResponse>(
        `/api/ipo-calendar${params?.days ? `?days=${params.days}` : ''}`,
@@ -12991,6 +13003,45 @@ index 39aaa14..cc1ff07 100644
      ),
  
    /**
+@@ -681,8 +690,14 @@ export const api = {
+     pairKey?: string
+     limit?: number
+   }) => {
++    if (!hasAppServer)
++      return Promise.resolve().then(() => deviceTradeJournal.read(params))
+     if (!isDomainSyncEnabled('trades')) {
+-      return Promise.resolve<Array<TradeJournalEntry>>([])
++      return Promise.reject(
++        new SyncDisabledError(
++          'Trade journal sync is switched off in Settings → Cloud Sync; cloud journal records are unavailable.',
++        ),
++      )
+     }
+     const qs = new URLSearchParams()
+     if (params?.market) qs.set('market', params.market)
+@@ -692,10 +707,9 @@ export const api = {
+     return fetchApi<Array<TradeJournalEntry>>(`/api/trade-journal${suffix}`)
+   },
+ 
+-  // The one gated write that throws instead of pretending. The journal has no
+-  // local sink, so a synthesized entry would let the copilot report "logged to
+-  // your journal" for something that exists nowhere; the copilot's tool catches
+-  // this and tells the truth instead.
++  // Standalone writes persist on this device and reject storage failures.
++  // Cloud journal writes remain sync-gated; neither path fabricates a saved
++  // record or treats a manual journal entry as an exchange execution.
+   addTradeJournalEntry: (entry: {
+     market: string
+     pairKey: string
+@@ -705,6 +719,8 @@ export const api = {
+     notes?: string
+     tags?: Array<string>
+   }) => {
++    if (!hasAppServer)
++      return Promise.resolve().then(() => deviceTradeJournal.add(entry))
+     if (!isDomainSyncEnabled('trades')) {
+       return Promise.reject(
+         new SyncDisabledError(
 diff --git a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
 index b93724f..7196259 100644
 --- a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
@@ -13505,15 +13556,16 @@ index 5a3bae1..a37411c 100644
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
 diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
-index b543053..0988a66 100644
+index b543053..2c1b0ce 100644
 --- a/apps/terminal/src/lib/copilot/context-tools.ts
 +++ b/apps/terminal/src/lib/copilot/context-tools.ts
-@@ -2,7 +2,11 @@
+@@ -2,7 +2,12 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
 -import { api } from '../api'
 +import { api, appServerUrl } from '../api'
++import { hasAppServer } from '../auth-client'
 +import {
 +  fetchFearGreedWithFallback,
 +  fetchTopCoinsWithFallback,
@@ -13521,7 +13573,7 @@ index b543053..0988a66 100644
  import type { CopilotToolDeps } from './tool-deps'
  
  // ---------------------------------------------------------------------------
-@@ -64,15 +68,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -64,15 +69,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
        }),
        execute: async ({ limit }) => {
          try {
@@ -13567,7 +13619,7 @@ index b543053..0988a66 100644
            }
          }
        },
-@@ -131,17 +159,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -131,17 +160,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
        inputSchema: z.object({}),
        execute: async () => {
          try {
@@ -13592,6 +13644,42 @@ index b543053..0988a66 100644
 -                ? err.message
 -                : 'Fear & Greed data requires being signed in.',
 +              'Fear & Greed data could not be retrieved. No sentiment reading is available; the failure does not identify an account or credential problem.',
+           }
+         }
+       },
+@@ -176,7 +210,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+ 
+     get_trade_journal: tool({
+       description:
+-        "Read the user's own trade journal — logged trades with side, price, size, notes and tags — to analyze their history and performance.",
++        'Read manually logged trade journal records, with side, price, size, notes and tags. Standalone records are device-only. This is not complete exchange fill history or a realized profit/loss ledger; never infer win rate or trading performance from these records.',
+       inputSchema: z.object({
+         pair: z
+           .string()
+@@ -192,17 +226,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
+           })
+           const buys = entries.filter((e) => e.side === 'buy').length
+           return {
++            status: 'available',
++            source: hasAppServer ? 'cloud-journal' : 'device-journal',
++            recordKind: 'manually-logged-trades',
++            completeExchangeHistory: false,
++            note: 'Manually logged records only. These do not establish exchange fills, realized PnL or win rate.',
+             count: entries.length,
+             summary: { buys, sells: entries.length - buys },
+             entries,
+           }
+         } catch (err) {
+           return {
+-            entries: [],
++            status: 'unavailable',
++            source: hasAppServer ? 'cloud-journal' : 'device-journal',
++            completeExchangeHistory: false,
+             error:
+               err instanceof Error
+                 ? err.message
+-                : 'The trade journal requires being signed in.',
++                : 'The trade journal could not be read; its records are unavailable, not empty.',
            }
          }
        },
@@ -15017,6 +15105,50 @@ index 2f8e01a..82777ec 100644
 +    }),
 +  }
  }
+diff --git a/apps/terminal/src/lib/copilot/workspace-tools.ts b/apps/terminal/src/lib/copilot/workspace-tools.ts
+index b11625d..64ade81 100644
+--- a/apps/terminal/src/lib/copilot/workspace-tools.ts
++++ b/apps/terminal/src/lib/copilot/workspace-tools.ts
+@@ -3,6 +3,7 @@
+ import { tool } from 'ai'
+ import { z } from 'zod'
+ import { api } from '../api'
++import { hasAppServer } from '../auth-client'
+ import { useWatchlistsStore } from '../../stores/watchlists-store'
+ import { useNotificationStore } from '../../stores/notification-store'
+ import { normalizePair, resolveTarget } from './tool-deps'
+@@ -151,7 +152,7 @@ export function buildWorkspaceTools(deps: CopilotToolDeps) {
+     // ---- Trade journal write (transport-executed) ----
+     add_journal_entry: tool({
+       description:
+-        'Log a trade to the user’s trade journal (record-keeping only — this does NOT place an order).',
++        'Save a manually logged trade journal record (device-only in standalone QuantTrade). Record-keeping only: this does NOT place an order, verify a fill, or establish realized PnL.',
+       inputSchema: z.object({
+         pair: z.string().optional(),
+         market: z.string().optional(),
+@@ -173,14 +174,20 @@ export function buildWorkspaceTools(deps: CopilotToolDeps) {
+             notes,
+             tags,
+           })
+-          return { ok: true, entryId: entry.id }
++          return {
++            ok: true,
++            entryId: entry.id,
++            source: hasAppServer ? 'cloud-journal' : 'device-journal',
++            recordKind: 'manually-logged-trades',
++            orderPlaced: false,
++          }
+         } catch (err) {
+           return {
+             ok: false,
+             error:
+               err instanceof Error
+                 ? err.message
+-                : 'Saving a journal entry requires being signed in.',
++                : 'The trade journal entry was not saved.',
+           }
+         }
+       },
 diff --git a/apps/terminal/src/lib/desktop-download.ts b/apps/terminal/src/lib/desktop-download.ts
 index ad51b05..e8cb53b 100644
 --- a/apps/terminal/src/lib/desktop-download.ts

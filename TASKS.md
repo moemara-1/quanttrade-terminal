@@ -247,3 +247,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Reproduced invalid prepare_position_plan numeric/array argument encoding and unknown error classification in the open chat; stopped its repeated generation. Network failures remain a separate unproven cause.
 - [completed] Test-first bounded plan input repair, typed failure diagnostics, truthful network copy, and stop after repeated invalid preparation. Full schema and human approval remain required.
 - [completed] 4,028 terminal tests / 18,222 assertions, TypeScript, lint and source-fingerprinted production build pass. Hetzner 20261016-1 deployed with all hosted checks passing. Live NanoGPT connectivity-only prompt returned OK; the earlier intermittent network failure was not reproduced. No orders, cancellations, credentials or risk settings changed.
+
+## Journal and native spot read failures
+- [completed] Journal called absent Pairlens cloud service; missing spot connector config produced Lighter503. Safely restored only absent spot config from verified matching account/key, preserving perpetual bytes; fresh spot/perp reads200 complete (0/2 orders), no trading mutations.
+- [completed] Device-only journal reads/writes persist with validated records and reject corruption/storage failures; tools disclose manual-only coverage, never empty-on-failure or exchange PnL. 4,034 terminal tests and 2 migration regressions pass.
+- [completed] Final TypeScript/lint and fingerprinted build pass. Hetzner 20261016-2 and all hosted checks pass, including both complete native order scopes. Actual assistant get_trade_journal returned available/device-journal/count0/completeExchangeHistory:false. No orders or journal entries added/cancelled.
