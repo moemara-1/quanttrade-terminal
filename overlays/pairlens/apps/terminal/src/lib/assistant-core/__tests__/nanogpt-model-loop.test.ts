@@ -12,6 +12,50 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
+test('server-backed assistant requests are explicit opt-in and preserve SDK streaming', async () => {
+  expect(nanogptInferenceManifest.config.serverBacked?.default).toBe(false)
+  const plugin = createNanogptInferencePlugin(nanogptInferenceManifest)
+  await plugin.initialize?.({
+    apiKey: 'offline-server-key',
+    model: 'fixture',
+    serverBacked: true,
+  })
+  let starts = 0
+  globalThis.fetch = Object.assign(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url)
+      expect(path.startsWith('/_quanttrade/api/ai/nanogpt/jobs')).toBe(true)
+      expect(init?.credentials).toBe('same-origin')
+      if (init?.method === 'POST') {
+        starts++
+        const body = JSON.parse(String(init.body))
+        expect(body.apiKey).toBe('offline-server-key')
+        expect(body.request.model).toBe('fixture')
+        return Response.json({ id: body.requestId }, { status: 201 })
+      }
+      return new Response(
+        'data: {"id":"fixture","choices":[{"delta":{"content":"Resumed."},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n',
+        {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-quanttrade-ai-upstream': '1',
+          },
+        },
+      )
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  const model = await plugin.getLanguageModel?.()
+  expect(
+    await streamText({
+      model: model as LanguageModel,
+      prompt: 'test',
+      maxRetries: 0,
+    }).text,
+  ).toBe('Resumed.')
+  expect(starts).toBe(1)
+})
+
 test.each(['reasoning', 'reasoning_content'])(
   'NanoGPT DeepSeek thinking streams %s and preserves it on the tool followup',
   async (reasoningField) => {

@@ -1,0 +1,10 @@
+# Background assistant requests
+
+User requests reliable LLM use when changing tabs. Current model/tool loop runs in the browser; no intentional hide cancellation was found. Closing or freezing a page cannot be made equivalent to an autonomous server agent by removing a visibility handler.
+
+Implement an opt-in NanoGPT server response relay. Each model step has one UUID-scoped, authenticated job. Hetzner owns the upstream response and buffers bounded raw bytes independently of downstream disconnect. Browser reads resume using exact delivered-byte offsets; never restart a provider job or repeat a tool. Explicit Stop cancels that job. Jobs are memory-only with ten-minute execution/retention limits; server restart loses unfinished jobs. Existing approval requirements are unchanged.
+
+Privacy: existing direct requests remain default. Plugin exposes an explicit server-backed setting explaining that the NanoGPT key and chat go to the user's QuantTrade server. Key is used in memory only and never logged/persisted; the user's browser-only tools still need an active execution context and wait while it is fully frozen. This is resilient inference transport, not a claim that chart tools run on Hetzner or that the entire agent continues after closing the browser.
+
+Verification: injected provider tests for independent upstream ownership, exact UTF-8 byte offsets, authorization, abort, limits, uncertain-start idempotency, safe errors, and no replay; SDK integration; existing tests/type/lint/build; hosted auth and unavailable-job checks without provider secrets; actual live server mode only after explicit user opt-in.
+Hetzner20261016-4 deployed with authentication checks passing. Nginx request buffering is explicitly disabled with HTTP1.1 upstream and a bounded memory body buffer, so inference request bodies do not spill to proxy temporary files. Inference polling uses a separate rate budget from trading controls. Existing connections stay in direct mode until the user enables the labelled opt-in setting.

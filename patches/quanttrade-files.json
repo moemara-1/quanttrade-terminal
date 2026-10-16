@@ -121,6 +121,8 @@
   "packages/plugins/src/nanogpt-inference/index.ts",
   "packages/plugins/src/nanogpt-inference/network-recovery.test.ts",
   "packages/plugins/src/nanogpt-inference/network-recovery.ts",
+  "packages/plugins/src/nanogpt-inference/server-fetch.test.ts",
+  "packages/plugins/src/nanogpt-inference/server-fetch.ts",
   "packages/plugins/src/nanogpt-inference/tools.test.ts",
   "packages/plugins/src/nanogpt-inference/tools.ts"
 ]

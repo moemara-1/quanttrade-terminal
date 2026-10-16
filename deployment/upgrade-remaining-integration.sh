@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 previous=$(readlink -f /opt/quanttrade/current)
-release=/opt/quanttrade/releases/20261016-3
-[[ "$previous" == /opt/quanttrade/releases/20261016-2 ]]
+release=/opt/quanttrade/releases/20261016-4
+[[ "$previous" == /opt/quanttrade/releases/20261016-3 ]]
 available_kb=$(df -Pk /opt/quanttrade | awk 'NR==2 {print $4}')
 if (( available_kb < 524288 )); then
     printf 'Deployment blocked: at least 512 MiB free disk space is required. Clear obsolete build caches first.\n' >&2
@@ -72,6 +72,7 @@ python3 deployment/verify-chart-connector.py
 python3 deployment/verify-llm-errors.py
 python3 deployment/verify-journal-spot.py
 python3 deployment/verify-equity-news.py
+python3 deployment/verify-background-ai.py
 if [[ -n "$cap_env_backup" ]]; then python3 deployment/verify-notional-limits-off.py; fi
 curl -fsS https://quanttrade.azurestore.shop/version.json | cmp - frontend/version.json
 trap - ERR

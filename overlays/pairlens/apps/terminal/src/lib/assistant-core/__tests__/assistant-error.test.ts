@@ -4,6 +4,27 @@ import {
   encodeAssistantError,
 } from '../assistant-error'
 
+test.each([
+  [401, 'session', 'Sign in to QuantTrade'],
+  [403, 'session', 'Sign in to QuantTrade'],
+  [404, 'response-expired', 'expired'],
+  [429, 'server-capacity', 'QuantTrade server'],
+] as const)(
+  'server relay HTTP %s is not a provider key/model failure',
+  (statusCode, code, message) => {
+    const error = {
+      name: 'NanoGPTServerError',
+      statusCode,
+      message: 'private secret',
+    }
+    const described = describeAssistantError(error, 'nanogpt-inference')
+    expect(described.code).toBe(code)
+    expect(described.message).toContain(message)
+    expect(described.message).not.toContain('private secret')
+    expect(describeAssistantError(encodeAssistantError(error)).code).toBe(code)
+  },
+)
+
 test('missing hosted inference directs the user to a connected provider', () => {
   expect(
     describeAssistantError(

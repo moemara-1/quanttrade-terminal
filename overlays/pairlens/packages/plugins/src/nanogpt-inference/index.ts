@@ -4,6 +4,7 @@ import { loadOpenAiCompatible } from '../lib/ai-sdk-lazy'
 import { streamOpenAiCompatible } from '../lib/inference-sse'
 import { executeNanogptTool, nanogptWebSearch } from './tools'
 import { fetchNanogptWithRecovery } from './network-recovery'
+import { fetchNanogptOnServer } from './server-fetch'
 import type { InferenceMessage } from '@pairlens/shared/plugin-types'
 import type {
   PluginExecuteParams,
@@ -54,6 +55,13 @@ export const nanogptInferenceManifest: PluginManifest = {
       label: 'Model ID from the NanoGPT model catalog',
       required: false,
       default: DEFAULT_MODEL,
+    },
+    serverBacked: {
+      type: 'boolean',
+      label:
+        'Keep assistant responses on the QuantTrade server (sends your NanoGPT key and chat there; key is not saved)',
+      required: false,
+      default: false,
     },
   },
 }
@@ -179,6 +187,10 @@ export function createNanogptInferencePlugin(
   // The user-selected model serves both purposes.
   async function getLanguageModel(): Promise<unknown> {
     const createOpenAICompatible = await loadOpenAiCompatible()
+    const modelFetch =
+      config['serverBacked'] === true
+        ? fetchNanogptOnServer
+        : fetchNanogptWithRecovery
     return createOpenAICompatible({
       name: 'nanogpt',
       baseURL: NANOGPT_BASE_URL,
@@ -212,13 +224,13 @@ export function createNanogptInferencePlugin(
                       : '',
               }
             })
-            return fetchNanogptWithRecovery(url, {
+            return modelFetch(url, {
               ...init,
               body: JSON.stringify(body),
             })
           }
         }
-        return fetchNanogptWithRecovery(url, init)
+        return modelFetch(url, init)
       },
     }).chatModel(configuredModel())
   }

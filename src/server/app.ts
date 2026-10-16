@@ -18,8 +18,10 @@ import type { LighterNativeOrders } from './lighter-native-orders.ts';
 import type { HyperliquidNativeTwap } from './hyperliquid-native-twap.ts';
 import type { ChasePlans } from './chase-plans.ts';
 import type { AdvancedProtection } from './advanced-protection.ts';
+import {NanoGptJobs,NanoGptJobError} from './nanogpt-jobs.ts';
 
 interface Services {
+  nanogptJobs?:NanoGptJobs;
   advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
@@ -54,7 +56,8 @@ export function createApp(services: Services) {
   const app=express();
   const settings=services.webSession;
   const hostedAuth=settings?new HostedAuth({sessionFile:settings.sessionFile??':memory:',...(settings.credentials?{credentials:settings.credentials}:settings.loginFile?{credentials:()=>readWebCredentials(settings.loginFile!)}:{})}):undefined;
-  app.locals.hostedAuthClose=()=>hostedAuth?.close();
+  const nanogptJobs=services.nanogptJobs??new NanoGptJobs();
+  app.locals.hostedAuthClose=()=>{hostedAuth?.close();nanogptJobs.close();};
   const cookieName='qt_operator';
   if (services.webSession && (!allowedOrigins.has(services.webSession.origin) || !services.webSession.origin.startsWith('https://') || services.webSession.proxySecret.length<32)) throw new Error('Hosted sessions require an allowed HTTPS origin and a strong proxy secret');
   app.disable('x-powered-by');
@@ -146,12 +149,37 @@ export function createApp(services: Services) {
     if (!role) {res.status(401).json({error:services.webSession&&!header?'Your QuantTrade session has expired. Sign in to reconnect your exchange.':'Enter the operator token from data/operator-token to unlock the desk.'});return;}
     if (cookieAuthenticated && !['GET','HEAD'].includes(req.method) && req.get('Origin')!==services.webSession?.origin) {res.status(403).json({error:'Operator actions require the terminal origin'});return;}
     res.locals.role=role;
-    const now=Date.now(); let window=windows.get(role);
-    if (!window || now-window.start>=60_000) {window={start:now,count:0};windows.set(role,window);}
+    res.locals.aiOwner=createHash('sha256').update(cookieAuthenticated?cookie:token).digest('hex');
+    // Background inference polling cannot exhaust the trading control budget.
+    const rateKey=req.path.startsWith('/ai/nanogpt/')?`${role}:ai`:role;
+    const now=Date.now(); let window=windows.get(rateKey);
+    if (!window || now-window.start>=60_000) {window={start:now,count:0};windows.set(rateKey,window);}
     if (++window.count>240) {res.status(429).json({error:'Too many requests; wait a minute.'});return;}
     if (req.method==='POST' && !req.is('application/json')) {res.status(415).json({error:'Use application/json'});return;}
     next();
   });
+  const inferenceOperator:RequestHandler=(_req,res,next)=>{if(res.locals.role!=='operator'){res.status(403).json({error:'Inference requires the operator session'});return;}next();};
+  const inferenceFailure=(res:express.Response,error:unknown)=>res.status(error instanceof NanoGptJobError?error.status:400).json({error:error instanceof NanoGptJobError?error.message:'Invalid inference request'});
+  app.post('/api/ai/nanogpt/jobs',inferenceOperator,express.json({limit:'2mb'}),(req,res)=>{
+    try{res.status(201).json({id:nanogptJobs.start(String(res.locals.aiOwner),req.body)});}catch(error){inferenceFailure(res,error);}
+  });
+  app.get('/api/ai/nanogpt/jobs/:id',inferenceOperator,async(req,res)=>{
+    let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+    const disconnect=()=>{void reader?.cancel().catch(()=>undefined);};res.once('close',disconnect);
+    try{
+      const raw=req.query.offset??'0';if(typeof raw!=='string'||!/^\d+$/.test(raw))throw new NanoGptJobError(400,'Invalid inference response offset');
+      const response=nanogptJobs.read(String(res.locals.aiOwner),String(req.params.id),Number(raw));
+      if(!response){res.set('Retry-After','1').status(202).end();return;}
+      res.status(response.status).set('Content-Type',response.headers.get('Content-Type')??'application/octet-stream');
+      if(response.headers.has('X-QuantTrade-AI-Upstream'))res.set('X-QuantTrade-AI-Upstream','1');
+      res.flushHeaders();reader=response.body?.getReader();
+      if(reader)while(!res.destroyed){const chunk=await reader.read();if(chunk.done)break;if(!res.write(chunk.value))await new Promise<void>(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});}
+      res.end();
+    }catch(error){if(res.headersSent)res.destroy();else inferenceFailure(res,error);}
+    finally{res.off('close',disconnect);reader?.releaseLock();}
+  });
+  app.delete('/api/ai/nanogpt/jobs/:id',inferenceOperator,(req,res)=>{try{nanogptJobs.cancel(String(res.locals.aiOwner),String(req.params.id));res.status(204).end();}catch(error){inferenceFailure(res,error);}});
+  app.use('/api/ai/nanogpt',((error:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{res.status(typeof error==='object'&&error!==null&&'status' in error&&error.status===413?413:400).json({error:'Invalid inference request'});}) satisfies ErrorRequestHandler);
   app.use('/api/sync-state',express.json({limit:'512kb'}));
   app.use(express.json({limit:'32kb'}));
   const operator: RequestHandler=(_req,res,next)=>{

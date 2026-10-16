@@ -17201,7 +17201,7 @@ index 59e82f9..20af9e1 100644
    },
    "nftChains": {
 diff --git a/apps/terminal/src/locales/en/translation.json b/apps/terminal/src/locales/en/translation.json
-index c6d9f6b..9822606 100644
+index c6d9f6b..ee41c7d 100644
 --- a/apps/terminal/src/locales/en/translation.json
 +++ b/apps/terminal/src/locales/en/translation.json
 @@ -8,17 +8,17 @@
@@ -18014,7 +18014,14 @@ index c6d9f6b..9822606 100644
      "upgradeRequired": "Upgrade required",
      "upgradeDescriptionLevel": "This feature requires <b>{{level}}</b> access level.",
      "upgradeDescriptionGeneric": "This feature requires a higher access level.",
-@@ -4850,7 +4864,7 @@
+@@ -4844,13 +4858,13 @@
+   },
+   "aiProviders": {
+     "title": "Set up your own AI",
+-    "description": "Connect a key you already have. Every request goes straight from this device to the provider you pick.",
++    "description": "Connect a key you already have. Requests go directly to your provider unless you enable NanoGPT’s server-backed assistant mode.",
+     "useOwnKey": "Set up your own AI",
+     "connect": "Connect",
      "connected": "Connected",
      "connectedToast": "{{provider}} connected. AI is ready.",
      "getKey": "Get a key",

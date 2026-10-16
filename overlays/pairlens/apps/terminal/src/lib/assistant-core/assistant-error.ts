@@ -12,6 +12,9 @@ export type AssistantErrorCode =
   | 'model'
   | 'rate-limit'
   | 'network'
+  | 'session'
+  | 'response-expired'
+  | 'server-capacity'
   | 'timeout'
   | 'tool-input'
   | 'tools'
@@ -69,6 +72,28 @@ export function describeAssistantError(
       ? { status }
       : {}),
   })
+  const serverRelay = names.includes('NanoGPTServerError')
+  if (
+    encoded === 'session' ||
+    (serverRelay && (status === 401 || status === 403))
+  ) {
+    return result(
+      'session',
+      'Sign in to QuantTrade to reconnect the server-backed assistant. Earlier tool actions may have completed; check order and run status before repeating a trade request.',
+    )
+  }
+  if (encoded === 'response-expired' || (serverRelay && status === 404)) {
+    return result(
+      'response-expired',
+      'The saved assistant response expired or the QuantTrade server restarted. No request was replayed. Check order and run status before starting a fresh trade request.',
+    )
+  }
+  if (encoded === 'server-capacity' || (serverRelay && status === 429)) {
+    return result(
+      'server-capacity',
+      'The QuantTrade server has reached its assistant request limit. Wait for an active response to finish before sending another request.',
+    )
+  }
   if (encoded === 'tool-input' || names.includes('AI_InvalidToolInputError')) {
     return result(
       'tool-input',

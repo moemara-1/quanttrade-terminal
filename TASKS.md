@@ -261,3 +261,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## NanoGPT network recovery
 - [completed] Existing error and raw Chrome Failed to fetch confirmed. Current outage did not recur: fresh text and tool/follow-up calls succeeded. Found cause-less Chrome TypeError bypassing SDK retries; intermittent underlying network cause remains unproven.
 - [completed] Added one abort-aware startup retry only; HTTP/SDK errors unchanged, response-stream interruptions never replay. 22 plugin tests/57 assertions, native TypeScript/lint and fingerprinted build pass. Deployed20261016-3; actual NanoGPT journal read and final response succeeded after reload. No trading or credential changes.
+
+## Assistant background tab continuity
+- [completed] Confirmed browser-owned model/tool loop with no stream recovery and no deliberate hide cancellation. Ordinary tab-switch failure remains unreproduced; component unmount can abort chats. Server response ownership chosen with explicit opt-in, not a claim of a fully autonomous server agent.
+- [completed] Opt-in NanoGPT server jobs retain bounded bytes through disconnect, resume exact offsets and never restart accepted work; explicit Stop cancels. Separate inference quota protects trading controls. 4,042 terminal /262 backend /42 provider+SDK tests, terminal/backend TypeScript, focused lint and fingerprinted build pass. Hetzner20261016-4 and hosted authorization/no-proxy-temp-body checks pass; keys never logged or intentionally persisted.
+- [pending] Enable existing NanoGPT server-backed setting and perform a real provider test only after user authorizes sending key/chat to Hetzner. Current direct mode and all trading settings remain unchanged.
