@@ -242,3 +242,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Chart connector mismatch
 - [completed] Reproduced global search rows being rebound onto native venues; fixed venue-scoped search and explicit pin venue labels. Legacy two-part native pins resolve perpetual catalog targets for recovery.
 - [completed] 4,009 terminal tests, TypeScript, lint and production build pass; Hetzner 20261015-1 deployed and hosted checks pass. Browser verified stale PUFFER pin cleared with Follow the board: binance-futures / PUFFER-USDT-USDT. No trading actions performed.
+
+## LLM failure audit
+- [completed] Reproduced invalid prepare_position_plan numeric/array argument encoding and unknown error classification in the open chat; stopped its repeated generation. Network failures remain a separate unproven cause.
+- [completed] Test-first bounded plan input repair, typed failure diagnostics, truthful network copy, and stop after repeated invalid preparation. Full schema and human approval remain required.
+- [completed] 4,028 terminal tests / 18,222 assertions, TypeScript, lint and source-fingerprinted production build pass. Hetzner 20261016-1 deployed with all hosted checks passing. Live NanoGPT connectivity-only prompt returned OK; the earlier intermittent network failure was not reproduced. No orders, cancellations, credentials or risk settings changed.

@@ -33,6 +33,13 @@ index bf71570..d183cdc 100644
      "@ai-sdk/react": "^3.0.106",
      "@base-ui/react": "^1.2.0",
      "@codemirror/autocomplete": "^6.20.3",
+diff --git a/apps/terminal/public/_sdk/plugin-sdk.js b/apps/terminal/public/_sdk/plugin-sdk.js
+index f01831f..af58eec 100644
+--- a/apps/terminal/public/_sdk/plugin-sdk.js
++++ b/apps/terminal/public/_sdk/plugin-sdk.js
+@@ -1 +1 @@
+-import{createContext as I}from"react";var D=I(null);import{useContext as M}from"react";function r(){let n=M(D);if(!n)throw Error("usePluginHost must be used within a PluginHostContext.Provider. This usually means the component is not rendered inside a terminal pane.");return n}function Q(){return r().pair}function C(){return r().wallet}import{useCallback as H,useEffect as F,useRef as U,useState as A}from"react";function J(n,i){let o=r(),[u,P]=A(void 0),[m,y]=A(!0),[a,c]=A(null),T=U(i);T.current=i;let f=H(async()=>{y(!0),c(null);try{let t=await o.executeCapability(n,T.current);P(t)}catch(t){c(t instanceof Error?t:Error(String(t)))}finally{y(!1)}},[o,n]);return F(()=>{f()},[f]),{data:u,isLoading:m,error:a,refetch:f}}import{useEffect as X,useRef as E,useState as g}from"react";function q(n,i,o){let u=r(),[P,m]=g("disconnected"),y=E(o);y.current=o;let a=E(i);return a.current=i,X(()=>{m("connected");let c;try{c=u.subscribeCapability(n,a.current,(T)=>y.current(T))}catch{m("error")}return()=>{c?.(),m("disconnected")}},[u,n]),{status:P}}function O(){let n=r();return{isAuthenticated:n.isAuthenticated,tier:n.userTier,getAccessLevel:n.getAccessLevel}}function R(){return r().navigate}function b(){return r().notify}function x(){return r().config}import{useCallback as N,useRef as K,useSyncExternalStore as W}from"react";var L=new Map;function $(n){let i=L.get(n);if(i)for(let o of i)o()}function G(n,i){let o=r(),u=`plugin:${o.pluginId}:${n}`,P=K(i),m=W((a)=>{let c=L.get(u);if(!c)c=new Set,L.set(u,c);c.add(a);let T=(f)=>{if(f.key===u)a()};return window.addEventListener("storage",T),()=>{if(c.delete(a),c.size===0)L.delete(u);window.removeEventListener("storage",T)}},()=>o.getStorage(n,P.current)),y=N((a)=>{o.setStorage(n,a),$(u)},[o,n,u]);return[m,y]}import{useQuery as Y}from"@tanstack/react-query";function Z(n){let i=r();return Y({...n,queryKey:[`plugin:${i.pluginId}`,...n.queryKey]})}import{useInfiniteQuery as _}from"@tanstack/react-query";function j(n){let i=r();return _({...n,queryKey:[`plugin:${i.pluginId}`,...n.queryKey]})}import{useMutation as z}from"@tanstack/react-query";function B(n){return z(n)}import{useCallback as V,useRef as p}from"react";function v(){let n=r(),i=String(n.config.appServerUrl??""),o=p(n.config.authToken);return o.current=n.config.authToken,V(async(u,P)=>{let m={...P?.headers},y=o.current;if(typeof y==="function")m.Authorization=`Bearer ${await y()}`;let a=(P?.method??"GET").toUpperCase();if(a!=="GET"&&a!=="HEAD")m["Content-Type"]??="application/json";return fetch(`${i}${u}`,{...P,headers:m})},[i])}function S(){let n=r();return{register:(i,o)=>n.registerService(i,o)}}import{useSyncExternalStore as w}from"react";function s(n){let i=r();return w((o)=>i.onServiceChange(n,o),()=>i.getService(n))}function h(n,i){if(n==="inherit")return i;if(n==="opposite")return i==="buy"?"sell":"buy";return n}function k(n,i,o){if(n==="absolute")return String(i);let u=parseFloat(o);if(!Number.isFinite(u)||u<=0)return"0";return String(u*(i/100))}function d(n,i,o){switch(n){case"absolute":return i;case"offset-percent":return o*(1+i/100);case"offset-absolute":return o+i}}export{S as useServiceRegistry,G as usePluginStorage,s as usePluginService,Z as usePluginQuery,R as usePluginNavigate,B as usePluginMutation,j as usePluginInfiniteQuery,r as usePluginHost,v as usePluginFetch,x as usePluginConfig,C as usePaneWallet,Q as usePanePair,b as useNotify,q as useCapabilityStream,J as useCapability,O as useAuth,k as resolveSize,h as resolveSide,d as resolvePrice,D as PluginHostContext};
++import{createContext as I}from"react";var D=I(null);import{useContext as M}from"react";function o(){let n=M(D);if(!n)throw Error("usePluginHost must be used within a PluginHostContext.Provider. This usually means the component is not rendered inside a terminal pane.");return n}function Q(){return o().pair}function C(){return o().wallet}import{useCallback as F,useEffect as H,useRef as U,useState as A}from"react";function J(n,i){let r=o(),[u,a]=A(void 0),[y,P]=A(!0),[m,c]=A(null),T=U(i);T.current=i;let f=F(async()=>{P(!0),c(null);try{let t=await r.executeCapability(n,T.current);a(t)}catch(t){c(t instanceof Error?t:Error(String(t)))}finally{P(!1)}},[r,n]);return H(()=>{f()},[f]),{data:u,isLoading:y,error:m,refetch:f}}import{useEffect as X,useRef as E,useState as g}from"react";function O(n,i,r){let u=o(),[a,y]=g("disconnected"),P=E(r);P.current=r;let m=E(i);return m.current=i,X(()=>{y("connected");let c;try{c=u.subscribeCapability(n,m.current,(T)=>P.current(T))}catch{y("error")}return()=>{c?.(),y("disconnected")}},[u,n]),{status:a}}function q(){let n=o();return{isAuthenticated:n.isAuthenticated,tier:n.userTier,getAccessLevel:n.getAccessLevel}}function R(){return o().navigate}function b(){return o().notify}function x(){return o().config}import{useCallback as N,useRef as K,useSyncExternalStore as W}from"react";var L=new Map;function $(n){let i=L.get(n);if(i)for(let r of i)r()}function G(n,i){let r=o(),u=`plugin:${r.pluginId}:${n}`,a=K(i),y=W((m)=>{let c=L.get(u);if(!c)c=new Set,L.set(u,c);c.add(m);let T=(f)=>{if(f.key===u)m()};return window.addEventListener("storage",T),()=>{if(c.delete(m),c.size===0)L.delete(u);window.removeEventListener("storage",T)}},()=>r.getStorage(n,a.current)),P=N((m)=>{r.setStorage(n,m),$(u)},[r,n,u]);return[y,P]}import{useQuery as Y}from"@tanstack/react-query";function Z(n){let i=o();return Y({...n,queryKey:[`plugin:${i.pluginId}`,...n.queryKey]})}import{useInfiniteQuery as _}from"@tanstack/react-query";function j(n){let i=o();return _({...n,queryKey:[`plugin:${i.pluginId}`,...n.queryKey]})}import{useMutation as z}from"@tanstack/react-query";function B(n){return z(n)}import{useCallback as V,useRef as p}from"react";async function v(n,i){let r=new Headers(n?.headers);if(typeof i==="function"){let a=await i();if(typeof a==="string"&&a.trim())r.set("Authorization",`Bearer ${a}`)}let u=(n?.method??"GET").toUpperCase();if(u!=="GET"&&u!=="HEAD"&&!r.has("Content-Type"))r.set("Content-Type","application/json");return r}function S(){let n=o(),i=String(n.config.appServerUrl??""),r=p(n.config.authToken);return r.current=n.config.authToken,V(async(u,a)=>{let y=await v(a,r.current);return fetch(`${i}${u}`,{...a,headers:y})},[i])}function w(){let n=o();return{register:(i,r)=>n.registerService(i,r)}}import{useSyncExternalStore as s}from"react";function h(n){let i=o();return s((r)=>i.onServiceChange(n,r),()=>i.getService(n))}function k(n,i){if(n==="inherit")return i;if(n==="opposite")return i==="buy"?"sell":"buy";return n}function d(n,i,r){if(n==="absolute")return String(i);let u=parseFloat(r);if(!Number.isFinite(u)||u<=0)return"0";return String(u*(i/100))}function l(n,i,r){switch(n){case"absolute":return i;case"offset-percent":return r*(1+i/100);case"offset-absolute":return r+i}}export{w as useServiceRegistry,G as usePluginStorage,h as usePluginService,Z as usePluginQuery,R as usePluginNavigate,B as usePluginMutation,j as usePluginInfiniteQuery,o as usePluginHost,S as usePluginFetch,x as usePluginConfig,C as usePaneWallet,Q as usePanePair,b as useNotify,O as useCapabilityStream,J as useCapability,q as useAuth,d as resolveSize,k as resolveSide,l as resolvePrice,D as PluginHostContext};
 diff --git a/apps/terminal/public/apple-touch-icon.png b/apps/terminal/public/apple-touch-icon.png
 index 611181e243465e294d865adfa772ab185a90e1d3..8234836a89f19478eacb52e643228b2f947753d4 100644
 GIT binary patch
@@ -13061,10 +13068,18 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..d090ea6 100644
+index ce0d317..3cfe681 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -60,6 +60,9 @@ const CAPABILITIES = [
+@@ -46,6 +46,7 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
+ }
+ 
+ const CAPABILITIES = [
++  'Send tool arguments as typed JSON: numeric schema fields are numbers, arrays are arrays, and exact decimal-string prices and quantities stay strings. Do not speculate about XML, harness internals or alternate tool syntax. If a tool rejects arguments, use its validation feedback to correct it once; if it fails again, explain the blocker concisely and stop. Never change the execution path or omit requested protection to bypass validation. Do not claim a failed preparation created an order.',
+   'Markets: pull candles, tickers, order books, the live trade tape, signals, multi-timeframe reads and comparisons for ANY instrument on ANY connected venue. You are never limited to what is on screen. Search instruments you do not know the id of, and open any of them with open_instrument.',
+   'Prediction markets: read a whole event with get_prediction_event (every outcome, its probability, bid, ask and 24h move, plus what the whole field costs) and find one with search_prediction_events. A prediction price lives on the event, so these are the only tools that can see one: candles and order books address a single outcome. Never say you cannot see the prices on a prediction board without calling get_prediction_event first.',
+   'Perps and equities: funding, open interest and liquidation clusters for perpetuals; the trading session, calendars, fundamentals and insider filings for stocks.',
+@@ -60,6 +61,9 @@ const CAPABILITIES = [
  ]
  
  const WORKING_RULES = [
@@ -13074,7 +13089,7 @@ index ce0d317..d090ea6 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +76,22 @@ const WORKING_RULES = [
+@@ -73,8 +77,22 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -13099,7 +13114,7 @@ index ce0d317..d090ea6 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +111,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +112,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13109,19 +13124,23 @@ index ce0d317..d090ea6 100644
      `Today's date: ${today} (UTC).`,
      '',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..009e4ee 100644
+index 26e075b..6bd1e3f 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -14,6 +14,8 @@
+@@ -14,6 +14,12 @@
  import { convertToModelMessages, stepCountIs, streamText } from 'ai'
  
  import { buildAssistantSystemPrompt } from './assistant-brain'
 +import { encodeAssistantError } from './assistant-error'
-+import { tradePreparationReady } from './trade-preparation-stop'
++import {
++  repeatedPreparationFailure,
++  tradePreparationReady,
++} from './trade-preparation-stop'
++import { repairPositionPlanToolCall } from './tool-input-repair'
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -36,6 +38,7 @@ import type {
+@@ -36,6 +42,7 @@ import type {
    UIMessage,
    UIMessageChunk,
  } from 'ai'
@@ -13129,7 +13148,7 @@ index 26e075b..009e4ee 100644
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -101,7 +104,10 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -101,10 +108,14 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
          venues: deps
            .getMarketData()
            ?.availableMarkets.map((market) => market.marketId),
@@ -13141,16 +13160,24 @@ index 26e075b..009e4ee 100644
        }),
        messages: await convertToModelMessages(options.messages),
        tools,
-@@ -114,7 +120,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
++      experimental_repairToolCall: repairPositionPlanToolCall,
+       // Re-read per step: a navigation in step 2 should put the chart
+       // tools back on the table for step 3.
+       prepareStep: () => ({
+@@ -114,7 +125,11 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
            CHART_TOOLS,
          ),
        }),
 -      stopWhen: stepCountIs(MAX_STEPS),
-+      stopWhen: [stepCountIs(MAX_STEPS), tradePreparationReady],
++      stopWhen: [
++        stepCountIs(MAX_STEPS),
++        tradePreparationReady,
++        repeatedPreparationFailure,
++      ],
        onStepFinish: (step) => {
          for (const call of step.toolCalls) {
            track('assistant_tool_used', { tool: call.toolName })
-@@ -124,8 +130,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -124,8 +139,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
      })
  
      return result.toUIMessageStream({

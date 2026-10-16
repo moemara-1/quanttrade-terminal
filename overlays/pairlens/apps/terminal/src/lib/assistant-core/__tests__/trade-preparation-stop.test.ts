@@ -2,7 +2,31 @@ import { expect, test } from 'bun:test'
 import { streamText, tool } from 'ai'
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test'
 import { z } from 'zod'
-import { tradePreparationReady } from '../trade-preparation-stop'
+import {
+  repeatedPreparationFailure,
+  tradePreparationReady,
+} from '../trade-preparation-stop'
+
+test('bounds repeated invalid preparation calls without blocking one correction', () => {
+  const failed = {
+    toolCalls: [{ toolName: 'prepare_position_plan', invalid: true }],
+  }
+  expect(repeatedPreparationFailure({ steps: [failed] })).toBe(false)
+  expect(repeatedPreparationFailure({ steps: [failed, failed] })).toBe(true)
+  expect(
+    repeatedPreparationFailure({
+      steps: [failed, { toolCalls: [{ toolName: 'prepare_position_plan' }] }],
+    }),
+  ).toBe(false)
+  expect(
+    repeatedPreparationFailure({
+      steps: [
+        { toolCalls: [{ toolName: 'get_candles', invalid: true }] },
+        failed,
+      ],
+    }),
+  ).toBe(false)
+})
 
 test.each([true, false])(
   'stops at a ready trade card and permits invalid repair: %s',

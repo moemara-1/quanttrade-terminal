@@ -15,6 +15,24 @@ const TRADE_PREPARATION_TOOLS = new Set([
   'cancel_order',
 ])
 
+/** One model correction is enough; never spend the turn looping on malformed trade calls. */
+export function repeatedPreparationFailure({
+  steps,
+}: {
+  steps: ReadonlyArray<{
+    toolCalls: ReadonlyArray<{ toolName: string; invalid?: boolean }>
+  }>
+}): boolean {
+  if (steps.length < 2) return false
+  const recent = steps.slice(-2)
+  return recent.every((step) =>
+    step.toolCalls.some(
+      (call) =>
+        TRADE_PREPARATION_TOOLS.has(call.toolName) && call.invalid === true,
+    ),
+  )
+}
+
 /** A ready card is the handoff to the human, not another model/tool turn. */
 export function tradePreparationReady({ steps }: PreparationSteps): boolean {
   return (

@@ -7,6 +7,14 @@ import { WORKFLOW_GUIDE } from '../guides'
 describe('assistant trade preparation contract', () => {
   const prompt = buildAssistantSystemPrompt({ guides: [WORKFLOW_GUIDE] })
 
+  test('prevents argument-format speculation and repeated rejected trade calls', () => {
+    expect(prompt).toContain('Send tool arguments as typed JSON')
+    expect(prompt).toContain(
+      'Do not speculate about XML, harness internals or alternate tool syntax',
+    )
+    expect(prompt).toContain('correct it once')
+  })
+
   test('protected TWAP requires explicit managed disclosure and preserves native-only intent', () => {
     expect(prompt).toContain('Native Lighter TWAP cannot attach a TP/SL ladder')
     expect(WORKFLOW_GUIDE).toContain(

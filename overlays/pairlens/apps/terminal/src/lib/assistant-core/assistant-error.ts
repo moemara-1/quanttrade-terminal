@@ -1,6 +1,9 @@
 // Only fixed, actionable text may reach the UI. Provider errors can contain
 // credentials, request headers and response bodies; none are rendered here.
-import { formatBillingErrorMessage, parseBillingErrorCode } from '@pairlens/shared/billing-types'
+import {
+  formatBillingErrorMessage,
+  parseBillingErrorCode,
+} from '@pairlens/shared/billing-types'
 
 export type AssistantErrorCode =
   | 'connect-provider'
@@ -9,6 +12,8 @@ export type AssistantErrorCode =
   | 'model'
   | 'rate-limit'
   | 'network'
+  | 'timeout'
+  | 'tool-input'
   | 'tools'
   | 'request'
   | 'unavailable'
@@ -30,6 +35,7 @@ export function describeAssistantError(
   const provider =
     (providerId && PROVIDER_LABELS[providerId]) || 'Your AI provider'
   const messages: Array<string> = []
+  const names: Array<string> = []
   let status: number | undefined
   let current = error
   const seen = new Set<unknown>()
@@ -41,11 +47,11 @@ export function describeAssistantError(
     }
     if (typeof current !== 'object') break
     const details = current as Record<string, unknown>
+    if (typeof details.name === 'string') names.push(details.name)
     if ('message' in current && typeof current.message === 'string')
       messages.push(current.message)
     for (const field of ['statusCode', 'status'] as const) {
-      if (typeof details[field] === 'number')
-        status ??= details[field]
+      if (typeof details[field] === 'number') status ??= details[field]
     }
     current = 'cause' in current ? current.cause : undefined
   }
@@ -56,10 +62,28 @@ export function describeAssistantError(
   const result = (code: AssistantErrorCode, message: string) => ({
     code,
     message,
-    ...(status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599 ? { status } : {}),
+    ...(status !== undefined &&
+    Number.isInteger(status) &&
+    status >= 400 &&
+    status <= 599
+      ? { status }
+      : {}),
   })
+  if (encoded === 'tool-input' || names.includes('AI_InvalidToolInputError')) {
+    return result(
+      'tool-input',
+      'The model supplied invalid tool arguments. This tool call was rejected before execution. Ask the assistant to correct the proposal; check order and run status before repeating a trade request.',
+    )
+  }
+  if (encoded === 'timeout' || names.includes('TimeoutError')) {
+    return result(
+      'timeout',
+      `${provider} timed out before completing the response. Earlier tool actions may have completed; check order and run status before repeating a trade request.`,
+    )
+  }
   if (
-    encoded === 'connect-provider' || /no ai provider|does not expose a model|app server|standalone mode/.test(
+    encoded === 'connect-provider' ||
+    /no ai provider|does not expose a model|app server|standalone mode/.test(
       text,
     )
   ) {
@@ -69,7 +93,8 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'credentials' || status === 401 ||
+    encoded === 'credentials' ||
+    status === 401 ||
     status === 403 ||
     /invalid api.?key|incorrect api.?key|unauthorized|authentication failed/.test(
       text,
@@ -81,7 +106,8 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'balance' || status === 402 ||
+    encoded === 'balance' ||
+    status === 402 ||
     /insufficient (balance|credits)|payment required/.test(text)
   ) {
     return result(
@@ -90,7 +116,8 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'model' || status === 404 ||
+    encoded === 'model' ||
+    status === 404 ||
     /model (not found|does not exist|unavailable)|unknown model/.test(text)
   ) {
     return result(
@@ -98,14 +125,19 @@ export function describeAssistantError(
       `${provider} could not use the selected model. Choose an available model in Plugins.`,
     )
   }
-  if (encoded === 'rate-limit' || status === 429 || /rate limit|too many requests/.test(text)) {
+  if (
+    encoded === 'rate-limit' ||
+    status === 429 ||
+    /rate limit|too many requests/.test(text)
+  ) {
     return result(
       'rate-limit',
       `${provider} is rate limiting requests. Wait briefly, then retry.`,
     )
   }
   if (
-    encoded === 'tools' || /does not support (tools|tool calling|function calling)|tool.{0,30}(unsupported|not supported)|unsupported.{0,30}tool/.test(
+    encoded === 'tools' ||
+    /does not support (tools|tool calling|function calling)|tool.{0,30}(unsupported|not supported)|unsupported.{0,30}tool/.test(
       text,
     )
   ) {
@@ -115,20 +147,27 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'network' || /failed to fetch|networkerror|network error|cors|load failed|fetch failed/.test(
+    encoded === 'network' ||
+    /failed to fetch|networkerror|network error|cors|load failed|fetch failed/.test(
       text,
     )
   ) {
     return result(
       'network',
-      `Could not reach ${provider}. Check your connection and browser network restrictions, then retry.`,
+      `The connection to ${provider} failed or was interrupted. The cause is not yet known. Earlier tool actions may have completed; check order and run status before repeating a trade request.`,
     )
   }
   if (encoded === 'request' || status === 400 || status === 422) {
-    return result('request', `${provider} rejected the model request. Check the selected model and its settings in Plugins. The diagnostic code below identifies this request failure.`)
+    return result(
+      'request',
+      `${provider} rejected the model request. Check the selected model and its settings in Plugins. The diagnostic code below identifies this request failure.`,
+    )
   }
   if (encoded === 'unavailable' || (status !== undefined && status >= 500)) {
-    return result('unavailable', `${provider} is temporarily unavailable. Retry when the provider recovers.`)
+    return result(
+      'unavailable',
+      `${provider} is temporarily unavailable. Retry when the provider recovers.`,
+    )
   }
   return result(
     'unknown',
@@ -137,8 +176,13 @@ export function describeAssistantError(
 }
 
 /** Preserve only classified information across the AI SDK's string-only error stream. */
-export function encodeAssistantError(error: unknown, providerId?: string): string {
-  const billing = parseBillingErrorCode(error instanceof Error ? error.message : undefined)
+export function encodeAssistantError(
+  error: unknown,
+  providerId?: string,
+): string {
+  const billing = parseBillingErrorCode(
+    error instanceof Error ? error.message : undefined,
+  )
   if (billing) return formatBillingErrorMessage(billing, '')
   const safe = describeAssistantError(error, providerId)
   return `[QT_AI:${safe.code}:${safe.status ?? 'none'}]`
