@@ -252,3 +252,12 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Journal called absent Pairlens cloud service; missing spot connector config produced Lighter503. Safely restored only absent spot config from verified matching account/key, preserving perpetual bytes; fresh spot/perp reads200 complete (0/2 orders), no trading mutations.
 - [completed] Device-only journal reads/writes persist with validated records and reject corruption/storage failures; tools disclose manual-only coverage, never empty-on-failure or exchange PnL. 4,034 terminal tests and 2 migration regressions pass.
 - [completed] Final TypeScript/lint and fingerprinted build pass. Hetzner 20261016-2 and all hosted checks pass, including both complete native order scopes. Actual assistant get_trade_journal returned available/device-journal/count0/completeExchangeHistory:false. No orders or journal entries added/cancelled.
+
+## Equities news
+- [completed] Mixed crypto/default feed, six-stock tags and client ticker gate caused sparse/wrong equities stories; CDATA headline entities were not decoded.
+- [completed] Test-first equity topic wire, untagged market-wide stories, expanded conservative ticker tags, CNBC earnings/insider feeds, safe headline entity decoding, conjunctive topics, failure coverage and topic-preserving deduplication.
+- [completed] 4,037 terminal/254 backend tests, TypeScript, lint and fingerprinted build pass. Hetzner20261016-3 hosted checks and browser All/Earnings filters verified: 10 market headlines/1 matching headline. CNBC403 is documented; current RSS coverage is bounded, not guaranteed full-market news.
+
+## NanoGPT network recovery
+- [completed] Existing error and raw Chrome Failed to fetch confirmed. Current outage did not recur: fresh text and tool/follow-up calls succeeded. Found cause-less Chrome TypeError bypassing SDK retries; intermittent underlying network cause remains unproven.
+- [completed] Added one abort-aware startup retry only; HTTP/SDK errors unchanged, response-stream interruptions never replay. 22 plugin tests/57 assertions, native TypeScript/lint and fingerprinted build pass. Deployed20261016-3; actual NanoGPT journal read and final response succeeded after reload. No trading or credential changes.

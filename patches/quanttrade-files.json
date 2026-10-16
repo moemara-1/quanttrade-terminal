@@ -9,6 +9,8 @@
   "apps/terminal/src/components/copilot/exchange-operation-card.tsx",
   "apps/terminal/src/components/copilot/lighter-native-order-card.tsx",
   "apps/terminal/src/components/copilot/workflow-runs-card.tsx",
+  "apps/terminal/src/components/discovery/__tests__/equity-news-policy.test.ts",
+  "apps/terminal/src/components/discovery/equity-news-policy.ts",
   "apps/terminal/src/components/nanogpt-model-picker-data.test.ts",
   "apps/terminal/src/components/nanogpt-model-picker-data.ts",
   "apps/terminal/src/components/nanogpt-model-picker.tsx",
@@ -117,6 +119,8 @@
   "packages/plugin-sdk/src/hooks/use-plugin-fetch.test.ts",
   "packages/plugins/src/nanogpt-inference/index.test.ts",
   "packages/plugins/src/nanogpt-inference/index.ts",
+  "packages/plugins/src/nanogpt-inference/network-recovery.test.ts",
+  "packages/plugins/src/nanogpt-inference/network-recovery.ts",
   "packages/plugins/src/nanogpt-inference/tools.test.ts",
   "packages/plugins/src/nanogpt-inference/tools.ts"
 ]

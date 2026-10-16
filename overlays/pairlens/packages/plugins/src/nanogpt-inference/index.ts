@@ -3,6 +3,7 @@
 import { loadOpenAiCompatible } from '../lib/ai-sdk-lazy'
 import { streamOpenAiCompatible } from '../lib/inference-sse'
 import { executeNanogptTool, nanogptWebSearch } from './tools'
+import { fetchNanogptWithRecovery } from './network-recovery'
 import type { InferenceMessage } from '@pairlens/shared/plugin-types'
 import type {
   PluginExecuteParams,
@@ -211,10 +212,13 @@ export function createNanogptInferencePlugin(
                       : '',
               }
             })
-            return fetch(url, { ...init, body: JSON.stringify(body) })
+            return fetchNanogptWithRecovery(url, {
+              ...init,
+              body: JSON.stringify(body),
+            })
           }
         }
-        return fetch(url, init)
+        return fetchNanogptWithRecovery(url, init)
       },
     }).chatModel(configuredModel())
   }

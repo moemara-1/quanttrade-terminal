@@ -9132,6 +9132,113 @@ index 219799a..80d2484 100644
          </div>
        )}
      </div>
+diff --git a/apps/terminal/src/components/discovery/news-pane.tsx b/apps/terminal/src/components/discovery/news-pane.tsx
+index 93de06c..417200d 100644
+--- a/apps/terminal/src/components/discovery/news-pane.tsx
++++ b/apps/terminal/src/components/discovery/news-pane.tsx
+@@ -16,11 +16,10 @@
+  * feed component, because the difference between them is three parameters and
+  * a lookup, not a second pane.
+  *
+- * Each board asks for its own wire. The provider's default feed is US equities
+- * almost end to end, so the crypto board anchors its request to two crypto
+- * symbols and the equities board takes the feed as it comes; the chips inside
+- * a board then narrow that one page client-side, so switching them costs no
+- * request. The percentages ride maps the board already fetched for the
++ * Each board asks for its own wire. The crypto board anchors its request to
++ * two crypto symbols; equities request financial-markets coverage, optionally
++ * narrowed to earnings. Market-wide headlines remain visible even without a
++ * ticker tag. The percentages ride maps the board already fetched for the
+  * scanner. The feed refreshes itself every two minutes while the window is
+  * focused, so stories arrive on their own.
+  */
+@@ -31,6 +30,7 @@ import { RefreshCw } from 'lucide-react'
+ import { cn } from '@pairlens/ui'
+ import { Button } from '@pairlens/ui/components/ui/button'
+ import { usePluginFetch, usePluginInfiniteQuery } from '@pairlens/plugin-sdk'
++import { equityNewsTopics } from './equity-news-policy'
+ import type {
+   NewsArticle,
+   NewsFeedParams,
+@@ -46,7 +46,6 @@ import {
+   NEWS_PAGE_TIME_FROM,
+   NEWS_POLL_INTERVAL_MS,
+   NEWS_TICKERS_CRYPTO,
+-  NEWS_TOPIC_EARNINGS,
+   NEWS_TOPIC_MACRO,
+   NewsFeedEnd,
+   NewsFeedStatus,
+@@ -67,7 +66,6 @@ import {
+ } from '@/components/news/news-shared'
+ import { useDiscoverySection } from '@/lib/discovery-section-context'
+ import { useBulkTickerQuotes } from '@/hooks/use-bulk-ticker-quotes'
+-import { useMarketInstruments } from '@/hooks/use-market-instruments'
+ import { usePersistedState } from '@/hooks/use-persisted-state'
+ import { useTopCoinsSnapshot } from '@/hooks/use-top-coins-snapshot'
+ import { useWatchlistsStore } from '@/stores/watchlists-store'
+@@ -167,17 +165,6 @@ function EquityNews() {
+   const allSymbolsSet = useWatchlistsStore((s) => s.allSymbolsSet)
+   const quotes = useBulkTickerQuotes()
+ 
+-  // The tradeable stock universe, read through the plugin system rather than
+-  // imported from the catalog module: this is the same discovery query the
+-  // scanner on this board already runs, so it costs nothing here, and a
+-  // deployment that ships a different equities catalog gets its own universe
+-  // instead of the one that happened to be compiled in.
+-  const { items } = useMarketInstruments({ assetClass: 'stocks' })
+-  const universe = useMemo(
+-    () => new Set(items.map((instrument) => instrument.symbol.toUpperCase())),
+-    [items],
+-  )
+-
+   const watched = useMemo(() => baseSymbols(allSymbolsSet), [allSymbolsSet])
+ 
+   // The mirror of the crypto board's rule: a bare symbol is how the provider
+@@ -200,23 +187,15 @@ function EquityNews() {
+     [t],
+   )
+ 
+-  const scopeTo = useMemo(() => {
+-    if (scope === 'macro') return null
+-    return (raw: string) =>
+-      isEquityNewsTicker(raw) && universe.has(newsTickerBase(raw))
+-  }, [scope, universe])
+-
+   return (
+     <NewsFeed
+       chips={chips}
+       scope={scope}
+       onScopeChange={setScope}
+-      // Every scope but Macro is about listed companies, so it is held to the
+-      // stock universe. Macro is deliberately unheld: a CPI print is not
+-      // "about" any one ticker, and scoping it to fifty of them is how you get
+-      // a macro tab that returns nothing.
+-      scopeTo={scopeTo}
+-      topics={scope === 'assets' ? NEWS_TOPIC_EARNINGS : undefined}
++      // Select the markets wire before pagination. Genuine market-wide news
++      // need not name a stock in this installation's tradable universe.
++      scopeTo={null}
++      topics={equityNewsTopics(scope)}
+       filteredEmptyBody={t('news.noStockNews')}
+       changeFor={changeFor}
+       watched={watched}
+@@ -274,13 +253,9 @@ function NewsFeed({
+   /**
+    * What the provider is asked for: a topic, and a short anchor of symbols.
+    *
+-   * The anchor is what decides which wire arrives. The default feed is US
+-   * equities almost end to end, so a crypto board that only filtered would be
+-   * filtering a page with no crypto on it; two crypto symbols turn the same
+-   * endpoint over to token coverage (measured: fifty of fifty articles
+-   * crypto-tagged). It stays SHORT deliberately. A long list narrows toward
+-   * stories about every symbol at once and is rate-limited besides, so the
+-   * reader's own watchlist is never what gets sent.
++   * The anchor or topic selects the wire before pagination. Two crypto symbols
++   * select token coverage; financial_markets selects the equities wire. Keep
++   * symbol lists short: the reader's watchlist is a client-side filter.
+    *
+    * Everything finer than that is applied client-side over the page this
+    * returns, which is also why switching chips inside a board costs no request.
 diff --git a/apps/terminal/src/components/feedback/bug-report-form.tsx b/apps/terminal/src/components/feedback/bug-report-form.tsx
 index 928bd83..d199a02 100644
 --- a/apps/terminal/src/components/feedback/bug-report-form.tsx
