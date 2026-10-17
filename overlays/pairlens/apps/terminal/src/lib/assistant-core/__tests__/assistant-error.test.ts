@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { RetryError } from 'ai'
 import {
   describeAssistantError,
   encodeAssistantError,
@@ -79,6 +80,48 @@ test('cyclic causes do not recurse forever', () => {
   const error: { message: string; cause?: unknown } = { message: 'unknown' }
   error.cause = error
   expect(describeAssistantError(error).code).toBe('unknown')
+})
+
+test('SDK retry exhaustion preserves the final provider status without exposing payloads', () => {
+  const error = new RetryError({
+    message: 'Failed after 3 attempts. Last error: private request',
+    reason: 'maxRetriesExceeded',
+    errors: [
+      { statusCode: 401, message: 'old attempt secret' },
+      { statusCode: 503, message: '' },
+      { statusCode: 503, message: '' },
+    ],
+  })
+  expect(encodeAssistantError(error, 'nanogpt-inference')).toBe(
+    '[QT_AI:unavailable:503]',
+  )
+  const described = describeAssistantError(error, 'nanogpt-inference')
+  expect(described.message).not.toContain('private')
+  expect(described.message).not.toContain('secret')
+})
+
+test('known wrapper fields and cyclic retry arrays retain the latest nested status', () => {
+  const error: { errors: Array<unknown>; originalError?: unknown } = {
+    errors: [],
+  }
+  error.errors.push(
+    error,
+    { statusCode: 401 },
+    {
+      originalError: {
+        cause: { status: 503, message: 'private response body' },
+      },
+    },
+  )
+  expect(describeAssistantError(error).status).toBe(503)
+  expect(describeAssistantError(error).code).toBe('unavailable')
+  expect(describeAssistantError(error).message).not.toContain('private')
+})
+
+test('unknown error fields are never treated as nested diagnostic errors', () => {
+  expect(describeAssistantError({ responseBody: { status: 401 } }).code).toBe(
+    'unknown',
+  )
 })
 
 test('stream errors retain HTTP status while discarding request bodies and credentials', () => {

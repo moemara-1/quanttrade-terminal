@@ -40,15 +40,22 @@ export function describeAssistantError(
   const messages: Array<string> = []
   const names: Array<string> = []
   let status: number | undefined
-  let current = error
+  const pending: Array<{ error: unknown; depth: number }> = [
+    { error, depth: 0 },
+  ]
   const seen = new Set<unknown>()
-  for (let depth = 0; depth < 4 && current && !seen.has(current); depth++) {
+  // RetryError keeps its final failure in lastError, not cause. Only inspect
+  // known wrapper fields, preferring that final attempt over earlier errors.
+  for (let inspected = 0; inspected < 32 && pending.length > 0; inspected++) {
+    const next = pending.pop()!
+    const current = next.error
+    if (!current || seen.has(current) || next.depth > 8) continue
     seen.add(current)
     if (typeof current === 'string') {
       messages.push(current)
-      break
+      continue
     }
-    if (typeof current !== 'object') break
+    if (typeof current !== 'object') continue
     const details = current as Record<string, unknown>
     if (typeof details.name === 'string') names.push(details.name)
     if ('message' in current && typeof current.message === 'string')
@@ -56,7 +63,16 @@ export function describeAssistantError(
     for (const field of ['statusCode', 'status'] as const) {
       if (typeof details[field] === 'number') status ??= details[field]
     }
-    current = 'cause' in current ? current.cause : undefined
+    const enqueue = (nested: unknown) => {
+      if (nested !== undefined)
+        pending.push({ error: nested, depth: next.depth + 1 })
+    }
+    if (details.lastError === undefined && Array.isArray(details.errors)) {
+      for (const nested of details.errors.slice(-8)) enqueue(nested)
+    }
+    enqueue(details.originalError)
+    enqueue(details.cause)
+    enqueue(details.lastError)
   }
   const text = messages.join(' ').toLowerCase()
   const wire = /\[qt_ai:([a-z-]+):(\d{3}|none)\]/.exec(text)
