@@ -271,3 +271,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Reproduced exact Broad market market is red duplication with a pending live stream reader: enqueue could re-enter pull before cursor advancement.
 - [completed] Advance cursor before enqueue; regression and all 263 backend tests/typecheck pass. Server-only release20261017-1 deployed and auth/journal/runtime checks pass, without restarting Hummingbot or changing orders.
 - [completed] Fresh actual NanoGPT journal read and follow-up paragraph/five list items complete without duplicates or errors; screenshot saved. No exchange tools/orders changed. Commit/push authorized.
+
+## Hyperliquid connection parity
+- [completed] Hosted Hyperliquid desk is live with both connectors present; perpetual/spot balances and native open orders return200. Spot coverage complete, perpetual standard-market coverage explicitly excludes builder markets; verified revision exists. No live trades performed.
+- [completed] Fixed false spotConnected response and identical-key missing-spot bundle repair for both venues without changing verified revision/pausing unchanged runs. 265 backend tests,106 Hummingbot tests,29 native UI tests, root TypeScript and diff checks pass.
+- [pending] Deploy prepared20261017-2 reconnect repair: uploads/SSHblocked by repeated TCP22timeouts after earlier successful read-only probes. Existing hosted connection unchanged; local repair is not deployed. No credential rotations or disconnected accounts.

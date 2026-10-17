@@ -233,14 +233,23 @@ export function createApp(services: Services) {
     connecting.add(input.venue);
     try {
       const unchanged=desk.store.connectionFingerprint(desk.status().accountName,input.venue)===fingerprint && (await services.execution.connections()).includes(input.venue);
+      const spotConnected=await services.execution.spotConnections?.();
+      const repairSpot=unchanged && spotConnected!==undefined && !spotConnected.includes(input.venue);
       if (!unchanged || (input.mode && input.mode!==desk.modeFor(input.venue))) services.workflows?.pauseVenue(input.venue);
       if (!unchanged) {
         desk.store.setConnectionFingerprint(desk.status().accountName,input.venue,null);
         await services.execution.connect(input.venue,credentials);
         desk.store.setConnectionFingerprint(desk.status().accountName,input.venue,fingerprint);
       }
+      else if(repairSpot) {
+        // The atomic bundle restores its previous files on failure. Repairing a
+        // missing spot connector does not invalidate the verified perpetual key.
+        await services.execution.connect(input.venue,credentials);
+      }
       if (input.mode) desk.setVenueMode(input.venue,input.mode);
-      res.json({venue:input.venue,connected:true,spotConnected:true,mode:desk.modeFor(input.venue),accountName:desk.status().accountName});
+      const connected=(await services.execution.connections()).includes(input.venue);
+      const verifiedSpot=(await services.execution.spotConnections?.())?.includes(input.venue)??false;
+      res.json({venue:input.venue,connected,spotConnected:verifiedSpot,mode:desk.modeFor(input.venue),accountName:desk.status().accountName});
     } finally {connecting.delete(input.venue);}
   });
   app.delete('/api/connections/:venue',operator,async(req,res)=>{
