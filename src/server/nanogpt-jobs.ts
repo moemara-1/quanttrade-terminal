@@ -45,7 +45,7 @@ export class NanoGptJobs {
   if(job.status===undefined)return null;
   if(job.listeners.size>=4)throw new NanoGptJobError(429,'Inference reader limit reached');
   let position=offset;let detach=()=>undefined;let flush=()=>undefined;
-  const stream=new ReadableStream<Uint8Array>({start(controller){flush=()=>{if(job.failed){job.listeners.delete(flush);controller.error(new Error('Inference stream interrupted'));return;}let start=0;for(const chunk of job.chunks){const end=start+chunk.byteLength;if(end>position&&(controller.desiredSize??0)>0){controller.enqueue(chunk.subarray(Math.max(0,position-start)));position=end;}start=end;}if(job.done&&position===job.bytes){job.listeners.delete(flush);controller.close();}};detach=()=>{job.listeners.delete(flush);};job.listeners.add(flush);flush();},pull(){flush();},cancel(){detach();}});
+  const stream=new ReadableStream<Uint8Array>({start(controller){flush=()=>{if(job.failed){job.listeners.delete(flush);controller.error(new Error('Inference stream interrupted'));return;}let start=0;for(const chunk of job.chunks){const end=start+chunk.byteLength;if(end>position&&(controller.desiredSize??0)>0){const output=chunk.subarray(Math.max(0,position-start));position=end;controller.enqueue(output);}start=end;}if(job.done&&position===job.bytes){job.listeners.delete(flush);controller.close();}};detach=()=>{job.listeners.delete(flush);};job.listeners.add(flush);flush();},pull(){flush();},cancel(){detach();}});
   return new Response(stream,{status:job.status,headers:{'Content-Type':job.contentType,'X-QuantTrade-AI-Upstream':'1'}});
  }
  cancel(owner:string,id:string){const job=this.get(owner,id);this.finish(job,true);job.controller.abort();}

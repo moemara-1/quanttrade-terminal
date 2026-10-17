@@ -9,6 +9,20 @@ import {once} from 'node:events';
 
 const input=()=>({requestId:randomUUID(),apiKey:'test-secret',request:{model:'test',stream:true,messages:[{role:'user',content:'OK'}]}});
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
+
+test('a waiting live reader receives every provider byte exactly once',async()=>{
+ let source!:ReadableStreamDefaultController<Uint8Array>;
+ const jobs=new NanoGptJobs(async()=>new Response(new ReadableStream({start(controller){source=controller;}})));
+ try{
+  const id=jobs.start('owner',input());await tick();
+  const reader=jobs.read('owner',id,0)!.body!.getReader();
+  const output:Uint8Array[]=[];
+  const consume=(async()=>{for(;;){const part=await reader.read();if(part.done)break;output.push(part.value);}})();
+  for(const word of ['Broad',' market',' is red',' today',' — €']){source.enqueue(new TextEncoder().encode(word));await tick();}
+  source.close();await consume;
+  assert.equal(Buffer.concat(output).toString('utf8'),'Broad market is red today — €');
+ }finally{jobs.close();}
+});
 test('retains exact bytes across disconnected readers and never repeats an upstream request',async()=>{
  let calls=0;let source!:ReadableStreamDefaultController<Uint8Array>;
  const jobs=new NanoGptJobs(async(url,options)=>{calls++;assert.equal(String(url),'https://api.nano-gpt.com/api/v1/chat/completions');assert.equal(new Headers(options?.headers).get('Authorization'),'Bearer test-secret');return new Response(new ReadableStream({start(controller){source=controller;}}),{headers:{'Content-Type':'text/event-stream','X-Secret':'hidden'}});});

@@ -265,4 +265,9 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Assistant background tab continuity
 - [completed] Confirmed browser-owned model/tool loop with no stream recovery and no deliberate hide cancellation. Ordinary tab-switch failure remains unreproduced; component unmount can abort chats. Server response ownership chosen with explicit opt-in, not a claim of a fully autonomous server agent.
 - [completed] Opt-in NanoGPT server jobs retain bounded bytes through disconnect, resume exact offsets and never restart accepted work; explicit Stop cancels. Separate inference quota protects trading controls. 4,042 terminal /262 backend /42 provider+SDK tests, terminal/backend TypeScript, focused lint and fingerprinted build pass. Hetzner20261016-4 and hosted authorization/no-proxy-temp-body checks pass; keys never logged or intentionally persisted.
-- [pending] Enable existing NanoGPT server-backed setting and perform a real provider test only after user authorizes sending key/chat to Hetzner. Current direct mode and all trading settings remain unchanged.
+- [completed] User explicitly approved and server-backed mode enabled through saved-provider wizard; preserved xiaomi/mimo-v2.6-flash and saved key. Reopened form confirms mode true and unchanged model; live OK and read-only journal/follow-up calls verified via hosted job201/200 and browser output after cursor correction.
+
+## Duplicate live inference bytes
+- [completed] Reproduced exact Broad market market is red duplication with a pending live stream reader: enqueue could re-enter pull before cursor advancement.
+- [completed] Advance cursor before enqueue; regression and all 263 backend tests/typecheck pass. Server-only release20261017-1 deployed and auth/journal/runtime checks pass, without restarting Hummingbot or changing orders.
+- [completed] Fresh actual NanoGPT journal read and follow-up paragraph/five list items complete without duplicates or errors; screenshot saved. No exchange tools/orders changed. Commit/push authorized.
