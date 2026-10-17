@@ -5,6 +5,8 @@ import { loadEnvFile } from 'node:process';
 import { z } from 'zod';
 import { DeskStore } from './store.ts';
 import { PublicMarkets } from './markets.ts';
+import { DiscoveryScanners } from './scanners.ts';
+import { OptionsScanner } from './options-scanner.ts';
 import { HummingbotExecution } from './execution.ts';
 import { TradingDesk } from './trading.ts';
 import { WorkflowRuns } from './workflows.ts';
@@ -63,7 +65,7 @@ const chasePlans:ChasePlans=new ChasePlans(resolve('data','chase-runs.sqlite'),d
 const protectionMonitor=new ProtectionMonitor(advancedProtection,hyperliquidNativeTwap,chasePlans);
 chasePlans.startTimer();
 protectionMonitor.startTimer();
-const app=createApp({advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
+const app=createApp({scanners:new DiscoveryScanners(markets,new OptionsScanner()),advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
 const server=app.listen(4318,'127.0.0.1',()=>console.log(`QuantTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
 server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);void closeServices().then(()=>{process.exitCode=1;});});
 async function closeServices(){liquidations.close();workflows.close();await protectionMonitor.close();await chasePlans.close();advancedProtection.close();store.close();app.locals.hostedAuthClose();}

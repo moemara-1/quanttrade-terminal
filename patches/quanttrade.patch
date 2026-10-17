@@ -13346,7 +13346,7 @@ index 26e075b..6bd1e3f 100644
    }
  
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
-index 74cf26a..5fbf941 100644
+index 74cf26a..5cbfb50 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/data-tools.ts
 @@ -61,6 +61,7 @@ import { mergeNewListings } from '@/lib/new-listings'
@@ -13431,6 +13431,14 @@ index 74cf26a..5fbf941 100644
            note: "'long' means longs were liquidated, which is forced selling. The two sides are never summed.",
          }
        },
+@@ -1158,6 +1175,7 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+  * label are added in one edit. `ASSISTANT_ALL_TOOL_LABELS` spreads it.
+  */
+ export const DATA_TOOL_LABELS = {
++  scan_markets: ['read', 'integrated market scanners'],
+   get_economic_calendar: ['read', 'the economic calendar'],
+   get_earnings_calendar: ['read', 'the earnings calendar'],
+   get_company_fundamentals: ['read', 'the company fundamentals'],
 diff --git a/apps/terminal/src/lib/assistant-core/guides.ts b/apps/terminal/src/lib/assistant-core/guides.ts
 index bf4d768..2c08c5b 100644
 --- a/apps/terminal/src/lib/assistant-core/guides.ts
@@ -13470,10 +13478,16 @@ index bf4d768..2c08c5b 100644
    'create_script and update_script validate and re-run the preview for you, and hand back the traceback when it fails. Fix your own tracebacks rather than handing a broken draft to the user.',
  ].join('\n')
 diff --git a/apps/terminal/src/lib/assistant-core/tools.ts b/apps/terminal/src/lib/assistant-core/tools.ts
-index 28659bf..7d7d530 100644
+index 28659bf..96e55b4 100644
 --- a/apps/terminal/src/lib/assistant-core/tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/tools.ts
-@@ -23,6 +23,7 @@ import type { AssistantDeps } from './tool-deps'
+@@ -18,11 +18,13 @@ import { buildDataTools } from './data-tools'
+ import { buildNftTools } from './nft-tools'
+ import { buildPredictionTools } from './prediction-tools'
+ import { buildSurfaceTools } from './surface-tools'
++import { buildScannerTools } from './scanner-tools'
+ import { toAutomationDeps, toCopilotDeps, toScriptDeps } from './tool-deps'
+ import type { AssistantDeps } from './tool-deps'
  import type { ToolSet } from 'ai'
  import { listSpotlightTargets } from '@/stores/ai-spotlight-store'
  import { buildMarketTools } from '@/lib/copilot/market-tools'
@@ -13481,9 +13495,11 @@ index 28659bf..7d7d530 100644
  import { buildContextTools } from '@/lib/copilot/context-tools'
  import { buildPortfolioTools } from '@/lib/copilot/portfolio-tools'
  import { buildChartTools } from '@/lib/copilot/chart-tools'
-@@ -69,6 +70,7 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
+@@ -68,7 +70,9 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
+     buildNotificationTools(automationDeps)
  
    return {
++    ...buildScannerTools(),
      ...buildMarketTools(copilotDeps),
 +    ...buildProviderTools(copilotDeps),
      ...buildContextTools(copilotDeps),
@@ -15594,6 +15610,26 @@ index 0b03708..4aa6a63 100644
        onMarketChange={owned ? onMarketChange : undefined}
      >
        {children}
+diff --git a/apps/terminal/src/lib/layout/pane-icons.ts b/apps/terminal/src/lib/layout/pane-icons.ts
+index 8ff04e4..f2be466 100644
+--- a/apps/terminal/src/lib/layout/pane-icons.ts
++++ b/apps/terminal/src/lib/layout/pane-icons.ts
+@@ -40,6 +40,7 @@ import {
+   Receipt,
+   Rocket,
+   Scale,
++  ScanLine,
+   ScrollText,
+   Search,
+   Send,
+@@ -91,6 +92,7 @@ const PANE_ICONS: Record<string, LucideIcon> = {
+   PieChart,
+   Flame,
+   Scale,
++  ScanLine,
+   Vote,
+   Wallet,
+   Activity,
 diff --git a/apps/terminal/src/lib/market-data-provider.tsx b/apps/terminal/src/lib/market-data-provider.tsx
 index cf58fcd..7e355af 100644
 --- a/apps/terminal/src/lib/market-data-provider.tsx
@@ -15692,7 +15728,7 @@ index 8e2d9cb..c13074e 100644
  /**
   * `prompt` means the user has not been asked yet; `unsupported` means asking is
 diff --git a/apps/terminal/src/lib/pairlens-provider.tsx b/apps/terminal/src/lib/pairlens-provider.tsx
-index 97e9234..513660c 100644
+index 97e9234..2be1dd7 100644
 --- a/apps/terminal/src/lib/pairlens-provider.tsx
 +++ b/apps/terminal/src/lib/pairlens-provider.tsx
 @@ -43,6 +43,7 @@ import { api, appServerUrl, getSessionToken } from '@/lib/api'
@@ -15703,7 +15739,19 @@ index 97e9234..513660c 100644
  import {
    DynamicPaneRegistry,
    PaneRegistryContext,
-@@ -799,6 +800,13 @@ export function PairlensProvider({
+@@ -122,6 +123,11 @@ const FIRST_PARTY_COMPONENTS: Record<
+   Record<string, LazyExoticComponent<ComponentType>>
+ > = {
+   'pairlens-core': {
++    scanners: lazyChunk(() =>
++      import('@/components/scanners/scanners-pane').then((m) => ({
++        default: m.ScannersPane,
++      })),
++    ),
+     chart: lazyChunk(() =>
+       import('@/components/terminal/chart-pane').then((m) => ({
+         default: m.ChartPane,
+@@ -799,6 +805,13 @@ export function PairlensProvider({
    )
    const activatedRef = useRef(false)
  
@@ -32172,6 +32220,112 @@ index 44a0539..2c157e5 100644
        if (SANCTIONED_IMPORTERS.has(rel)) continue
        const source = readFileSync(file, 'utf8')
        MOBILE_IMPORT.lastIndex = 0
+diff --git a/apps/terminal/src/mobile/panels/discover-panel.tsx b/apps/terminal/src/mobile/panels/discover-panel.tsx
+index b2a9302..47f0c56 100644
+--- a/apps/terminal/src/mobile/panels/discover-panel.tsx
++++ b/apps/terminal/src/mobile/panels/discover-panel.tsx
+@@ -22,8 +22,8 @@
+  * `logoUrl` that is often missing and no trend line at all — rows that read as
+  * unfinished next to the rest of the terminal.
+  */
+-import { memo, useCallback, useMemo } from 'react'
+-import { X } from 'lucide-react'
++import { Suspense, memo, useCallback, useMemo, useState } from 'react'
++import { ArrowLeft, ArrowRight, ScanLine, X } from 'lucide-react'
+ import { useTranslation } from 'react-i18next'
+ 
+ import { useMobileActions, useMobileFocus } from '../mobile-focus-context'
+@@ -39,6 +39,7 @@ import { PredictionMarketsSection } from './prediction-markets-section'
+ import type { NewsArticle } from '@pairlens/shared/instrument-types'
+ import type { PairEntry } from '@/components/pair-picker/pair-picker-data'
+ import { haptic } from '@/lib/haptics'
++import { lazyChunk } from '@/lib/lazy-chunk'
+ import { useTopCoinsSnapshot } from '@/hooks/use-top-coins-snapshot'
+ import { useMarketInstruments } from '@/hooks/use-market-instruments'
+ import { useBulkTickerQuotes } from '@/hooks/use-bulk-ticker-quotes'
+@@ -53,6 +54,12 @@ import {
+   formatRelativeTime,
+ } from '@/components/news/news-shared'
+ 
++const ScannersPane = lazyChunk(() =>
++  import('@/components/scanners/scanners-pane').then((module) => ({
++    default: module.ScannersPane,
++  })),
++)
++
+ /** Design shows five rows; the rest lives behind "All pairs". */
+ const FEATURED_COUNT = 5
+ /** Enough to fill the sheet twice over without rendering a 50-row feed. */
+@@ -60,6 +67,7 @@ const NEWS_ROW_COUNT = 12
+ 
+ export default memo(function MobileDiscoverPanel() {
+   const { t } = useTranslation()
++  const [showScanners, setShowScanners] = useState(false)
+   const { dismissPanel, pushOverlay } = useMobileActions()
+ 
+   const topCoins = useTopCoinsSnapshot()
+@@ -93,6 +101,36 @@ export default memo(function MobileDiscoverPanel() {
+     [pushOverlay],
+   )
+ 
++  if (showScanners) {
++    return (
++      <div className="flex min-h-0 flex-col pb-2">
++        <button
++          className="pl-hit-44 pl-press-soft flex items-center gap-2 px-4 py-2 text-sm"
++          onClick={() => setShowScanners(false)}
++          type="button"
++          {...PRESS}
++        >
++          <ArrowLeft className="size-4" />
++          Back to Discover
++        </button>
++        <div className="h-[65dvh] min-h-[320px]">
++          <Suspense
++            fallback={
++              <p
++                role="status"
++                className="px-4 py-6 text-sm text-muted-foreground"
++              >
++                Loading scanners...
++              </p>
++            }
++          >
++            <ScannersPane />
++          </Suspense>
++        </div>
++      </div>
++    )
++  }
++
+   // `pb-2` below is air, not clearance. The tab bar is drawn over the sheet
+   // (z-50 against z-40) and used to hide the last ~54px of this list — the
+   // final news row showed only its timestamp. That reserve now lives in
+@@ -116,6 +154,24 @@ export default memo(function MobileDiscoverPanel() {
+         </button>
+       </header>
+ 
++      <button
++        className="pl-hit-44 pl-press-soft mx-4 mb-3 flex items-center gap-3 rounded-lg border border-border px-3 py-3 text-left"
++        onClick={() => setShowScanners(true)}
++        type="button"
++        {...PRESS}
++      >
++        <ScanLine className="size-4 shrink-0 text-muted-foreground" />
++        <span className="min-w-0 flex-1">
++          <span className="block text-sm font-semibold">
++            Discovery scanners
++          </span>
++          <span className="block text-xs text-muted-foreground">
++            Funding, price gaps, strength and options
++          </span>
++        </span>
++        <ArrowRight className="size-4 shrink-0" />
++      </button>
++
+       <div className="flex gap-2.5 px-4">
+         <DiscoverFearGreedCard />
+         <DiscoverPnlCard />
 diff --git a/apps/terminal/src/mobile/panels/trade-panel.tsx b/apps/terminal/src/mobile/panels/trade-panel.tsx
 index bfd3d51..8ceefe3 100644
 --- a/apps/terminal/src/mobile/panels/trade-panel.tsx
@@ -32813,6 +32967,33 @@ index 0f98548..a388677 100644
          ),
        )
      }
+diff --git a/apps/terminal/src/routes/_terminal.tsx b/apps/terminal/src/routes/_terminal.tsx
+index 2bbd35f..1913b67 100644
+--- a/apps/terminal/src/routes/_terminal.tsx
++++ b/apps/terminal/src/routes/_terminal.tsx
+@@ -545,6 +545,22 @@ function TerminalLayout() {
+                                     />
+                                   </SidebarMenuButton>
+                                 </SidebarMenuItem>
++                                <SidebarMenuItem>
++                                  <SidebarMenuButton
++                                    aria-label="Discovery scanners"
++                                    className={RAIL_ITEM}
++                                    isActive={location.pathname === '/scanners'}
++                                    onClick={() =>
++                                      void navigate({ to: '/scanners' })
++                                    }
++                                    type="button"
++                                  >
++                                    <WaypointsIcon size={16} />
++                                    <span className="sr-only">
++                                      Discovery scanners
++                                    </span>
++                                  </SidebarMenuButton>
++                                </SidebarMenuItem>
+                                 <SidebarMenuItem
+                                   className={railSection('workflows')}
+                                 >
 diff --git a/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx b/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx
 index 4f10b95..a5194fa 100644
 --- a/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx
@@ -33720,7 +33901,7 @@ index 3a36fe1..da3ea23 100644
              { id: 'pane-futures-positions', type: 'futures-positions' },
              { id: 'pane-data-log', type: 'data-log' },
 diff --git a/packages/plugins/src/pairlens-core/index.ts b/packages/plugins/src/pairlens-core/index.ts
-index 821be21..77be750 100644
+index 821be21..86e237c 100644
 --- a/packages/plugins/src/pairlens-core/index.ts
 +++ b/packages/plugins/src/pairlens-core/index.ts
 @@ -10,7 +10,7 @@ import type {
@@ -33741,6 +33922,21 @@ index 821be21..77be750 100644
    metadata: { family: 'core' },
    capabilities: [
      {
+@@ -47,6 +47,14 @@ export const pairlensCoreManifest: PluginManifest = {
+   config: {},
+   contributes: {
+     panels: [
++      {
++        id: 'scanners',
++        label: 'Discovery scanners',
++        icon: 'ScanLine',
++        preview: 'table',
++        category: 'discovery',
++        minHeight: 300,
++      },
+       {
+         id: 'chart',
+         label: 'Chart',
 diff --git a/packages/plugins/src/pairlens-dex/index.ts b/packages/plugins/src/pairlens-dex/index.ts
 index 9242676..09be019 100644
 --- a/packages/plugins/src/pairlens-dex/index.ts

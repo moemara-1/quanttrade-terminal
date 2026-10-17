@@ -19,8 +19,10 @@ import type { HyperliquidNativeTwap } from './hyperliquid-native-twap.ts';
 import type { ChasePlans } from './chase-plans.ts';
 import type { AdvancedProtection } from './advanced-protection.ts';
 import {NanoGptJobs,NanoGptJobError} from './nanogpt-jobs.ts';
+import type { DiscoveryScanners } from './scanners.ts';
 
 interface Services {
+  scanners?:Pick<DiscoveryScanners,'get'>;
   nanogptJobs?:NanoGptJobs;
   advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
@@ -106,6 +108,11 @@ export function createApp(services: Services) {
     if(researchBudget>=60||researchInFlight>=4){res.set('Retry-After','60').status(429).json({error:'Venue research rate limit reached; retry later'});return;}
     researchBudget++;researchInFlight++;
     try {res.json(await services.research.execute(req.query));} finally {researchInFlight--;}
+  });
+  app.get('/api/public/scanners',publicData,async(req,res)=>{
+    z.object({}).strict().parse(req.query);
+    if(!services.scanners){res.status(503).json({error:'Discovery scanners unavailable'});return;}
+    res.json(await services.scanners.get());
   });
   app.get('/api/public/markets',async(req,res)=>res.json(await markets.list(venueSchema.parse(req.query.venue),marketTypeSchema.parse(req.query.marketType))));
   app.get('/api/public/candles',async(req,res)=>res.json(await markets.candles(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),z.string().default('1h').parse(req.query.interval),marketTypeSchema.parse(req.query.marketType),z.coerce.number().int().nonnegative().optional().parse(req.query.endTs),z.coerce.number().int().min(1).max(1000).optional().parse(req.query.limit))));
