@@ -17,14 +17,18 @@ const querySchema = z
     search: z.string().max(64).default(''),
     minVolume: z.number().finite().nonnegative().default(0),
     direction: z.enum(['gainers', 'losers']).default('gainers'),
+    strengthMetric: z
+      .enum(['change24h', 'relativeStrength24h'])
+      .default('change24h'),
     limit: z.number().int().min(1).max(50).default(10),
   })
   .strict()
-type Query = z.infer<typeof querySchema>
+type Query = z.input<typeof querySchema>
 const methodology =
-  'Public observations only. Funding is a fractional hourly estimate: positive means longs pay shorts. Funding differences and mark gaps exclude fees, slippage and execution risk; mark gaps are a percentage of midpoint, not executable spreads. Strength is 24h percentage points versus BTC on the same venue. Crowding ranks absolute funding, not measured long/short positioning. Options are sampled real Deribit block legs, not inferred strategies; premium USD is not underlying notional. No trades were prepared or submitted.'
+  'Public observations only. Funding is a fractional hourly estimate: positive means longs pay shorts. Funding differences and mark gaps exclude fees, slippage and execution risk; mark gaps are a percentage of midpoint, not executable spreads. Strength uses the returned rankingMetric: change24h is raw 24h percent, relativeStrength24h is percentage points versus BTC on the same venue. Crowding ranks absolute funding, not measured long/short positioning. Options are sampled real Deribit block legs, not inferred strategies; premium USD is not underlying notional. No trades were prepared or submitted.'
 
-export function scanSnapshot(snapshot: ScannerSnapshot, query: Query) {
+export function scanSnapshot(snapshot: ScannerSnapshot, input: Query) {
+  const query = querySchema.parse(input)
   const options = query.scanner.startsWith('option-')
   const comparison =
     query.scanner === 'funding' || query.scanner === 'price-gap'
@@ -69,14 +73,15 @@ export function scanSnapshot(snapshot: ScannerSnapshot, query: Query) {
             row.symbol.toUpperCase().includes(needle)) &&
           row.volume24h >= query.minVolume &&
           (query.scanner === 'strength'
-            ? row.relativeStrength24h !== null
+            ? query.strengthMetric === 'change24h' ||
+              row.relativeStrength24h !== null
             : row.fundingHourly !== null),
       )
       .sort((a, b) =>
         query.scanner === 'crowding'
           ? Math.abs(b.fundingHourly ?? 0) - Math.abs(a.fundingHourly ?? 0)
           : (query.direction === 'gainers' ? 1 : -1) *
-            ((b.relativeStrength24h ?? 0) - (a.relativeStrength24h ?? 0)),
+            ((b[query.strengthMetric] ?? 0) - (a[query.strengthMetric] ?? 0)),
       )
       .map((row) => ({ ...row, pair: `${row.symbol}-USDC` }))
   } else if (query.scanner === 'option-blocks') {
@@ -91,6 +96,9 @@ export function scanSnapshot(snapshot: ScannerSnapshot, query: Query) {
     asOf: snapshot.asOf,
     sources,
     methodology,
+    ...(query.scanner === 'strength'
+      ? { rankingMetric: query.strengthMetric, direction: query.direction }
+      : {}),
     unavailable:
       sources.length === 0 || sources.every((s) => s.status === 'error')
         ? 'source_unavailable'
@@ -109,7 +117,7 @@ export function buildScannerTools(
   return {
     scan_markets: tool({
       description:
-        'Read QuantTrade integrated Lighter/Hyperliquid scanners or Deribit options. Use this before claiming to have scanned all gainers/losers, funding arbitrage, mark gaps, crowding or options block trades. Filters apply before ranking; total and truncated disclose scope. These are public research signals, never a trade execution or guaranteed opportunity.',
+        'Read QuantTrade integrated Lighter/Hyperliquid scanners or Deribit options. Use this before claiming to have scanned all gainers/losers, funding arbitrage, mark gaps, crowding or options block trades. Strength defaults to raw change24h; choose relativeStrength24h explicitly for percentage-point outperformance versus BTC. Filters apply before ranking; total and truncated disclose scope. Returned pair and venue are exact native perpetual identifiers for subsequent quote/account/risk checks and one human-confirmed trade proposal; the scanner itself never places orders. Public signals are not guaranteed opportunities.',
       inputSchema: querySchema,
       execute: async (input) => {
         try {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, RefreshCw, ScanLine } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { ScannerMarket } from '@/lib/scanners'
+import type { ScannerMarket, ScannerSnapshot } from '@/lib/scanners'
 import {
   SCANNER_QUERY_KEY,
   fetchScannerSnapshot,
@@ -32,7 +32,7 @@ const number = (value: number | null) =>
 const time = (value: number) =>
   new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 const control =
-  'rounded-md border border-border bg-background px-2 py-1.5 text-xs focus-visible:outline-2 focus-visible:outline-primary'
+  'rounded-md border border-border bg-background px-2 py-1 text-xs focus-visible:outline-2 focus-visible:outline-primary'
 type Section = 'arbitrage' | 'crowding' | 'strength' | 'options'
 function VenueLink({
   market,
@@ -74,18 +74,28 @@ function Card({
         <ScanLine className="size-3.5 text-muted-foreground" />
         <h2 className="text-sm font-semibold">{title}</h2>
       </header>
-      <div className="p-3">
-        <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-muted-foreground">
-          {description}
-        </p>
+      <div className="px-3 pt-2 pb-1">
         {children}
+        <details className="border-t border-border py-2 text-[10px] text-muted-foreground">
+          <summary className="w-fit cursor-pointer hover:text-foreground">
+            Methodology & coverage
+          </summary>
+          <p className="mt-2 max-w-prose leading-relaxed">{description}</p>
+        </details>
       </div>
       {!expanded && (
         <button
           className="flex w-full items-center justify-between border-t border-border px-3 py-2 text-xs hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
           onClick={open}
         >
-          View full results
+          View all{' '}
+          {title === 'Arbitrage scanner'
+            ? 'arbitrage'
+            : title === 'Strength scanner'
+              ? 'strength'
+              : title === 'Funding & crowding'
+                ? 'funding'
+                : 'options'}
           <ArrowRight className="size-3" />
         </button>
       )}
@@ -121,62 +131,206 @@ function Sparkline({ market }: { market: ScannerMarket }) {
     </svg>
   ) : null
 }
+function ReportSummary({ rows }: { rows: Array<ScannerMarket> }) {
+  const gainers = rows.filter((row) => row.change24h > 0).length
+  const losers = rows.filter((row) => row.change24h < 0).length
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-y border-border py-2 text-[11px]">
+      <span>
+        <strong>{rows.length}</strong> markets
+      </span>
+      <span className="text-green-500">{gainers} up</span>
+      <span className="text-red-400">{losers} down</span>
+      <span className="text-muted-foreground">
+        24h volume{' '}
+        {money(rows.reduce((total, row) => total + row.volume24h, 0))}
+      </span>
+    </div>
+  )
+}
 function MarketResults({ rows }: { rows: Array<ScannerMarket> }) {
   return (
-    <div className="max-h-[65vh] overflow-auto">
-      <table className="w-full min-w-[600px] text-left text-xs">
-        <thead className="sticky top-0 bg-card text-[10px] text-muted-foreground">
-          <tr>
-            {[
-              'Market',
-              'Price',
-              '24h move',
-              'vs BTC (pp)',
-              'Funding / h',
-              'OI / volume',
-              '24h volume',
-            ].map((title) => (
-              <th className="px-2 py-2 font-medium" key={title}>
-                {title}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              className="border-t border-border"
-              key={`${row.venue}:${row.symbol}`}
-            >
-              <td className="px-2 py-2">
-                <a
-                  className="font-semibold hover:underline"
-                  href={scannerMarketPath(row)}
+    <>
+      <ReportSummary rows={rows} />
+      <div className="max-h-[65vh] overflow-auto rounded-md border border-border">
+        <table className="w-full min-w-[900px] text-left text-xs tabular-nums">
+          <thead className="sticky top-0 z-10 bg-card text-[10px] text-muted-foreground">
+            <tr>
+              {[
+                '#',
+                'Market',
+                'Mark price',
+                '24h move',
+                'vs BTC (pp)',
+                'Funding / h',
+                'OI USD',
+                'OI / volume',
+                '24h volume',
+                'Observed',
+              ].map((title) => (
+                <th
+                  className="whitespace-nowrap px-3 py-2 font-medium"
+                  key={title}
                 >
-                  {row.base}
-                </a>
-                <div>
-                  <VenueLink market={row} />
-                </div>
-              </td>
-              <td className="px-2 py-2 font-mono">{money(row.price)}</td>
-              <td className="px-2 py-2 font-mono">
-                {scannerPercent(row.change24h)}
-              </td>
-              <td className="px-2 py-2 font-mono">
-                {number(row.relativeStrength24h)}
-              </td>
-              <td className="px-2 py-2 font-mono">
-                {scannerPercent(row.fundingHourly, true)}
-              </td>
-              <td className="px-2 py-2 font-mono">{number(row.oiToVolume)}</td>
-              <td className="px-2 py-2 font-mono">{money(row.volume24h)}</td>
+                  {title}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && <Empty>No markets match these filters.</Empty>}
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr
+                className="border-t border-border hover:bg-accent/40"
+                key={`${row.venue}:${row.symbol}`}
+              >
+                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
+                <td className="px-3 py-2">
+                  <a
+                    className="font-semibold hover:underline"
+                    href={scannerMarketPath(row)}
+                  >
+                    {row.base}
+                  </a>
+                  <div>
+                    <VenueLink market={row} />
+                  </div>
+                </td>
+                <td className="px-3 py-2 font-mono">{money(row.price)}</td>
+                <td
+                  className={`px-3 py-2 font-mono ${row.change24h >= 0 ? 'text-green-500' : 'text-red-400'}`}
+                >
+                  {scannerPercent(row.change24h)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {number(row.relativeStrength24h)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {scannerPercent(row.fundingHourly, true)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {money(row.openInterestUsd)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {number(row.oiToVolume)}
+                  {row.oiToVolume === null ? '' : 'x'}
+                </td>
+                <td className="px-3 py-2 font-mono">{money(row.volume24h)}</td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 text-muted-foreground"
+                  title={new Date(row.observedAt).toLocaleString()}
+                >
+                  {time(row.observedAt)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && <Empty>No markets match these filters.</Empty>}
+      </div>
+    </>
+  )
+}
+function ArbitrageResults({
+  rows,
+  mode,
+}: {
+  rows: ScannerSnapshot['comparisons']
+  mode: 'funding' | 'mark'
+}) {
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1 border-y border-border py-2 text-[11px]">
+        <span>
+          <strong>{rows.length}</strong> matched markets
+        </span>
+        <span className="text-muted-foreground">
+          {mode === 'funding'
+            ? 'Ranked by hourly funding difference'
+            : 'Ranked by mark gap (% of midpoint)'}
+        </span>
+        <span className="text-muted-foreground">
+          Both legs meet volume filter
+        </span>
+      </div>
+      <div className="max-h-[65vh] overflow-auto rounded-md border border-border">
+        <table className="w-full min-w-[1100px] text-left text-xs tabular-nums">
+          <thead className="sticky top-0 z-10 bg-card text-[10px] text-muted-foreground">
+            <tr>
+              {[
+                '#',
+                'Market',
+                'Funding gap / h',
+                'Mark gap',
+                'Hyperliquid mark',
+                'Lighter mark',
+                'HL funding / h',
+                'Lighter funding / h',
+                'HL 24h volume',
+                'Lighter 24h volume',
+                'Compare legs',
+              ].map((title) => (
+                <th
+                  key={title}
+                  className="whitespace-nowrap px-3 py-2 font-medium"
+                >
+                  {title}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr
+                className="border-t border-border hover:bg-accent/40"
+                key={row.base}
+              >
+                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
+                <td className="px-3 py-2 font-semibold">{row.base}</td>
+                <td className="px-3 py-2 font-mono">
+                  {scannerPercent(row.fundingGapHourly, true)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {scannerPercent(row.markGapPct)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {money(row.hyperliquid.price)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {money(row.lighter.price)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {scannerPercent(row.hyperliquid.fundingHourly, true)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {scannerPercent(row.lighter.fundingHourly, true)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {money(row.hyperliquid.volume24h)}
+                </td>
+                <td className="px-3 py-2 font-mono">
+                  {money(row.lighter.volume24h)}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-col items-start gap-1">
+                    <VenueLink
+                      market={row.hyperliquid}
+                      label={`${scannerLegLabel('hyperliquid', mode === 'funding' ? row.longVenue : row.lowerMarkVenue, mode)} | HL`}
+                    />
+                    <VenueLink
+                      market={row.lighter}
+                      label={`${scannerLegLabel('lighter', mode === 'funding' ? row.longVenue : row.lowerMarkVenue, mode)} | Lighter`}
+                    />
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && (
+          <Empty>No matching comparison in this snapshot.</Empty>
+        )}
+      </div>
+    </>
   )
 }
 export function ScannersPane() {
@@ -258,7 +412,7 @@ export function ScannersPane() {
     value: string,
     onChange: (value: string) => void,
   ) => (
-    <div className="mb-3 flex flex-wrap gap-1" role="group">
+    <div className="mb-2 flex flex-wrap gap-1" role="group">
       {items.map(([id, label]) => (
         <button
           key={id}
@@ -350,12 +504,17 @@ export function ScannersPane() {
           </p>
         )}
         {data && (
-          <p className="mb-2 text-[10px] text-muted-foreground">
-            {[...data.sources, ...data.options.sources]
-              .filter((row) => row.status === 'ok')
-              .map((row) => `${row.id}: ${row.count}`)
-              .join(' | ')}
-          </p>
+          <details className="mb-2 text-[10px] text-muted-foreground">
+            <summary className="w-fit cursor-pointer">
+              Source coverage | {data.markets.length} perpetual markets
+            </summary>
+            <p className="mt-1">
+              {[...data.sources, ...data.options.sources]
+                .filter((row) => row.status === 'ok')
+                .map((row) => `${row.id}: ${row.count}`)
+                .join(' | ')}
+            </p>
+          </details>
         )}
         {failures.length > 0 && (
           <details className="mb-3 text-xs text-muted-foreground">
@@ -393,40 +552,49 @@ export function ScannersPane() {
                   arb,
                   (value) => setArb(value === 'mark' ? 'mark' : 'funding'),
                 )}
-                {limit(
-                  comparisons.filter(
-                    (row) => arb === 'mark' || row.fundingGapHourly !== null,
-                  ),
-                ).map((row) => (
-                  <div
-                    className="border-t border-border py-2 first:border-0"
-                    key={row.base}
-                  >
-                    <div className="flex justify-between gap-2 text-xs">
-                      <strong>{row.base}</strong>
-                      <span className="font-mono tabular-nums">
-                        {arb === 'funding'
-                          ? scannerPercent(row.fundingGapHourly, true)
-                          : scannerPercent(row.markGapPct)}
-                        {arb === 'funding' ? ' / h' : ''}
-                      </span>
+                {expanded ? (
+                  <ArbitrageResults
+                    rows={comparisons.filter(
+                      (row) => arb === 'mark' || row.fundingGapHourly !== null,
+                    )}
+                    mode={arb}
+                  />
+                ) : (
+                  limit(
+                    comparisons.filter(
+                      (row) => arb === 'mark' || row.fundingGapHourly !== null,
+                    ),
+                  ).map((row) => (
+                    <div
+                      className="border-t border-border py-2 first:border-0"
+                      key={row.base}
+                    >
+                      <div className="flex justify-between gap-2 text-xs">
+                        <strong>{row.base}</strong>
+                        <span className="font-mono tabular-nums">
+                          {arb === 'funding'
+                            ? scannerPercent(row.fundingGapHourly, true)
+                            : scannerPercent(row.markGapPct)}
+                          {arb === 'funding' ? ' / h' : ''}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <VenueLink
+                          market={row.hyperliquid}
+                          label={`${scannerLegLabel('hyperliquid', arb === 'funding' ? row.longVenue : row.lowerMarkVenue, arb)} · HL`}
+                        />
+                        <VenueLink
+                          market={row.lighter}
+                          label={`${scannerLegLabel('lighter', arb === 'funding' ? row.longVenue : row.lowerMarkVenue, arb)} · Lighter`}
+                        />
+                      </div>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        HL {money(row.hyperliquid.price)} · Lighter{' '}
+                        {money(row.lighter.price)}
+                      </p>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <VenueLink
-                        market={row.hyperliquid}
-                        label={`${scannerLegLabel('hyperliquid', arb === 'funding' ? row.longVenue : row.lowerMarkVenue, arb)} · HL`}
-                      />
-                      <VenueLink
-                        market={row.lighter}
-                        label={`${scannerLegLabel('lighter', arb === 'funding' ? row.longVenue : row.lowerMarkVenue, arb)} · Lighter`}
-                      />
-                    </div>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      HL {money(row.hyperliquid.price)} · Lighter{' '}
-                      {money(row.lighter.price)}
-                    </p>
-                  </div>
-                ))}
+                  ))
+                )}
                 {comparisons.length === 0 && (
                   <Empty>No matching comparison in this snapshot.</Empty>
                 )}
@@ -650,8 +818,11 @@ export function ScannersPane() {
                       Options overview unavailable. Check source coverage above.
                     </Empty>
                   )}
-                <div className="mt-3 border-t border-border pt-2 text-[10px] leading-relaxed text-muted-foreground">
-                  Sampled public trade tape, not an exhaustive block feed.{' '}
+                <details className="mt-2 border-t border-border pt-2 pb-2 text-[10px] leading-relaxed text-muted-foreground">
+                  <summary className="w-fit cursor-pointer">
+                    Sampled tape coverage
+                  </summary>
+                  Public trade sample, not an exhaustive block feed.{' '}
                   {data.options.coverage.map((row) => (
                     <p key={row.currency}>
                       {row.currency}: {row.sampledTrades} recent trades sampled
@@ -661,7 +832,7 @@ export function ScannersPane() {
                       {row.hasMore ? ' · more trades outside sample' : ''}.
                     </p>
                   ))}
-                </div>
+                </details>
               </Card>
             )}
           </div>

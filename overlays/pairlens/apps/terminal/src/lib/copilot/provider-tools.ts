@@ -2,7 +2,11 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import type { CopilotToolDeps } from './tool-deps'
 
-const limit = z.number().int().min(1).max(100).default(30)
+const limit = z
+  .union([z.number(), z.string().regex(/^\d+$/)])
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(100))
+  .default(30)
 const wallet = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
 const coin = z
   .string()

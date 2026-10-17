@@ -13225,34 +13225,51 @@ index b93724f..7196259 100644
 +  expect(result.hint).toContain('not evidence of zero')
 +  expect(result.totals).toBeUndefined()
 +})
+diff --git a/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
+index e51eeb9..3e9cf94 100644
+--- a/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
++++ b/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
+@@ -180,6 +180,9 @@ describe('per-step tool gating', () => {
+     // The reads are not gated: a chart tool the model cannot fire is one
+     // thing, a market question it cannot answer is another.
+     expect(active).toContain('get_market_snapshot')
++    expect(active).toContain('scan_markets')
++    expect(active).toContain('place_order')
++    expect(active).toContain('prepare_lighter_native_order')
+   })
+ 
+   test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..3cfe681 100644
+index ce0d317..652815f 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -46,6 +46,7 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
+@@ -46,6 +46,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
  }
  
  const CAPABILITIES = [
++  'Integrated scanners: scan_markets reads Lighter/Hyperliquid funding differences, indicative mark gaps, gainers/losers, BTC-relative strength and funding/crowding, plus genuine Deribit options block legs and market overview. Use these tools to research candidates, then the normal exact-account trade preparation tools for one human confirmation. Scanners never execute orders.',
 +  'Send tool arguments as typed JSON: numeric schema fields are numbers, arrays are arrays, and exact decimal-string prices and quantities stay strings. Do not speculate about XML, harness internals or alternate tool syntax. If a tool rejects arguments, use its validation feedback to correct it once; if it fails again, explain the blocker concisely and stop. Never change the execution path or omit requested protection to bypass validation. Do not claim a failed preparation created an order.',
    'Markets: pull candles, tickers, order books, the live trade tape, signals, multi-timeframe reads and comparisons for ANY instrument on ANY connected venue. You are never limited to what is on screen. Search instruments you do not know the id of, and open any of them with open_instrument.',
    'Prediction markets: read a whole event with get_prediction_event (every outcome, its probability, bid, ask and 24h move, plus what the whole field costs) and find one with search_prediction_events. A prediction price lives on the event, so these are the only tools that can see one: candles and order books address a single outcome. Never say you cannot see the prices on a prediction board without calling get_prediction_event first.',
    'Perps and equities: funding, open interest and liquidation clusters for perpetuals; the trading session, calendars, fundamentals and insider filings for stocks.',
-@@ -60,6 +61,9 @@ const CAPABILITIES = [
+@@ -60,6 +62,10 @@ const CAPABILITIES = [
  ]
  
  const WORKING_RULES = [
++  'For broad Lighter/Hyperliquid opportunity discovery use scan_markets before selecting candidates. Set strengthMetric change24h for raw gainers/losers or relativeStrength24h for BTC-relative rankings; report which ranking, venue coverage, asOf, filters, total and truncated scope you actually read. A top row is a candidate, not evidence of a best trade or executable arbitrage. Reuse its exact venue and native pair; verify fresh quote, book liquidity, account margin, contract constraints and risk before preparing the requested trade. Respect an explicitly chosen venue rather than switching because another account read appears empty. Do not repeat market-wide scans once the user has chosen an exact trade.',
 +  'Explicit execution requests take priority over further research. Once the user specifies the instrument, direction and entry intent, use the exact connected account and prepare the requested single confirmation card after only the necessary account, fresh quote, instrument precision and risk checks. Do not restart market discovery, re-read the same charts or open unrelated instruments. Do not ask whether to prepare after the user already asked to open, set up or send the trade. Opening a chart is navigation, not preparation or execution. If a material field is missing, ask one concise question containing all missing choices and then prepare. A request for a good entry or stop zone permits a focused fresh chart read, not another market-wide search.',
 +  'For explicit research requests, scope the scan to the requested venue and exact assets. Reuse successful current-turn reads rather than repeating them. Stop when enough evidence answers the request; do not keep expanding the search or retrying the same failed tool. Never replace W with WIF or S with SOL: resolve exact listings or ask about an ambiguous ticker. Keep venue-native instrument identifiers and market type intact, including perpetual settlement suffixes; a spot pair on Binance does not establish the same instrument on Lighter.',
 +  'Position sizing: half my cash means half the verified available collateral as margin when discussing a leveraged position, not half the wallet balance in base units and not an arbitrary one contract. Resolve the account and leverage before computing quote exposure = margin × leverage, then base quantity = quote exposure / entry reference price, rounded down to venue size precision and checked against fees and risk limits. Never infer leverage from maximum leverage or initial margin requirements. Ask for a missing material leverage choice rather than silently using 1×. Cash allocation is different from maximum stop-loss risk; if the user means loss at the stop, size from that explicit loss budget. Carry verified existing exchange leverage/margin settings only when the user explicitly requests keeping them or they are already established for this trade.',
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +77,22 @@ const WORKING_RULES = [
+@@ -73,8 +79,23 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'A portfolio cache is not a fresh exchange wallet read. Preserve credentialId, accountName, market type, source time and coverage; an empty or stale cache is unknown, not zero funds or missing credentials. A verified zero Hyperliquid standard-perpetual account value applies only to that exact account and scope: it does not prove all wallets, subaccounts, spot collateral or unified-account funds are empty. Read the relevant fresh native account scopes before sizing; never silently substitute Lighter, invent spendable balances, transfer funds or instruct a top-up as the only remedy from a scoped zero.',
 +  'Read get_risk_limits for actual hosted per-order and daily-notional limits before sizing. Local controls marked Off do not establish backend settings. A verified null hosted notional cap means Off, not zero allowance or a missing credential. Disabled backend caps do not remove exchange balance/margin checks, precision rules, account verification, human confirmation, or the immutable reviewed budget of a workflow or advanced order. Never retry or resume an old paused or uncertain plan merely because a limit changed; reconcile its exchange outcomes and prepare a fresh exact review only when requested.',
 +  'Market scan failures are failed reads, not proof of an upstream outage or bad trading credentials. A 503 alone does not establish the cause. For native venues resolve requested assets through the selected venue catalog; never invent a USDT spelling for Lighter or reuse another venue chart as native evidence. Report each returned requested/resolved pair, venue, timeframe and data timestamp, and distinguish partial comparisons from a complete scan. Broad top-coins data is market-cap context, not proof an asset is listed on the requested exchange or a guaranteed pump candidate. Read failures never establish unchanged orders, an empty account, or working trade execution; private order claims require fresh native account evidence.',
 +  'For current pending Lighter or Hyperliquid orders, call get_exchange_open_orders for each requested connected venue and market type. get_open_orders is a device-local event cache, never proof of the complete exchange book. Check returned complete/scope and read failures before claiming all orders are listed or the book is empty. Prepare native cancellations using the exact returned symbol and exchangeOrderId, pinned to the freshly verified account and connection revision. Never use local exchange: IDs or a generic CEX cancellation route for native stops. Explicitly disclose that cancelling reduce-only SL/TP removes position protection. A pending confirmation card is not a cancellation receipt; never claim cancelled before confirmed execution and a fresh native read. Preserve specific tool errors and distinguish failed discovery from failed submission; do not say everything is live merely because one public market snapshot succeeded.',
@@ -13272,7 +13289,7 @@ index ce0d317..3cfe681 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +112,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +115,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13827,10 +13844,18 @@ index a34eeca..86a6054 100644
      ...buildPortfolioTools(deps),
      ...buildChartTools(deps),
 diff --git a/apps/terminal/src/lib/copilot/market-tools.ts b/apps/terminal/src/lib/copilot/market-tools.ts
-index 048abff..489f600 100644
+index 048abff..52ecf45 100644
 --- a/apps/terminal/src/lib/copilot/market-tools.ts
 +++ b/apps/terminal/src/lib/copilot/market-tools.ts
-@@ -27,7 +27,7 @@ const NO_PROVIDER =
+@@ -6,6 +6,7 @@ import {
+   computeSignalsWithRegime,
+   findRecentSignal,
+ } from '@pairlens/strategy-engine'
++import { searchNativeInstruments } from './native-instrument-search'
+ import {
+   isCurrentTarget,
+   resolveTarget,
+@@ -27,7 +28,7 @@ const NO_PROVIDER =
    'Market data provider unavailable — only the current on-screen pair can be read right now.'
  
  /** Load candles for a target, preferring live context, else fetching history. */
@@ -13839,7 +13864,7 @@ index 048abff..489f600 100644
    deps: CopilotToolDeps,
    target: { market: string; pair: string; timeframe: string },
    limit: number,
-@@ -163,6 +163,120 @@ function fetchTradesSnapshot(
+@@ -163,6 +164,120 @@ function fetchTradesSnapshot(
  }
  
  export function buildMarketTools(deps: CopilotToolDeps) {
@@ -13960,7 +13985,7 @@ index 048abff..489f600 100644
    return {
      get_market_snapshot: tool({
        description:
-@@ -186,7 +300,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -186,7 +301,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
              target,
              candles: summarizeCandles(candles),
              ticker:
@@ -13978,7 +14003,7 @@ index 048abff..489f600 100644
              regime,
              latestSignal: signal,
            }
-@@ -236,11 +359,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -236,11 +360,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
        }),
        execute: async (args) => {
          const target = resolveTarget(deps, { ...args, timeframe: undefined })
@@ -14003,7 +14028,7 @@ index 048abff..489f600 100644
            const candles = await loadCandles(deps, target, 60)
            return { target, ticker: tickerFromCandles(candles) }
          } catch (err) {
-@@ -284,7 +416,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -284,7 +417,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
          depth: z.number().int().min(1).max(50).optional().default(15),
        }),
        execute: async (args) => {
@@ -14022,7 +14047,7 @@ index 048abff..489f600 100644
          const snap = await fetchOrderbookSnapshot(
            deps,
            target.market,
-@@ -333,7 +475,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -333,7 +476,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
          limit: z.number().int().min(5).max(200).optional().default(50),
        }),
        execute: async (args) => {
@@ -14041,7 +14066,7 @@ index 048abff..489f600 100644
          const trades = await fetchTradesSnapshot(
            deps,
            target.market,
-@@ -391,7 +543,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -391,7 +544,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
            .describe('Defaults to 15m, 1h, 4h, 1d'),
        }),
        execute: async (args) => {
@@ -14059,7 +14084,7 @@ index 048abff..489f600 100644
          const tfs = args.timeframes ?? ['15m', '1h', '4h', '1d']
          const results = await Promise.all(
            tfs.map(async (tf) => {
-@@ -459,12 +620,19 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -459,12 +621,19 @@ export function buildMarketTools(deps: CopilotToolDeps) {
                const candles = await loadCandles(deps, target, lookback + 5)
                const newest = toNewestFirst(candles)
                if (newest.length < 2)
@@ -14080,7 +14105,7 @@ index 048abff..489f600 100644
                  lastPrice: last,
                  changePct: past ? ((last - past) / past) * 100 : 0,
                  trend: summary.shortTermTrend,
-@@ -472,7 +640,9 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -472,7 +641,9 @@ export function buildMarketTools(deps: CopilotToolDeps) {
                }
              } catch (err) {
                return {
@@ -14090,8 +14115,58 @@ index 048abff..489f600 100644
                  error: err instanceof Error ? err.message : String(err),
                }
              }
+@@ -510,11 +681,25 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+       inputSchema: z.object({
+         query: z
+           .string()
++          .trim()
+           .min(1)
++          .max(100)
+           .describe('Symbol or name fragment, e.g. "sol"'),
+         market: z.string().optional(),
+       }),
+       execute: async (args) => {
++        const explicitMarket = args.market?.trim().toLowerCase()
++        const native =
++          !explicitMarket ||
++          /^(lighter|hyperliquid)(-spot)?$/.test(explicitMarket)
++            ? await searchNativeInstruments(args.query, explicitMarket)
++            : null
++        if (explicitMarket && native)
++          return {
++            query: args.query,
++            count: native.instruments.length,
++            ...native,
++          }
+         const market = (
+           args.market ??
+           deps.getContextInfo().market ??
+@@ -538,13 +723,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+             (page as { items?: Array<Record<string, unknown>> })?.items ?? []
+           return {
+             query: args.query,
+-            count: items.length,
+-            instruments: items.slice(0, 25),
++            count: items.length + (native?.instruments.length ?? 0),
++            instruments: [
++              ...(native?.instruments ?? []),
++              ...items.slice(0, 25),
++            ],
++            sources: native?.sources,
++            note: native?.note,
+           }
+         } catch (err) {
+           return {
+             query: args.query,
+-            instruments: [],
++            instruments: native?.instruments ?? [],
++            sources: native?.sources,
++            note: native?.note,
+             error:
+               err instanceof Error
+                 ? err.message
 diff --git a/apps/terminal/src/lib/copilot/portfolio-tools.ts b/apps/terminal/src/lib/copilot/portfolio-tools.ts
-index e7631ae..19a54e6 100644
+index e7631ae..16f5a32 100644
 --- a/apps/terminal/src/lib/copilot/portfolio-tools.ts
 +++ b/apps/terminal/src/lib/copilot/portfolio-tools.ts
 @@ -2,12 +2,111 @@
@@ -14207,7 +14282,7 @@ index e7631ae..19a54e6 100644
  
  // ---------------------------------------------------------------------------
  // Phase 3 (account state) — read-only portfolio, open orders, and the risk
-@@ -15,7 +114,7 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -15,11 +114,11 @@ import type { CopilotToolDeps } from './tool-deps'
  // globally accessible, so these execute directly in the transport.
  // ---------------------------------------------------------------------------
  
@@ -14216,7 +14291,38 @@ index e7631ae..19a54e6 100644
    return {
      get_portfolio: tool({
        description:
-@@ -43,7 +142,7 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+-        'Get the user’s current account holdings across connected exchanges/wallets (currency, available, total). Requires connected credentials.',
++        'Read device-cached balance observations with venue, account namespace and observation time. This is incomplete and may be stale; an empty cache never proves zero funds or missing credentials. Use get_exchange_snapshot with the exact connected venue and instrument before sizing; distinguish spot, standard perps and builder scopes.',
+       inputSchema: z.object({}),
+       execute: async () => {
+         const balances = getBalances()
+@@ -29,21 +128,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+             available: b.available,
+             total: b.total,
+             frozen: b.frozen,
++            market: b.market,
++            credentialId: b.credentialId,
++            updatedAt: b.updatedAt,
+           }))
+-        if (balances.length === 0) {
+-          return {
+-            holdings: [],
+-            message:
+-              'No balances found — connect exchange API keys or a wallet to see holdings. (Credentials stay local; the copilot only reads the resulting balances.)',
+-          }
++        return {
++          scope: 'device-cache',
++          complete: false,
++          holdingCount: balances.length,
++          holdings: balances,
++          message:
++            balances.length === 0
++              ? 'No positive balance observations are cached on this device. Account funding and connectivity are unknown from this cache; read the exact connected account before sizing or judging availability.'
++              : 'Cached positive balances only, not a complete fresh venue portfolio. Preserve venue and account scope; do not add spot and perpetual collateral without verifying whether they share funds. A zero standard-perp account does not establish zero spot or builder collateral.',
+         }
+-        return { holdingCount: balances.length, holdings: balances }
+       },
+     }),
  
      get_open_orders: tool({
        description:
@@ -14225,7 +14331,7 @@ index e7631ae..19a54e6 100644
        inputSchema: z.object({
          pair: z.string().optional().describe('Filter to one pair'),
          includeHistory: z.boolean().optional().default(false),
-@@ -68,19 +167,124 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+@@ -68,19 +172,124 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
                )
                .slice(0, 25)
            : []
@@ -14352,7 +14458,7 @@ index e7631ae..19a54e6 100644
            local: {
              maxPositionSizePct: s.maxPositionSize,
              maxDailyLoss: s.maxDailyLoss,
-@@ -102,27 +306,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
+@@ -102,27 +311,26 @@ export function buildPortfolioTools(_deps: CopilotToolDeps) {
  
      get_account_settings: tool({
        description:

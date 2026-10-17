@@ -318,3 +318,51 @@ test('complete exchange book preserves large native IDs and partial scope remain
     globalThis.fetch = original
   }
 })
+
+test('empty portfolio cache does not diagnose missing credentials or zero venue funds', async () => {
+  const { clearBalances } = await import('../../../stores/balances-store')
+  clearBalances()
+  const result = await buildPortfolioTools({} as CopilotToolDeps).get_portfolio
+    .execute!({}, { toolCallId: 'portfolio-empty', messages: [] })
+  expect(result).toMatchObject({
+    scope: 'device-cache',
+    complete: false,
+    holdings: [],
+  })
+  expect(JSON.stringify(result)).not.toContain('connect exchange API keys')
+})
+
+test('portfolio cache preserves venue account identity and observation time', async () => {
+  const { clearBalances, upsertBalance } =
+    await import('../../../stores/balances-store')
+  clearBalances()
+  try {
+    upsertBalance({
+      currency: 'USDC',
+      available: '12',
+      total: '14',
+      frozen: '2',
+      market: 'hyperliquid-futures',
+      credentialId: 'desk@hyperliquid-futures',
+      updatedAt: 12345,
+    })
+    const result = await buildPortfolioTools({} as CopilotToolDeps)
+      .get_portfolio.execute!(
+      {},
+      { toolCallId: 'portfolio-scope', messages: [] },
+    )
+    expect(result).toMatchObject({
+      scope: 'device-cache',
+      complete: false,
+      holdings: [
+        {
+          market: 'hyperliquid-futures',
+          credentialId: 'desk@hyperliquid-futures',
+          updatedAt: 12345,
+        },
+      ],
+    })
+  } finally {
+    clearBalances()
+  }
+})

@@ -189,3 +189,15 @@ test('native candle outage never falls back to cached chart or generic provider'
   ).toBe(true)
   expect(reads).toEqual([])
 })
+test('assistant native instrument search bypasses generic discovery context', async () => {
+  const { tools } = setup([
+    { venue: 'lighter', base: 'PRL', symbol: 'PRL-USDC' },
+  ])
+  const result = await (
+    tools.search_instruments.execute as unknown as (
+      args: unknown,
+      options: unknown,
+    ) => Promise<{ instruments: Array<{ symbol: string }> }>
+  )({ query: 'PRL', market: 'lighter' }, { toolCallId: 'search', messages: [] })
+  expect(result.instruments.map((row) => row.symbol)).toEqual(['PRL-USDC-USDC'])
+})

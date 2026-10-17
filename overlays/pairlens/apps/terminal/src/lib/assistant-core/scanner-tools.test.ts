@@ -93,6 +93,7 @@ test('assistant scanner filters venue/search/volume before ranking and does not 
       limit: 10,
       venue: 'all',
       search: 'ETH',
+      strengthMetric: 'relativeStrength24h',
       minVolume: 0,
       direction: 'gainers',
     }).rows,
@@ -107,4 +108,39 @@ test('assistant scanner filters venue/search/volume before ranking and does not 
       direction: 'gainers',
     }).rows,
   ).toEqual([])
+})
+
+test('raw 24h gainers and BTC-relative strength are distinct rankings across venues', () => {
+  const data = snapshot()
+  data.markets[0] = {
+    ...data.markets[0]!,
+    venue: 'lighter',
+    base: 'SUI',
+    symbol: 'SUI-USDC',
+    change24h: 10,
+    relativeStrength24h: -2,
+  }
+  const query = {
+    scanner: 'strength' as const,
+    limit: 10,
+    venue: 'all' as const,
+    search: '',
+    minVolume: 0,
+    direction: 'gainers' as const,
+  }
+  expect(scanSnapshot(data, query).rows[0]).toMatchObject({
+    base: 'SUI',
+    pair: 'SUI-USDC-USDC',
+    venue: 'lighter',
+  })
+  expect(
+    scanSnapshot(data, { ...query, strengthMetric: 'relativeStrength24h' })
+      .rows[0],
+  ).toMatchObject({ base: 'ETH' })
+  data.markets[0]!.relativeStrength24h = null
+  expect(scanSnapshot(data, query).total).toBe(2)
+  expect(
+    scanSnapshot(data, { ...query, strengthMetric: 'relativeStrength24h' })
+      .total,
+  ).toBe(1)
 })
