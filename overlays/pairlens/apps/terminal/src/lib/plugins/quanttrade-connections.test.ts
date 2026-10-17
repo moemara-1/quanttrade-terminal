@@ -2,7 +2,40 @@ import { expect, test } from 'bun:test'
 import {
   connectExchange,
   loadConnectedExchanges,
+  mergeConnectedCredentials,
 } from './quanttrade-connections'
+
+test('restore counts one bridge account per venue while keeping spot and perpetual scopes distinct', () => {
+  const local = {
+    id: 'old',
+    market: 'lighter',
+    label: 'Old',
+    mode: 'live' as const,
+    apiKey: 'reference',
+    apiSecret: '',
+    createdAt: 1,
+  }
+  const server = {
+    ...local,
+    id: 'server:lighter:desk',
+    apiKey: '',
+    serverManaged: true,
+  }
+  const spot = {
+    ...server,
+    id: 'server:lighter-spot:desk',
+    market: 'lighter-spot',
+  }
+  const binance = { ...local, id: 'binance', market: 'binance' }
+  const hl = { ...local, id: 'hl', market: 'hyperliquid' }
+  expect(
+    mergeConnectedCredentials([local, binance, hl], [server, spot]),
+  ).toEqual([binance, hl, server, spot])
+  expect(mergeConnectedCredentials([local, binance], [])).toEqual([
+    local,
+    binance,
+  ])
+})
 
 test('connect sends signing keys once and returns only a safe server reference', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = []

@@ -33005,13 +33005,45 @@ index a9fb655..3be575e 100644
    it('creates the first conversation on demand and reopens it on reload', () => {
      const id = ensureActiveConversation()
 diff --git a/apps/terminal/src/stores/__tests__/credentials-store-vault.test.ts b/apps/terminal/src/stores/__tests__/credentials-store-vault.test.ts
-index 6695b80..32f2b57 100644
+index 6695b80..ff0163e 100644
 --- a/apps/terminal/src/stores/__tests__/credentials-store-vault.test.ts
 +++ b/apps/terminal/src/stores/__tests__/credentials-store-vault.test.ts
-@@ -100,6 +100,39 @@ afterEach(() => {
+@@ -100,6 +100,71 @@ afterEach(() => {
  })
  
  describe('credentials store: sealed is not empty', () => {
++  test('server connection replaces legacy references to the same bridge account without duplicating balances', () => {
++    const legacy = {
++      id: 'old-lighter',
++      market: 'lighter',
++      label: 'Old',
++      mode: 'live' as const,
++      apiKey: 'operator-reference',
++      apiSecret: '',
++      createdAt: 1,
++    }
++    const other = { ...legacy, id: 'binance', market: 'binance' }
++    useCredentialsStore.setState({
++      credentials: [
++        legacy,
++        { ...legacy, id: 'old-spot', market: 'lighter-spot' },
++        other,
++      ],
++    })
++    useCredentialsStore
++      .getState()
++      .setServerCredential({
++        ...legacy,
++        id: 'server:lighter:desk',
++        apiKey: '',
++        serverManaged: true,
++        spotConnected: true,
++      })
++    expect(useCredentialsStore.getState().credentials.map((c) => c.id)).toEqual(
++      ['binance', 'server:lighter:desk', 'server:lighter-spot:desk'],
++    )
++    expect(saved).toEqual([])
++  })
 +  test('server-managed accounts keep keys off-device and need no local vault write', async () => {
 +    mustEnroll = true
 +    const store = useCredentialsStore.getState()
@@ -33079,16 +33111,17 @@ index 5db37b6..689c437 100644
      return true
    },
 diff --git a/apps/terminal/src/stores/credentials-store.ts b/apps/terminal/src/stores/credentials-store.ts
-index 6ef4727..a3f2629 100644
+index 6ef4727..d0e9166 100644
 --- a/apps/terminal/src/stores/credentials-store.ts
 +++ b/apps/terminal/src/stores/credentials-store.ts
-@@ -5,6 +5,15 @@ import { create } from 'zustand'
+@@ -5,6 +5,16 @@ import { create } from 'zustand'
  import { deleteCredential, getCredential, saveCredential } from '@/lib/keychain'
  import { isVaultSealed } from '@/lib/security/vault/vault-errors'
  import { assertCanAddCredential } from '@/lib/security/vault/vault-policy'
 +import {
 +  disconnectExchange,
 +  loadConnectedExchanges,
++  mergeConnectedCredentials,
 +  spotCredential,
 +} from '@/lib/plugins/quanttrade-connections'
 +import {
@@ -33098,7 +33131,7 @@ index 6ef4727..a3f2629 100644
  
  export type ExchangeCredential = {
    id: string
-@@ -13,6 +22,9 @@ export type ExchangeCredential = {
+@@ -13,6 +23,9 @@ export type ExchangeCredential = {
    mode: 'paper' | 'live'
    apiKey: string
    apiSecret: string
@@ -33108,7 +33141,7 @@ index 6ef4727..a3f2629 100644
    passphrase?: string
    /**
     * Account's home regional entity, for venues whose API keys bind to one
-@@ -42,7 +54,14 @@ export const CREDENTIAL_SCHEMAS: Record<
+@@ -42,7 +55,14 @@ export const CREDENTIAL_SCHEMAS: Record<
       * section it appears under. Defaults to 'exchange' (crypto CEX).
       */
      kind?: 'exchange' | 'broker'
@@ -33124,7 +33157,7 @@ index 6ef4727..a3f2629 100644
      modes: Array<'paper' | 'live'>
      /** If set, the exchange expires API keys after N days of inactivity. */
      inactivityExpiry?: InactivityExpiryPolicy
-@@ -61,6 +80,56 @@ export const CREDENTIAL_SCHEMAS: Record<
+@@ -61,6 +81,56 @@ export const CREDENTIAL_SCHEMAS: Record<
      }
    }
  > = {
@@ -33181,7 +33214,7 @@ index 6ef4727..a3f2629 100644
    okx: {
      label: 'OKX',
      fields: [
-@@ -233,6 +302,9 @@ export const CREDENTIAL_SCHEMAS: Record<
+@@ -233,6 +303,9 @@ export const CREDENTIAL_SCHEMAS: Record<
    },
  }
  
@@ -33191,7 +33224,7 @@ index 6ef4727..a3f2629 100644
  /** True when a market's credentials belong to a stock broker. */
  export function isBrokerMarket(market: string): boolean {
    return CREDENTIAL_SCHEMAS[market]?.kind === 'broker'
-@@ -299,6 +371,7 @@ type CredentialsState = {
+@@ -299,6 +372,7 @@ type CredentialsState = {
    addCredential: (
      cred: Omit<ExchangeCredential, 'id' | 'createdAt'>,
    ) => Promise<void>
@@ -33199,7 +33232,7 @@ index 6ef4727..a3f2629 100644
    removeCredential: (id: string) => Promise<void>
    /**
     * Rename a credential in place. Same record, same keychain slot, same vault
-@@ -326,10 +399,22 @@ async function readAll(
+@@ -326,10 +400,22 @@ async function readAll(
    set: (partial: Partial<CredentialsState>) => void,
  ): Promise<void> {
    set({ status: 'loading' })
@@ -33223,16 +33256,13 @@ index 6ef4727..a3f2629 100644
        return
      }
      const ids = JSON.parse(indexRaw) as Array<string>
-@@ -344,14 +429,32 @@ async function readAll(
+@@ -344,14 +430,29 @@ async function readAll(
          }
        }
      }
 -    set({ credentials: loaded, loaded: true, status: 'ready', sealed: false })
 +    set({
-+      credentials: [
-+        ...loaded.filter((credential) => !credential.serverManaged),
-+        ...serverCredentials,
-+      ],
++      credentials: mergeConnectedCredentials(loaded, serverCredentials),
 +      loaded: true,
 +      status: 'ready',
 +      sealed: false,
@@ -33259,7 +33289,7 @@ index 6ef4727..a3f2629 100644
    }
  }
  
-@@ -411,7 +514,52 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
+@@ -411,7 +512,51 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
      )
    },
  
@@ -33283,7 +33313,6 @@ index 6ef4727..a3f2629 100644
 +    }
 +    const next = get().credentials.filter(
 +      (entry) =>
-+        !entry.serverManaged ||
 +        !isQuantTradeVenue(entry.market) ||
 +        quantTradeBaseVenue(entry.market) !== baseVenue,
 +    )
@@ -33312,7 +33341,7 @@ index 6ef4727..a3f2629 100644
      const next = get().credentials.filter((c) => c.id !== id)
      set({ credentials: next })
      await deleteCredential(`cred:${id}`)
-@@ -437,6 +585,14 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
+@@ -437,6 +582,14 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
      if (!trimmed) return
      const current = get().credentials.find((c) => c.id === id)
      if (!current || current.label === trimmed) return
@@ -33327,7 +33356,7 @@ index 6ef4727..a3f2629 100644
  
      await saveCredential(
        `cred:${id}`,
-@@ -484,7 +640,7 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
+@@ -484,7 +637,7 @@ export const useCredentialsStore = create<CredentialsState>((set, get) => ({
      )
      set({ credentials: next })
      const updated = next.find((c) => c.id === id)

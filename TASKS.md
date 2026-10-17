@@ -276,3 +276,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Hosted Hyperliquid desk is live with both connectors present; perpetual/spot balances and native open orders return200. Spot coverage complete, perpetual standard-market coverage explicitly excludes builder markets; verified revision exists. No live trades performed.
 - [completed] Fixed false spotConnected response and identical-key missing-spot bundle repair for both venues without changing verified revision/pausing unchanged runs. 265 backend tests,106 Hummingbot tests,29 native UI tests, root TypeScript and diff checks pass.
 - [completed] Connectivity recovered on retry; pushed19f0713 and deployed20261017-2. All265 backend tests passed on Hetzner; hosted Hyperliquid perpetual/spot balances and native order reads, Lighter spot/perpetual reads, AI transport authorization, session/public HTTPS and execution/runtime guards passed. Hummingbot was not restarted; no credentials or orders changed. Root cause of earlier transient outbound timeouts remains unconfirmed.
+
+## Lighter duplicate balances
+- [completed] Live Lighter spot is empty; perpetual USDC and raw native assets reconcile. Reproduced legacy local plus canonical server references both surviving the credential merge; user browser display not inspectable (debugger unattached).
+- [completed] Regression red/green; restore and reconnect now use canonical server references without deleting vault entries or combining distinct spot/perpetual funds. All4,044 frontend tests pass.
+- [in_progress] Typecheck/lint/build, deploy frontend, and commit/push the focused fix; no orders or exchange credentials changed.

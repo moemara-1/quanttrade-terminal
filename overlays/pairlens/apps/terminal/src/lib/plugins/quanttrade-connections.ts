@@ -16,6 +16,32 @@ const connectionSchema = z.object({
   accountName: z.string().min(1),
 })
 
+/** Legacy operator references reach the same bridge account as the hosted record.
+ * Keep saved vault entries intact, but provision only the canonical connection.
+ * Spot and perpetual records in `connected` remain separate balance scopes.
+ */
+export function mergeConnectedCredentials(
+  stored: Array<ExchangeCredential>,
+  connected: Array<ExchangeCredential>,
+): Array<ExchangeCredential> {
+  const hostedVenues = new Set(
+    connected.flatMap((credential) =>
+      credential.serverManaged && isQuantTradeVenue(credential.market)
+        ? [quantTradeBaseVenue(credential.market)]
+        : [],
+    ),
+  )
+  return [
+    ...stored.filter(
+      (credential) =>
+        !credential.serverManaged &&
+        (!isQuantTradeVenue(credential.market) ||
+          !hostedVenues.has(quantTradeBaseVenue(credential.market))),
+    ),
+    ...connected,
+  ]
+}
+
 function connectionRecord(
   connection: z.infer<typeof connectionSchema>,
   label?: string,
