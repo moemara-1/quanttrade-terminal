@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {ArbitragePlans} from '../src/server/arbitrage-plans.ts';
+import {TradingDesk} from '../src/server/trading.ts';
+import {DeskStore} from '../src/server/store.ts';
+import type {Venue} from '../src/shared/types.ts';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
+
+function setup(evidence:'filled'|'pending'|'partial'|'throw'='filled',path=':memory:') {
+ const store=new DeskStore(':memory:');store.setConnectionFingerprint('desk','lighter','a'.repeat(64));store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));const calls:Venue[]=[];let funds='1000';const now=Date.now();
+ const desk=new TradingDesk(store,{list:async venue=>[{venue,symbol:'BTC-USDC',base:'BTC',price:'100',change24h:0,volume24h:'1000',fundingRate:0,openInterest:null,sizeDecimals:2,priceDecimals:2,minSize:'0.01',minNotional:'1',updatedAt:now,maxLeverage:10}]},{configured:true,place:async order=>{calls.push(order.venue);return 'order-'+order.venue;},cancel:async()=>{},orderEvidence:async()=>{if(evidence==='throw')throw Error('network');return {status:evidence==='pending'?'pending':'filled',fillPrice:'100',fillSize:evidence==='partial'?'0.5':'1'};}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:60,pairlensUrl:''},()=>now);
+ const readAccount=async(venue:Venue)=>({accountName:'desk',mode:desk.modeFor(venue),connectionRevision:store.connectionFingerprint('desk',venue),availableMargin:funds,observedAt:now});
+ const plans=new ArbitragePlans(path,desk,readAccount,()=>now);
+ const input={requestId:'arb-test',base:'BTC',longVenue:'lighter' as const,size:'1',leverage:5,marginMode:'cross' as const};
+ return {store,desk,plans,calls,input,readAccount,setFunds:(value:string)=>{funds=value;},close:()=>{plans.close();store.close();}};
+}
+test('one reviewed pair submits exact opposite legs once after verified first fill',async()=>{const x=setup();try{const p=await x.plans.prepare(x.input);assert.equal(p.status,'review');assert.deepEqual(x.calls,[]);const done=await x.plans.execute(p.id);assert.equal(done.status,'filled');assert.deepEqual(x.calls,['lighter','hyperliquid']);await x.plans.execute(p.id);assert.equal(x.calls.length,2);assert.equal((await x.plans.prepare(x.input)).id,p.id);}finally{x.close();}});
+test('pending, partial or unknown first fill never submits second leg or retries',async()=>{for(const evidence of ['pending','partial','throw'] as const){const x=setup(evidence);try{const p=await x.plans.prepare(x.input);const result=await x.plans.execute(p.id);assert.equal(result.status,evidence==='throw'?'unknown':'partial');assert.equal(x.calls.length,1);await x.plans.execute(p.id);assert.equal(x.calls.length,1);}finally{x.close();}}});
+test('both margin balances checked again before any submission',async()=>{const x=setup();try{const p=await x.plans.prepare(x.input);x.setFunds('0');const result=await x.plans.execute(p.id);assert.equal(result.status,'blocked');assert.equal(x.calls.length,0);}finally{x.close();}});
+test('invalid shared precision and request mutation rejected before submission',async()=>{const x=setup();try{await assert.rejects(x.plans.prepare({...x.input,size:'1.001'}),/precision/);await x.plans.prepare(x.input);await assert.rejects(x.plans.prepare({...x.input,size:'2'}),/different/);assert.equal(x.calls.length,0);}finally{x.close();}});
+test('concurrent approval and changed mode cannot duplicate or send any order',async()=>{const x=setup();try{const p=await x.plans.prepare(x.input);await Promise.all([x.plans.execute(p.id),x.plans.execute(p.id)]);assert.equal(x.calls.length,2);}finally{x.close();}const y=setup();try{const p=await y.plans.prepare(y.input);y.desk.setVenueMode('hyperliquid','paper');assert.equal((await y.plans.execute(p.id)).status,'blocked');assert.equal(y.calls.length,0);}finally{y.close();}});
+test('paired preflight rejects leverage above either venue maximum',async()=>{const x=setup();try{await assert.rejects(x.plans.prepare({...x.input,leverage:20}),/leverage/i);assert.equal(x.calls.length,0);}finally{x.close();}});
+test('immutable combined initial margin cap includes both protected notionals',async()=>{const x=setup();try{await assert.rejects(x.plans.prepare({...x.input,maxTotalInitialMargin:'40'}),/margin cap/);const p=await x.plans.prepare({...x.input,maxTotalInitialMargin:'40.4'});assert.equal(p.maxTotalInitialMargin,'40.4');assert.equal((await x.plans.execute(p.id)).status,'filled');assert.equal(x.calls.length,2);}finally{x.close();}});
+test('margin cap rejects zero, numeric and mutated request values',async()=>{const x=setup();try{await assert.rejects(x.plans.prepare({...x.input,maxTotalInitialMargin:'0'}));await assert.rejects(x.plans.prepare({...x.input,maxTotalInitialMargin:100}));await x.plans.prepare({...x.input,maxTotalInitialMargin:'50'});await assert.rejects(x.plans.prepare({...x.input,maxTotalInitialMargin:'51'}),/different/);}finally{x.close();}});
+test('restart during execution recovers unknown and never retries either leg',async()=>{const dir=mkdtempSync(join(tmpdir(),'quanttrade-arbitrage-'));const path=join(dir,'plans.sqlite');const x=setup('filled',path);let restored:ArbitragePlans|undefined;try{const p=await x.plans.prepare(x.input);x.plans.close();const db=new DatabaseSync(path);p.status='executing';db.prepare('UPDATE arbitrage_plans SET body=? WHERE id=?').run(JSON.stringify(p),p.id);db.close();restored=new ArbitragePlans(path,x.desk,x.readAccount);assert.equal(restored.get(p.id).status,'unknown');assert.equal((await restored.execute(p.id)).status,'unknown');assert.equal(x.calls.length,0);}finally{restored?.close();x.store.close();rmSync(dir,{recursive:true,force:true});}});
+
+
+test('reviewed combined initial margin cap cannot be exceeded',async()=>{const x=setup();try{await assert.rejects(x.plans.prepare({...x.input,maxTotalInitialMargin:'40'}),/margin cap/);assert.equal(x.calls.length,0);const p=await x.plans.prepare({...x.input,requestId:'enough',maxTotalInitialMargin:'41'});assert.equal(p.maxTotalInitialMargin,'41');}finally{x.close();}});

@@ -20,9 +20,13 @@ import type { ChasePlans } from './chase-plans.ts';
 import type { AdvancedProtection } from './advanced-protection.ts';
 import {NanoGptJobs,NanoGptJobError} from './nanogpt-jobs.ts';
 import type { DiscoveryScanners } from './scanners.ts';
+import type { ScannerDetails } from './scanner-detail.ts';
+import type { ArbitragePlans } from './arbitrage-plans.ts';
 
 interface Services {
   scanners?:Pick<DiscoveryScanners,'get'>;
+  scannerDetails?:Pick<ScannerDetails,'get'>;
+  arbitrage?:Pick<ArbitragePlans,'prepare'|'execute'|'get'|'list'>;
   nanogptJobs?:NanoGptJobs;
   advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
@@ -108,6 +112,12 @@ export function createApp(services: Services) {
     if(researchBudget>=60||researchInFlight>=4){res.set('Retry-After','60').status(429).json({error:'Venue research rate limit reached; retry later'});return;}
     researchBudget++;researchInFlight++;
     try {res.json(await services.research.execute(req.query));} finally {researchInFlight--;}
+  });
+  app.get('/api/public/scanners/detail',publicData,async(req,res)=>{
+    const input=z.object({base:z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:]+$/),venue:z.enum(['all','hyperliquid','lighter']).default('all')}).strict().parse(req.query);
+    if(!services.scannerDetails){res.status(503).json({error:'Scanner market details unavailable'});return;}
+    try{res.json(await services.scannerDetails.get(input.base,input.venue));}
+    catch{res.status(503).json({error:'Scanner market details unavailable; retry shortly'});}
   });
   app.get('/api/public/scanners',publicData,async(req,res)=>{
     z.object({}).strict().parse(req.query);
@@ -283,6 +293,24 @@ export function createApp(services: Services) {
     if(connecting.size){res.status(409).json({error:'Exchange credentials are being updated; prepare a fresh order afterwards',submissionAttempted:false});return;}
     const input=z.object({clientOrderId:z.string().min(1).max(128),mode:z.enum(['paper','live']),order:z.unknown()}).strict().parse(req.body);
     res.json(await desk.confirm(input.clientOrderId,input.mode,input.order));
+  });
+  app.get('/api/arbitrage',operator,(_req,res)=>res.json(services.arbitrage?.list()??[]));
+  app.get('/api/arbitrage/:id',operator,(req,res)=>{
+    if(!services.arbitrage){res.status(503).json({error:'Paired arbitrage review is unavailable'});return;}
+    res.json(services.arbitrage.get(z.string().uuid().parse(req.params.id)));
+  });
+  app.post('/api/arbitrage/prepare',operator,async(req,res)=>{
+    if(!services.arbitrage){res.status(503).json({error:'Paired arbitrage review is unavailable'});return;}
+    const authorize=()=>{if(connecting.size)throw Error('Exchange credentials are being updated; prepare a fresh paired review afterwards');};
+    res.json(await services.arbitrage.prepare(req.body,authorize));
+  });
+  app.post('/api/arbitrage/:id/confirm',operator,async(req,res)=>{
+    if(!services.arbitrage){res.status(503).json({error:'Paired arbitrage review is unavailable'});return;}
+    const id=z.string().uuid().parse(req.params.id);
+    const {fingerprint}=z.object({fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);
+    if(services.arbitrage.get(id).fingerprint!==fingerprint){res.status(409).json({error:'The reviewed arbitrage plan does not match'});return;}
+    const authorize=()=>{if(connecting.size)throw Error('Exchange credentials are being updated; paired execution is blocked');};
+    res.json(await services.arbitrage.execute(id,authorize));
   });
   app.get('/api/workflow-runs',operator,(_req,res)=>res.json(services.workflows?.list()??[]));
   app.post('/api/workflow-runs',operator,async(req,res)=>{

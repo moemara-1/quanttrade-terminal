@@ -2,6 +2,7 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import type { ScannerSnapshot } from '@/lib/scanners'
 import { fetchScannerSnapshot } from '@/lib/scanners'
+import { fetchScannerDetail } from '@/lib/scanner-detail'
 
 const querySchema = z
   .object({
@@ -115,6 +116,31 @@ export function buildScannerTools(
     fetchScannerSnapshot(AbortSignal.timeout(25000)),
 ) {
   return {
+    get_scanner_detail: tool({
+      description:
+        'Read selected native Lighter/Hyperliquid market funding and strength history. Includes verified settled 24-hour funding sums only when all 24 hourly observations are present, separate constant-current-rate projections, actual closed hourly prices and same-venue BTC-relative performance. Use this to check scanner candidates before suggesting a paired review. Historical results and annualized scenarios do not predict future funding or establish net profitability; fees and slippage remain unknown. This tool never prepares or executes orders.',
+      inputSchema: z
+        .object({
+          base: z
+            .string()
+            .min(1)
+            .max(64)
+            .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+          venue: z.enum(['all', 'lighter', 'hyperliquid']).default('all'),
+        })
+        .strict(),
+      execute: async ({ base, venue }) => {
+        try {
+          return await fetchScannerDetail(base, venue)
+        } catch {
+          return {
+            unavailable: 'scanner_detail_unavailable',
+            message:
+              'Selected funding or price history could not be verified. Missing history is unknown, not zero.',
+          }
+        }
+      },
+    }),
     scan_markets: tool({
       description:
         'Read QuantTrade integrated Lighter/Hyperliquid scanners or Deribit options. Use this before claiming to have scanned all gainers/losers, funding arbitrage, mark gaps, crowding or options block trades. Strength defaults to raw change24h; choose relativeStrength24h explicitly for percentage-point outperformance versus BTC. Filters apply before ranking; total and truncated disclose scope. Returned pair and venue are exact native perpetual identifiers for subsequent quote/account/risk checks and one human-confirmed trade proposal; the scanner itself never places orders. Public signals are not guaranteed opportunities.',
