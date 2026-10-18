@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { ScannerSnapshot } from '@/lib/scanners'
 import { useArbitrageReview } from '@/hooks/use-arbitrage-review'
 
@@ -5,18 +6,32 @@ const control =
   'w-full rounded-md border border-border bg-background px-3 py-2 text-xs focus-visible:outline-2 focus-visible:outline-primary'
 export function ArbitrageReviewForm({
   comparison,
+  onBusyChange,
 }: {
   comparison: ScannerSnapshot['comparisons'][number]
+  onBusyChange?: (busy: boolean) => void
 }) {
   const review = useArbitrageReview(comparison)
   const { plan } = review
   const active = review.busy
+  const operationRef = useRef(false)
+  const perform = async (action: () => Promise<void>) => {
+    if (operationRef.current) return
+    operationRef.current = true
+    onBusyChange?.(true)
+    try {
+      await action()
+    } finally {
+      operationRef.current = false
+      onBusyChange?.(false)
+    }
+  }
   return (
-    <section className="rounded-lg border border-border bg-card p-3">
-      <h3 className="text-sm font-semibold">Prepare paired entry</h3>
-      <p className="mt-1 text-[11px] text-muted-foreground">
-        One review, two venue orders. No order is sent until you confirm the
-        exact pair below.
+    <section className="rounded-md border border-border bg-card p-3">
+      <h3 className="text-xs font-semibold">Prepare paired entry</h3>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        Two venue orders. Review exact accounts and quantities before
+        confirming.
       </p>
       <p className="mt-2 text-[11px] text-amber-500">
         Existing positions may be offset or reversed. Stop-loss and take-profit
@@ -25,10 +40,10 @@ export function ArbitrageReviewForm({
       {!plan && (
         <>
           <div
-            className="mt-3 grid gap-3"
+            className="mt-3 grid gap-2"
             style={{
               gridTemplateColumns:
-                'repeat(auto-fit,minmax(min(100%,160px),1fr))',
+                'repeat(auto-fit,minmax(min(100%,120px),1fr))',
             }}
           >
             <label className="text-[11px] text-muted-foreground">
@@ -84,7 +99,7 @@ export function ArbitrageReviewForm({
           <button
             className="mt-3 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
             disabled={active}
-            onClick={() => void review.prepare()}
+            onClick={() => void perform(review.prepare)}
           >
             {active ? 'Preparing both legs...' : 'Prepare paired entry'}
           </button>
@@ -157,7 +172,7 @@ export function ArbitrageReviewForm({
                 <button
                   disabled={active}
                   className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
-                  onClick={() => void review.confirm()}
+                  onClick={() => void perform(review.confirm)}
                 >
                   {active ? 'Submitting paired entry...' : 'Confirm both legs'}
                 </button>

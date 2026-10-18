@@ -45,7 +45,7 @@ export function ScannerHistoryChart({
       minute: '2-digit',
     })
   return (
-    <section className="min-w-0 rounded-lg border border-border bg-card p-3">
+    <section className="min-w-0 rounded-lg border border-border bg-card p-2">
       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-xs font-semibold">{title}</h3>
@@ -72,7 +72,7 @@ export function ScannerHistoryChart({
         })}
       </div>
       <svg
-        className="h-[200px] w-full touch-pan-y overflow-visible"
+        className="h-[170px] w-full touch-pan-y overflow-visible"
         viewBox="0 0 800 200"
         role="img"
         aria-label={title}

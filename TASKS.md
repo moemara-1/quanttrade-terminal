@@ -306,3 +306,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Add bounded actual24h funding/history and strength detail data with honest projections/coverage and regressions.
 - [completed] Implement distinctemblem, compactopportunityrows and richdetail charts plus one reviewed arbitrage action with exactaccountchecks.
 - [completed] Verified 302 backend and 4,079 frontend tests, final TypeScript/lint and 11-task production build. Deployed 20261018-4; hosted sources/auth/account-read checks pass. Desktop units, signed mark-gap carry, funding and strength charts plus 390px mobile review verified. Browser QA found and fixed hourly timestamp alignment and missing assistant tool registration, with red/green regressions. Real NanoGPT get_scanner_detail read returned both venues with 24/24 samples and correct settled/scenario distinction. No live financial actions. Finalized for commit/push.
+
+## Compact scanner experience
+- [completed] Implemented bounded 620px detail panel, compact venue rows, Overview/History/Trade tabs, retained results/filter/scroll and reviewed inputs. Close/Escape restores focus; pending submissions block panel changes.
+- [completed] 4,079 frontend tests, native TypeScript, lint and production build pass. Hosted 620px desktop panel preserves filters and inputs through keyboard tab/Escape/close/reopen; 390px mobile fits without overflow or nested dialogs, history and return navigation work. No prepare/confirm or financial actions during QA.
+- [completed] Saved overlays and deployed UI-only release 20261018-5 with hosted read/auth checks; no service restarts. Finalized for commit/push.
