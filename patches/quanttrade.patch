@@ -9239,6 +9239,215 @@ index 93de06c..417200d 100644
     *
     * Everything finer than that is applied client-side over the page this
     * returns, which is also why switching chips inside a board costs no request.
+diff --git a/apps/terminal/src/components/discovery/watchlist-pane.tsx b/apps/terminal/src/components/discovery/watchlist-pane.tsx
+index 19148b1..7fe3773 100644
+--- a/apps/terminal/src/components/discovery/watchlist-pane.tsx
++++ b/apps/terminal/src/components/discovery/watchlist-pane.tsx
+@@ -67,12 +67,13 @@ import {
+ import { DEFAULT_WATCHLIST_ID } from '@pairlens/persistence'
+ import type { DragEndEvent } from '@dnd-kit/core'
+ 
+-import type { Instrument } from '@pairlens/shared/instrument-types'
+ import type { PairEntry } from '@/components/pair-picker/pair-picker-data'
+ import type { InstrumentRef } from '@pairlens/shared/market-ref'
++import type { WatchlistItem } from '@/lib/watchlist-items'
+ import { formatPrice } from '@/lib/format-price'
+-import { usePreferredMarketResolver } from '@/hooks/use-preferred-market'
+-import { entryToInstrumentRef, entryToMarketRef } from '@/lib/market-ref/entry'
++import { useMarketRefOrNull } from '@/lib/market-ref/use-market-ref'
++import { buildWatchlistItems } from '@/lib/watchlist-items'
++import { entryToInstrumentRef } from '@/lib/market-ref/entry'
+ import { chartLinkProps } from '@/lib/market-ref/link'
+ import { useInstrumentsBySymbols } from '@/hooks/use-market-instruments'
+ import { useAvailableMarkets } from '@/hooks/use-available-markets'
+@@ -117,13 +118,10 @@ export function WatchlistPane() {
+   )
+   const { items: instruments } = useInstrumentsBySymbols(sortedSymbols)
+ 
+-  const watchlistItems = useMemo(() => {
+-    if (!instruments.length) return []
+-    const bySymbol = new Map(instruments.map((i) => [i.symbol, i]))
+-    return listRefs
+-      .map((ref) => bySymbol.get(ref.id))
+-      .filter((i): i is Instrument => i !== undefined)
+-  }, [listRefs, instruments])
++  const watchlistItems = useMemo(
++    () => buildWatchlistItems(listRefs, instruments),
++    [listRefs, instruments],
++  )
+ 
+   // User's preferred market (last selected in the chart terminal).
+   const { markets: availableMarkets, defaultMarket } = useAvailableMarkets()
+@@ -138,16 +136,18 @@ export function WatchlistPane() {
+   // crypto exchange, so it has to leave the sticky market for one that serves
+   // its asset class. The shared resolver owns that decision now, including the
+   // class-spelling normalization that used to make every crypto row miss.
+-  const resolveMarket = usePreferredMarketResolver()
++  const resolveMarket = useMarketRefOrNull()
+   const marketBySymbol = useMemo(
+     () =>
+       new Map(
+         watchlistItems.map((inst) => [
+-          inst.symbol,
+-          resolveMarket(inst.assetClass),
++          inst.id,
++          resolveMarket(inst.watchRef, inst.listedOn)?.market ??
++            inst.watchRef.market ??
++            validPreferred,
+         ]),
+       ),
+-    [watchlistItems, resolveMarket],
++    [watchlistItems, resolveMarket, validPreferred],
+   )
+ 
+   // Connector-switch transition: every row re-resolves and re-subscribes its
+@@ -194,8 +194,8 @@ export function WatchlistPane() {
+ 
+       const { active, over } = event
+       if (!over || active.id === over.id) return
+-      const fromIndex = watchlistItems.findIndex((i) => i.symbol === active.id)
+-      const toIndex = watchlistItems.findIndex((i) => i.symbol === over.id)
++      const fromIndex = watchlistItems.findIndex((i) => i.id === active.id)
++      const toIndex = watchlistItems.findIndex((i) => i.id === over.id)
+       if (fromIndex !== -1 && toIndex !== -1) {
+         reorderSymbols(fromIndex, toIndex)
+       }
+@@ -370,7 +370,7 @@ export function WatchlistPane() {
+             onDragEnd={handleDragEnd}
+           >
+             <SortableContext
+-              items={watchlistItems.map((i) => i.symbol)}
++              items={watchlistItems.map((i) => i.id)}
+               strategy={verticalListSortingStrategy}
+             >
+               <div
+@@ -395,12 +395,12 @@ export function WatchlistPane() {
+                         const inst = watchlistItems[virtualRow.index]
+                         return (
+                           <SortableWatchlistItem
+-                            key={inst.symbol}
++                            key={inst.id}
+                             inst={inst}
+                             listId={activeList.id}
+                             isActive={inst.symbol === activePair?.pairKey}
+                             market={
+-                              marketBySymbol.get(inst.symbol) ?? validPreferred
++                              marketBySymbol.get(inst.id) ?? validPreferred
+                             }
+                             priceCache={priceCacheRef}
+                             justDraggedRef={justDraggedRef}
+@@ -609,7 +609,7 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+   justDraggedRef,
+   onRemove,
+ }: {
+-  inst: Instrument
++  inst: WatchlistItem
+   listId: string
+   isActive: boolean
+   /** Venue this row prices against — already resolved for its asset class. */
+@@ -627,7 +627,7 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+     isDragging,
+     transform,
+     transition,
+-  } = useSortable({ id: inst.symbol })
++  } = useSortable({ id: inst.id })
+ 
+   const style = {
+     transform: CSS.Transform.toString(transform),
+@@ -638,20 +638,27 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+   const { ticker } = useTickerStream({
+     market,
+     pairKey: inst.symbol,
++    enabled: inst.metadataResolved,
+   })
+ 
+   // Derived during render (cache fallback covers re-mounts and market
+   // switches) — keeping it out of state avoids a second render per tick.
+-  const cached = priceCache.current?.get(inst.symbol)
+-  const displayPrice = ticker?.last ?? cached?.price ?? null
+-  const displayChange = ticker?.change24h ?? cached?.change24h ?? null
++  const cached = inst.metadataResolved
++    ? priceCache.current?.get(`${market}:${inst.id}`)
++    : undefined
++  const displayPrice = inst.metadataResolved
++    ? (ticker?.last ?? cached?.price ?? null)
++    : null
++  const displayChange = inst.metadataResolved
++    ? (ticker?.change24h ?? cached?.change24h ?? null)
++    : null
+   const direction = usePriceTick(ticker?.last)
+ 
+   useEffect(() => {
+-    if (ticker?.last == null) return
++    if (!inst.metadataResolved || ticker?.last == null) return
+ 
+-    const prevCached = priceCache.current?.get(inst.symbol)
+-    priceCache.current?.set(inst.symbol, {
++    const prevCached = priceCache.current?.get(`${market}:${inst.id}`)
++    priceCache.current?.set(`${market}:${inst.id}`, {
+       price: ticker.last,
+       ...(ticker.change24h != null
+         ? { change24h: ticker.change24h }
+@@ -659,21 +666,28 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+           ? { change24h: prevCached.change24h }
+           : {}),
+     })
+-  }, [ticker?.last, ticker?.change24h, inst.symbol, priceCache])
++  }, [
++    ticker?.last,
++    ticker?.change24h,
++    inst.id,
++    inst.metadataResolved,
++    market,
++    priceCache,
++  ])
+ 
+   const handleRemove = useCallback(
+     (e: React.MouseEvent) => {
+       e.stopPropagation()
+       // By ref: the stored entry for a token is its address, so removing by
+       // ticker would leave the row in place.
+-      onRemove(entryToInstrumentRef(inst), listId)
++      onRemove(inst.watchRef, listId)
+     },
+     [onRemove, inst, listId],
+   )
+ 
+   const handleClick = useCallback(() => {
+     if (justDraggedRef.current) return
+-    void navigate(chartLinkProps(entryToMarketRef(inst, market)))
++    void navigate(chartLinkProps({ ...inst.watchRef, market }))
+   }, [justDraggedRef, navigate, inst, market])
+ 
+   // Rows are focusable (dnd-kit adds tabIndex/role) but divs have no native
+@@ -747,11 +761,13 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+       </div>
+       {/* Trend cue. It grows with the pane and is the first thing to go when
+           the pane is docked narrower than the symbol itself needs. */}
+-      <MiniPriceChart
+-        market={market}
+-        pair={inst.symbol}
+-        className="hidden h-5 w-10 @min-[20rem]/pane:block @sm/pane:w-14 @lg/pane:w-20"
+-      />
++      {inst.metadataResolved && (
++        <MiniPriceChart
++          market={market}
++          pair={inst.symbol}
++          className="hidden h-5 w-10 @min-[20rem]/pane:block @sm/pane:w-14 @lg/pane:w-20"
++        />
++      )}
+       {/* Reserved width, so the chart to its left starts at the same x on
+           every row. Digits per price vary a lot across a watchlist
+           ($64,570.60 against $0.1984) and without this the column of charts
+@@ -772,6 +788,8 @@ const SortableWatchlistItem = memo(function SortableWatchlistItem({
+               <TickArrow direction={direction} />
+               {formatPrice(displayPrice)}
+             </>
++          ) : !inst.metadataResolved ? (
++            <span title="Market data unavailable">Unavailable</span>
+           ) : (
+             <span className="inline-block h-3 w-14 animate-pulse rounded bg-muted" />
+           )}
 diff --git a/apps/terminal/src/components/feedback/bug-report-form.tsx b/apps/terminal/src/components/feedback/bug-report-form.tsx
 index 928bd83..d199a02 100644
 --- a/apps/terminal/src/components/feedback/bug-report-form.tsx

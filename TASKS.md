@@ -311,3 +311,8 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Implemented bounded 620px detail panel, compact venue rows, Overview/History/Trade tabs, retained results/filter/scroll and reviewed inputs. Close/Escape restores focus; pending submissions block panel changes.
 - [completed] 4,079 frontend tests, native TypeScript, lint and production build pass. Hosted 620px desktop panel preserves filters and inputs through keyboard tab/Escape/close/reopen; 390px mobile fits without overflow or nested dialogs, history and return navigation work. No prepare/confirm or financial actions during QA.
 - [completed] Saved overlays and deployed UI-only release 20261018-5 with hosted read/auth checks; no service restarts. Finalized for commit/push.
+
+## Home watchlist saved-row visibility
+- [completed] Saved refs now own row existence, class/venue matching, reorder/removal and navigation. Missing metadata renders label-only Unavailable row with no quote/sparkline or cached price. XMR/class/native-venue regressions pass.
+- [completed] 4,083 frontend tests, TypeScript, lint and 11-task build pass. Hosted Favorites(1) renders XMR-USDT Unavailable, while Top Crypto displays Bitcoin/Ethereum metadata and live quotes. Native-context discovery regression covered with real bundled catalog. No saved ticker content or financial actions changed.
+- [completed] Deployed frontend-only 20261019-2 with hosted read/auth checks; services unchanged. Finalized for commit/push.
