@@ -11,6 +11,8 @@ const marketsSchema = z.array(
   z.object({
     symbol: z.string(),
     maxLeverage: z.number().nullable().optional(),
+    onlyIsolated:z.boolean().optional(),
+    marginModes:z.array(z.enum(['cross','isolated'])).optional(),
     sizeDecimals: z.number().nullable().optional(),
     priceDecimals: z.number().nullable().optional(),
     minSize: z.string().nullable().optional(),
@@ -37,7 +39,7 @@ export function useContractLimits(market: string, pair: string) {
       ),
   })
   if (!native || query.isError || !query.data) return null
-  const symbol = pair.endsWith('-USDC-USDC') ? pair.slice(0, -5) : pair
+  const symbol = /^.+-([A-Za-z0-9_.]+)-\1$/.test(pair)?pair.slice(0,pair.lastIndexOf('-')):pair
   return query.data.find((row) => row.symbol === symbol) ?? null
 }
 export function useContractLeverage(

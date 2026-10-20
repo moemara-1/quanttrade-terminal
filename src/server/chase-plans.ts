@@ -1,3 +1,4 @@
+import { hummingbotTradingPair } from './execution.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
@@ -102,7 +103,7 @@ export class ChasePlans {
           if(run.stopRequested||this.clock()>=run.deadline||this.clock()-attempt.submittedAt>=run.plan.intervalSeconds*1000){
             // Persist before mutation: an uncertain cancel can never cause a replacement.
             attempt.phase='cancelling';this.save(run);this.authorized(run.plan,run.stopRequested);
-            z.object({status:z.literal('accepted')}).parse(await this.client.perform('cancel-order',{request_id:`chase-${run.id}-${run.attempts.length}-cancel`,account_name:run.plan.accountName,connector_name:run.plan.venue+'_perpetual',trading_pair:run.plan.venue==='hyperliquid'?run.plan.symbol.replace(/-USDC$/,'-USD'):run.plan.symbol,exchange_order_id:proof.exchangeId}));
+            z.object({status:z.literal('accepted')}).parse(await this.client.perform('cancel-order',{request_id:`chase-${run.id}-${run.attempts.length}-cancel`,account_name:run.plan.accountName,connector_name:run.plan.venue+'_perpetual',trading_pair:run.plan.venue==='hyperliquid'?hummingbotTradingPair(run.plan.symbol):run.plan.symbol,exchange_order_id:proof.exchangeId}));
             this.save(run);
           }
           continue;

@@ -14,15 +14,16 @@ const numeric=(value:unknown):number|null=>{
 function normalize(venue:Venue,rows:Market[],now:number):ScannerMarket[]{
  const valid:ScannerMarket[]=[];
  for(const row of rows){
-  if(row.venue!==venue||row.marketType==='spot'||row.symbol!==`${row.base}-USDC`||!row.base||row.base.length>64)continue;
+  const quote=row.quote??'USDC';
+  if(row.venue!==venue||row.marketType==='spot'||row.symbol!==`${row.base}-${quote}`||!row.base||row.base.length>64)continue;
   if(!Number.isSafeInteger(row.updatedAt)||row.updatedAt<now-120_000||row.updatedAt>now+5_000)continue;
   const price=numeric(row.price),volume=numeric(row.volume24h),change=numeric(row.change24h);
   if(price===null||price<=0||volume===null||volume<0||change===null||change < -100)continue;
   const funding=numeric(row.fundingRate),oi=numeric(row.openInterest);
   const oiBase=oi!==null&&oi>=0?oi:null;
-  const oiUsd=oiBase===null?null:new Decimal(oiBase).mul(price).toNumber();
+  const oiUsd=oiBase===null||quote!=='USDC'?null:new Decimal(oiBase).mul(price).toNumber();
   if(oiUsd!==null&&!Number.isFinite(oiUsd))continue;
-  valid.push({venue,symbol:row.symbol,base:row.base,price,change24h:change,volume24h:volume,
+  valid.push({venue,symbol:row.symbol,base:row.base,quote,...(row.dex?{dex:row.dex}:{}),price,change24h:change,volume24h:volume,
    fundingHourly:funding,openInterestBase:oiBase,openInterestUsd:oiUsd,relativeStrength24h:null,
    oiToVolume:oiUsd!==null&&volume>0?finiteOrNull(new Decimal(oiUsd).div(volume).toNumber()):null,observedAt:row.updatedAt});
  }
@@ -30,10 +31,10 @@ function normalize(venue:Venue,rows:Market[],now:number):ScannerMarket[]{
  const counts=new Map<string,number>();for(const row of valid)counts.set(row.base,(counts.get(row.base)??0)+1);
  const unique=valid.filter(row=>counts.get(row.base)===1);
  const btc=unique.find(row=>row.base==='BTC');
- return unique.map(row=>({...row,relativeStrength24h:btc?finiteOrNull(new Decimal(row.change24h).minus(btc.change24h).toNumber()):null}));
+ return unique.map(row=>({...row,relativeStrength24h:btc&&row.quote===btc.quote?finiteOrNull(new Decimal(row.change24h).minus(btc.change24h).toNumber()):null}));
 }
 function compare(rows:ScannerMarket[]):ScannerComparison[]{
- const hl=new Map(rows.filter(r=>r.venue==='hyperliquid').map(r=>[r.base,r]));
+ const hl=new Map(rows.filter(r=>r.venue==='hyperliquid'&&(r.quote??'USDC')==='USDC'&&!r.base.includes(':')).map(r=>[r.base,r]));
  return rows.filter(r=>r.venue==='lighter'&&hl.has(r.base)&&Math.abs(r.observedAt-hl.get(r.base)!.observedAt)<=30_000).map(lighter=>{
   const hyperliquid=hl.get(lighter.base)!;
   const fundingKnown=hyperliquid.fundingHourly!==null&&lighter.fundingHourly!==null;
@@ -51,7 +52,7 @@ function compare(rows:ScannerMarket[]):ScannerComparison[]{
 /** Public observation only. No account identity, credentials or execution clients. */
 export class DiscoveryScanners {
  private cached?:{expires:number;value:Promise<ScannerSnapshot>};
- constructor(private readonly markets:Pick<MarketService,'list'>,private readonly options:{get():Promise<OptionsSnapshot>},private readonly clock:()=>number=Date.now){}
+ constructor(private readonly markets:Pick<MarketService,'list'|'coverage'>,private readonly options:{get():Promise<OptionsSnapshot>},private readonly clock:()=>number=Date.now){}
  async get():Promise<ScannerSnapshot>{
   if(!this.cached||this.cached.expires<=this.clock()){
    const value=this.load();this.cached={expires:this.clock()+TTL,value};
@@ -68,9 +69,11 @@ export class DiscoveryScanners {
      if(!rows.length)throw new Error('No current valid contracts');
      const excluded=raw.length-rows.length;
      const missingFunding=rows.filter(row=>row.fundingHourly===null).length;
-     const messages=[excluded?`${excluded} stale, invalid or ambiguous contracts excluded.`:null,missingFunding?`Current funding is unavailable for ${missingFunding} contracts.`:null].filter(Boolean);
+     const coverage=this.markets.coverage?.(venue);
+     const nonUsd=rows.filter(row=>row.quote!=='USDC').length;
+     const messages=[coverage&&!coverage.complete?`Market coverage is incomplete; unavailable DEX scopes: ${coverage.failedDexs.join(', ')}.`:null,nonUsd?`${nonUsd} contracts use their quoted collateral units; USD open interest and cross-quote comparisons are unavailable.`:null,excluded?`${excluded} stale, invalid or ambiguous contracts excluded.`:null,missingFunding?`Current funding is unavailable for ${missingFunding} contracts.`:null].filter(Boolean);
      return {rows,source:{id:venue,status:'ok',observedAt:Math.min(...rows.map(r=>r.observedAt)),count:rows.length,
-      message:messages.length?messages.join(' '):null} satisfies ScannerSource};
+      ...(coverage?coverage:{}),message:messages.length?messages.join(' '):null} satisfies ScannerSource};
     }catch{return {rows:[],source:{id:venue,status:'error',observedAt:null,count:0,message:'Current venue market data is unavailable.'} satisfies ScannerSource};}
    })),
    this.options.get().catch(():OptionsSnapshot=>({sources:[{id:'deribit',status:'error',observedAt:null,count:0,message:'Options market data is unavailable.'}],trades:[],overview:[],coverage:[]})),

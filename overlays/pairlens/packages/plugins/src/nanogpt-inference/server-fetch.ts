@@ -2,9 +2,29 @@ const endpoint = '/_quanttrade/api/ai/nanogpt/jobs'
 const target = 'https://api.nano-gpt.com/api/v1/chat/completions'
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const connectionError = () => new TypeError('NanoGPT server connection failed')
+const proxyStatuses = new Set([502, 503, 504])
+const terminalReasons = new Set([
+  'upstream-connection',
+  'upstream-stream',
+  'timeout',
+  'canceled',
+  'buffer-limit',
+  'incomplete-step',
+])
+const responseFailureReason = (response: Response) => {
+  const reason = response.headers.get('x-quanttrade-ai-failure')
+  return reason && terminalReasons.has(reason) ? reason : undefined
+}
+const proxyFailure = (response: Response) =>
+  proxyStatuses.has(response.status) &&
+  !response.headers.has('x-quanttrade-ai-failure') &&
+  response.headers.get('x-quanttrade-ai-upstream') !== '1'
 
 export class NanoGPTServerError extends Error {
-  constructor(readonly statusCode: number) {
+  constructor(
+    readonly statusCode: number,
+    readonly failureReason?: string,
+  ) {
     super(
       statusCode === 401 || statusCode === 403
         ? 'NanoGPT server session requires sign-in'
@@ -119,6 +139,8 @@ export async function fetchNanogptOnServer(
   }
   const body = JSON.stringify({
     requestId: crypto.randomUUID(),
+    // A complete inference step is released once; failed drafts cannot run tools.
+    atomic: true,
     apiKey,
     request,
   })
@@ -148,7 +170,14 @@ export async function fetchNanogptOnServer(
         response.headers.get('x-quanttrade-ai-upstream') !== '1'
       ) {
         await response.body?.cancel()
-        throw new NanoGPTServerError(response.status)
+        if (proxyFailure(response) && ++failures < 3) {
+          await pause(failures * 250)
+          continue
+        }
+        throw new NanoGPTServerError(
+          response.status,
+          responseFailureReason(response),
+        )
       }
       return response
     }
@@ -163,6 +192,10 @@ export async function fetchNanogptOnServer(
         })
         if (!created.ok) {
           await created.body?.cancel()
+          if (proxyFailure(created) && attempt < 2) {
+            await pause((attempt + 1) * 250)
+            continue
+          }
           throw new NanoGPTServerError(created.status)
         }
         const result: unknown = await created.json()
@@ -248,12 +281,17 @@ export async function fetchNanogptOnServer(
       },
       { highWaterMark: 0 },
     )
+    const headers = new Headers({
+      'Content-Type':
+        response.headers.get('content-type') ?? 'text/event-stream',
+    })
+    for (const name of ['retry-after', 'x-request-id', 'x-quanttrade-ai-upstream']) {
+      const value = response.headers.get(name)
+      if (value) headers.set(name, value)
+    }
     return new Response(stream, {
       status: response.status,
-      headers: {
-        'Content-Type':
-          response.headers.get('content-type') ?? 'text/event-stream',
-      },
+      headers,
     })
   } catch (error) {
     if (!finished) {

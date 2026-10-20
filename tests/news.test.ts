@@ -5,6 +5,40 @@ const source={url:'https://www.coindesk.com/arc/outboundfeeds/rss/',name:'CoinDe
 const xml='<rss><channel><item><title><![CDATA[Bitcoin &amp; Ethereum rally]]></title><link>https://www.coindesk.com/story</link><pubDate>Wed, 07 Oct 2026 12:00:00 GMT</pubDate><description>full copyrighted body</description></item><item><title>unsafe</title><link>javascript:alert(1)</link><pubDate>Wed, 07 Oct 2026 12:00:00 GMT</pubDate></item></channel></rss>';
 test('RSS maps safe headlines, source, UTC and ticker metadata without copying article body',()=>{const items=parseNewsRss(xml,source);assert.equal(items.length,1);assert.equal(items[0].title,'Bitcoin & Ethereum rally');assert.equal(items[0].timePublished,'2026-10-07T12:00:00.000Z');assert.equal(items[0].summary,'');assert.equal(items[0].tickerSentiment[0].ticker,'CRYPTO:BTC');});
 test('XML entities and oversized documents are rejected',()=>{assert.throws(()=>parseNewsRss('<!DOCTYPE rss [<!ENTITY a "bad">]><rss/>',source));assert.throws(()=>parseNewsRss('x'.repeat(2_000_001),source));});
+
+test('Celestia aliases and bare crypto ticker requests resolve the same attributed headlines',async()=>{
+ const payload=headline('Celestia expands data availability network','coindesk.com');
+ const service=new NewsService(async()=>new Response(payload),[source]);
+ for(const tickers of ['TIA','CRYPTO:TIA','TIA-USDC-USDC','TIA/USDC','Celestia',' celestia ']){
+  const result=await service.get({tickers});
+  assert.equal(result.articles.length,1,tickers);
+  assert(result.articles[0].tickerSentiment.some(t=>t.ticker==='CRYPTO:TIA'));
+ }
+ const bitcoin=new NewsService(async()=>new Response(xml),[source]);
+ assert.equal((await bitcoin.get({tickers:'BTC'})).articles.length,1);
+ assert.equal((await bitcoin.get({tickers:'Bitcoin'})).articles.length,1);
+ assert(!parseNewsRss(headline('TIAA publishes its retirement outlook','coindesk.com'),source)[0].tickerSentiment.some(t=>t.ticker==='CRYPTO:TIA'));
+});
+
+test('zero matches report the bounded non-exhaustive headline feed coverage',async()=>{
+ const failed={...source,name:'Unavailable fixture',url:'https://unavailable.example/rss'};
+ const service=new NewsService(async url=>String(url).includes('unavailable')?new Response('',{status:503}):new Response(xml),[source,failed]);
+ const result=await service.get({tickers:'TIA'});
+ assert.equal(result.articles.length,0);
+ assert.equal(result.coverage.exhaustive,false);
+ assert.equal(result.coverage.scope,'configured-rss-headlines');
+ assert.equal(result.coverage.totalMatchedArticles,0);
+ assert.equal(result.coverage.sources.filter(s=>s.status==='unavailable').length,1);
+ assert.match(result.coverage.warning,/not.*absence|does not.*absence/i);
+});
+
+test('available market-publisher crypto headlines survive a crypto-source outage',async()=>{
+ const service=new NewsService(async url=>String(url).includes('coindesk')?new Response('',{status:503}):new Response(headline('Celestia draws institutional attention')),[source,markets]);
+ const result=await service.get({tickers:'TIA'});
+ assert.equal(result.articles.length,1);
+ assert.equal(result.articles[0].source,'MarketWatch');
+ assert.equal(result.coverage.exhaustive,false);
+});
 test('coalesces requests, sorts and filters tickers/time then honors page limit',async()=>{let calls=0;const service=new NewsService(async()=>{calls++;return new Response(xml);},[source]);const [a,b]=await Promise.all([service.get({tickers:'CRYPTO:BTC',limit:'1'}),service.get({})]);assert.equal(calls,1);assert.equal(a.articles.length,1);assert.equal(b.articles.length,1);assert.equal((await service.get({tickers:'AAPL'})).articles.length,0);assert.equal((await service.get({time_to:'20261007T1100'})).articles.length,0);assert.equal(calls,1);await assert.rejects(service.get({limit:'999'}));});
 test('partial source failure preserves real headlines; total failure remains unavailable',async()=>{const service=new NewsService(async(url)=>String(url).includes('coindesk')?new Response(xml):new Response('',{status:503}),[source,{...source,url:'https://example.org/rss'}]);assert.equal((await service.get({})).articles.length,1);await assert.rejects(new NewsService(async()=>new Response('',{status:503}),[source]).get({}));});
 

@@ -56,7 +56,8 @@ class OpenOrdersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['scope'], 'standard-perpetual-markets')
         self.assertFalse(result['complete']); self.assertIn('builder', result['error'])
         self.assertEqual(result['orders'][0]['symbol'], 'BTC-USDC')
-        c._api_post.assert_awaited_once_with(path_url='/info', data={'type': 'frontendOpenOrders', 'user': 'owner', 'dex': ''}, is_auth_required=False)
+        c._api_post.assert_any_await(path_url='/info', data={'type': 'frontendOpenOrders', 'user': 'owner', 'dex': ''}, is_auth_required=False)
+        c._api_post.assert_any_await(path_url='/info', data={'type': 'perpDexs'}, is_auth_required=False)
 
     async def test_spot_scope_and_malformed_amounts_do_not_claim_empty_account(self):
         c = self.lighter([{'market_index': 4, 'order_index': 33, 'price': 'NaN'}])
@@ -76,3 +77,24 @@ class OpenOrdersTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.post('/quanttrade/trading/open-orders', json={'connector_name': 'lighter_perpetual'}).status_code, 401)
         self.assertEqual(module.OpenOrdersRequest(connector_name='lighter_perpetual').account_name, 'desk')
         with self.assertRaises(ValueError): module.OpenOrdersRequest(connector_name='lighter_perpetual', trading_pair='GRAM-USDC')
+
+class BuilderOpenOrdersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_builder_books_and_namespaces_are_read_with_partial_failure_explicit(self):
+        calls=[]
+        async def info(**kw):
+            body=kw['data'];calls.append(body)
+            if body['type']=='perpDexs':return [None,{'name':'xyz'},{'name':'para'}]
+            if body['type']=='meta':return {'collateralToken':0,'universe':[]}
+            if body.get('dex')=='xyz':raise TimeoutError('fixture')
+            return [{'coin':'BTC','oid':1}] if body.get('dex')=='' else [{'coin':'para:PAPER','oid':2}]
+        c=SimpleNamespace(_auth=SimpleNamespace(_api_address='owner'),_api_post=AsyncMock(side_effect=info))
+        result=await module.open_orders(c,'hyperliquid_perpetual')
+        self.assertEqual(result['scope'],'all-perpetual-markets');self.assertFalse(result['complete'])
+        self.assertEqual([r['symbol'] for r in result['orders']],['BTC-USDC','para:PAPER-USDC'])
+        self.assertIn('xyz',result['error'])
+        self.assertEqual({x.get('dex') for x in calls if x['type']=='frontendOpenOrders'},{'','xyz','para'})
+    async def test_successful_all_dex_read_can_prove_no_resting_orders(self):
+        async def info(**kw):return [None,{'name':'para'}] if kw['data']['type']=='perpDexs' else {'collateralToken':0} if kw['data']['type']=='meta' else []
+        c=SimpleNamespace(_auth=SimpleNamespace(_api_address='owner'),_api_post=AsyncMock(side_effect=info))
+        result=await module.open_orders(c,'hyperliquid_perpetual')
+        self.assertEqual(result['scope'],'all-perpetual-markets');self.assertTrue(result['complete']);self.assertEqual(result['orders'],[])

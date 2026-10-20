@@ -18,7 +18,7 @@ function setup(
         .searchParams
       const pair =
         params.get('symbol') +
-        (params.get('marketType') === 'spot' ? '' : '-USDC')
+        (params.get('marketType') === 'spot' ? '' : '-'+params.get('symbol')?.split('-').at(-1))
       reads.push(`${params.get('venue')}:${pair}`)
       return Response.json([
         { time: 1, open: 1, close: 1, high: 1, low: 1, volume: 1 },
@@ -201,3 +201,17 @@ test('assistant native instrument search bypasses generic discovery context', as
   )({ query: 'PRL', market: 'lighter' }, { toolCallId: 'search', messages: [] })
   expect(result.instruments.map((row) => row.symbol)).toEqual(['PRL-USDC-USDC'])
 })
+
+test('builder market reads retain quote and namespace and reject ambiguous bare tickers',async()=>{
+ const {run,reads}=setup([{venue:'hyperliquid',base:'flx:PAPER',symbol:'flx:PAPER-USDH'},{venue:'hyperliquid',base:'para:PAPER',symbol:'para:PAPER-USDC'}],'hyperliquid');
+ const result=await run(['flx:PAPER-USDH-USDH','PAPER']);
+ expect(result.ranked.some(row=>row.error?.includes('Ambiguous'))).toBe(true);
+ expect(result.ranked.find(row=>!row.error)?.pair).toBe('flx:PAPER-USDH-USDH');
+ expect(reads).toEqual(['hyperliquid:flx:PAPER-USDH-USDH']);
+});
+
+test('missing builder market in partial catalog is unknown rather than proven unlisted',async()=>{
+ const {run}=setup([],'hyperliquid');
+ globalThis.fetch=(async()=>Response.json([],{headers:{'X-QuantTrade-Catalog-Complete':'false','X-QuantTrade-Failed-Dexs':'["para"]'}})) as typeof fetch;
+ const result=await run(['PAPER']);expect(result.ranked[0]?.error).toContain('incomplete');
+});

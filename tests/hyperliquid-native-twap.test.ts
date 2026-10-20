@@ -132,3 +132,20 @@ test('native TWAP permission allows 3% slices without widening ordinary risk and
  }finally{revoked.store.close();}
 });
 test('native TWAP rejects protection already crossed at the latest admission reference price',async()=>{const x=setup();try{await assert.rejects(x.service.execute({...x.plan,protection:{activation:'after-full-entry-fill',management:'managed',stopLossPrice:'2',takeProfits:[{price:'3',sizePercent:'100'}],maxExitNotional:'1000'}}),/admission reference/);assert.equal(x.calls(),0);}finally{x.store.close();}});
+
+test('HIP3 native TWAP uses canonical market and uppercase connector wire after readiness proof',async()=>{
+ const now=Date.now(),store=new DeskStore(':memory:');store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+ const markets={list:async()=>[{venue:'hyperliquid' as const,symbol:'para:PAPER-USDC',base:'para:PAPER',dex:'para',coin:'para:PAPER',assetId:180038,quote:'USDC',collateralToken:0,onlyIsolated:true,maxLeverage:3,price:'2',change24h:0,volume24h:'1',fundingRate:0,openInterest:null,sizeDecimals:3,priceDecimals:2,minSize:'0.001',minNotional:'10',updatedAt:now}]};
+ let proofs=0,calls=0,collateralSymbol:unknown;
+ const desk=new TradingDesk(store,markets,{configured:true,validateBuilderMarket:async market=>{assert.equal(market.coin,'para:PAPER');proofs++;},place:async()=>{throw Error('No generic order');},cancel:async()=>{}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:300,proposalTtlSeconds:180,pairlensUrl:'http://localhost'},()=>now);
+ const service=new HyperliquidNativeTwap(desk,{perform:async(_action,input)=>{calls++;assert.equal(input.trading_pair,'PARA:PAPER-USD');return {status:'accepted',connector_name:'hyperliquid_perpetual',trading_pair:'PARA:PAPER-USD',twap_id:'123'};}},markets,()=>now,undefined,async symbol=>{collateralSymbol=symbol;return [{currency:'USDC',available:'150'}];});
+ try{
+ const plan={requestId:randomUUID(),proposedAt:now,credentialId:'hl',connectionRevision:'a'.repeat(64),accountName:'desk',mode:'live',venue:'hyperliquid',marketType:'perpetual',symbol:'para:PAPER-USDC',action:'create',side:'buy',size:'60',durationMinutes:5,randomize:false,reduceOnly:false,acceptNativeRisk:true,referenceNotionalBudget:'124',leverage:3,marginMode:'isolated'};
+ const result=await service.execute(plan);
+ assert.equal(result.status,'accepted');assert.equal(collateralSymbol,'para:PAPER-USDC');assert.ok(proofs>0);assert.equal(calls,1);assert.equal(service.list().runs[0]?.symbol,'para:PAPER-USDC');
+ const unverified=new HyperliquidNativeTwap(desk,{perform:async()=>{calls++;throw Error('Must not submit');}},markets,()=>now,undefined,async()=>{throw Error('Builder collateral unverified');});
+ await assert.rejects(unverified.execute({...plan,requestId:randomUUID()}),/unverified/);assert.equal(calls,1);
+ const unavailable=new HyperliquidNativeTwap(desk,{perform:async()=>{calls++;throw Error('Must not submit');}},markets,()=>now);
+ await assert.rejects(unavailable.execute({...plan,requestId:randomUUID()}),/collateral.*unverified/);assert.equal(calls,1);
+ }finally{store.close();}
+});

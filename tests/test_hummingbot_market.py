@@ -66,3 +66,20 @@ class MarketProtectionTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+class BuilderMarketSubmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_normal_builder_order_guard_reuses_exact_official_metadata_and_never_writes(self):
+        import sys
+        from unittest.mock import AsyncMock, patch
+        proof=AsyncMock(return_value={'asset_id':180038,'collateral_token':0})
+        with patch.dict(sys.modules,{'quanttrade_hummingbot_trading':SimpleNamespace(hl_builder_metadata=proof)}):
+            await module.verify_builder_submission(SimpleNamespace(),'hyperliquid_perpetual','PARA:PAPER-USD')
+            proof.assert_awaited_once()
+    async def test_failed_builder_proof_is_not_swallowed_and_core_orders_are_untouched(self):
+        import sys
+        from unittest.mock import AsyncMock, patch
+        proof=AsyncMock(side_effect=ValueError('wrong asset'))
+        with patch.dict(sys.modules,{'quanttrade_hummingbot_trading':SimpleNamespace(hl_builder_metadata=proof)}):
+            with self.assertRaises(ValueError):await module.verify_builder_submission(SimpleNamespace(),'hyperliquid_perpetual','PARA:PAPER-USD')
+            await module.verify_builder_submission(SimpleNamespace(),'hyperliquid_perpetual','BTC-USD')
+            self.assertEqual(proof.await_count,1)

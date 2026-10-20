@@ -15,6 +15,8 @@ export type AssistantErrorCode =
   | 'session'
   | 'response-expired'
   | 'server-capacity'
+  | 'server-interrupted'
+  | 'response-incomplete'
   | 'timeout'
   | 'tool-input'
   | 'tools'
@@ -40,6 +42,7 @@ export function describeAssistantError(
   const messages: Array<string> = []
   const names: Array<string> = []
   let status: number | undefined
+  let incompleteStep = false
   const pending: Array<{ error: unknown; depth: number }> = [
     { error, depth: 0 },
   ]
@@ -57,6 +60,7 @@ export function describeAssistantError(
     }
     if (typeof current !== 'object') continue
     const details = current as Record<string, unknown>
+    incompleteStep ||= details.failureReason === 'incomplete-step'
     if (typeof details.name === 'string') names.push(details.name)
     if ('message' in current && typeof current.message === 'string')
       messages.push(current.message)
@@ -89,6 +93,12 @@ export function describeAssistantError(
       : {}),
   })
   const serverRelay = names.includes('NanoGPTServerError')
+  if (encoded === 'response-incomplete' || (serverRelay && incompleteStep)) {
+    return result(
+      'response-incomplete',
+      `${provider} stopped before completing this step. No tools from that incomplete step were run. Earlier steps may have completed; check orders and runs before asking for a fresh plan.`,
+    )
+  }
   if (
     encoded === 'session' ||
     (serverRelay && (status === 401 || status === 403))
@@ -108,6 +118,15 @@ export function describeAssistantError(
     return result(
       'server-capacity',
       'The QuantTrade server has reached its assistant request limit. Wait for an active response to finish before sending another request.',
+    )
+  }
+  if (
+    encoded === 'server-interrupted' ||
+    (serverRelay && status !== undefined && status >= 500)
+  ) {
+    return result(
+      'server-interrupted',
+      'The QuantTrade server connection to the assistant was interrupted. Earlier tool actions may have completed; check order and run status before repeating a trade request.',
     )
   }
   if (encoded === 'tool-input' || names.includes('AI_InvalidToolInputError')) {

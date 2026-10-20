@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import type { HummingbotConfig } from './execution.ts';
+import { hummingbotTradingPair } from './execution.ts';
 import type { TradingDesk } from './trading.ts';
 import type { QuoteSource } from './trading.ts';
 
@@ -35,7 +36,7 @@ export class HummingbotOperations implements OperationClient {
 }
 
 function wireScope(input:{venue:string;marketType:string;symbol:string},accountName:string):Record<string,unknown> {
-  return {account_name:accountName,connector_name:input.marketType==='spot'?input.venue:input.venue+'_perpetual',trading_pair:input.venue==='hyperliquid'&&input.marketType!=='spot'?input.symbol.replace(/-USDC$/,'-USD'):input.symbol};
+  return {account_name:accountName,connector_name:input.marketType==='spot'?input.venue:input.venue+'_perpetual',trading_pair:input.venue==='hyperliquid'&&input.marketType!=='spot'?hummingbotTradingPair(input.symbol):input.symbol};
 }
 
 export class VenueOperations {
@@ -119,8 +120,8 @@ export class VenueOperations {
     const result=z.object({connector_name:z.string(),scope:z.enum(['all-perpetual-markets','all-spot-markets','standard-perpetual-markets']),complete:z.boolean(),error:z.string().max(300).optional(),orders:z.array(z.object({symbol:z.string().min(3).max(100).regex(/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/),exchangeOrderId:z.string().max(30).regex(/^[1-9]\d*$/),side:z.enum(['buy','sell']).optional(),type:z.string().max(50).optional(),size:z.string().max(80).optional(),totalSize:decimal.optional(),price:z.string().max(80).optional(),reduceOnly:z.boolean().optional(),triggerPrice:z.string().max(80).optional()}).strict())}).strict().parse(await this.client.perform('open-orders',{account_name:accountName,connector_name:connector}));
     authorized();
     if(result.connector_name!==connector)throw new Error('Exchange open-order response does not match the reviewed market');
-    const expectedScope=input.marketType==='spot'?'all-spot-markets':input.venue==='lighter'?'all-perpetual-markets':'standard-perpetual-markets';
-    if(result.scope!==expectedScope)throw new Error('Exchange open-order response scope does not match the reviewed market');
+    const expectedScopes=input.marketType==='spot'?['all-spot-markets']:input.venue==='lighter'?['all-perpetual-markets']:['standard-perpetual-markets','all-perpetual-markets'];
+    if(!expectedScopes.includes(result.scope))throw new Error('Exchange open-order response scope does not match the reviewed market');
     if(result.scope==='standard-perpetual-markets'&&result.complete)throw new Error('Hyperliquid standard scope cannot prove builder markets are empty');
     if(!result.complete&&!result.error)throw new Error('Incomplete open-order response requires an explicit explanation');
     const identities=new Set(result.orders.map(order=>order.exchangeOrderId));

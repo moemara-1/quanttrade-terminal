@@ -56,6 +56,101 @@ test('server-backed assistant requests are explicit opt-in and preserve SDK stre
   expect(starts).toBe(1)
 })
 
+test('relay recovery during setup never replays the completed read or duplicates preparation', async () => {
+  const plugin = createNanogptInferencePlugin(nanogptInferenceManifest)
+  await plugin.initialize?.({
+    apiKey: 'offline-fixture-key',
+    model: 'fixture',
+    serverBacked: true,
+  })
+  const jobs: Array<{ id: string; request: Record<string, unknown> }> = []
+  const secondJobReads: Array<string> = []
+  let reads = 0
+  let preparations = 0
+  const toolResponse = (name: string) =>
+    new Response(
+      `data: ${JSON.stringify({
+        id: 'fixture',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: `fixture-${name}`,
+                  type: 'function',
+                  function: { name, arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      })}\n\ndata: [DONE]\n\n`,
+      {
+        headers: {
+          'content-type': 'text/event-stream',
+          'x-quanttrade-ai-upstream': '1',
+        },
+      },
+    )
+  globalThis.fetch = Object.assign(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url)
+      expect(path.startsWith('/_quanttrade/api/ai/nanogpt/jobs')).toBe(true)
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as {
+          requestId: string
+          request: Record<string, unknown>
+        }
+        jobs.push({ id: body.requestId, request: body.request })
+        return Response.json({ id: body.requestId }, { status: 201 })
+      }
+      if (path.includes(jobs[0]!.id)) return toolResponse('read_fixture')
+      expect(jobs).toHaveLength(2)
+      expect(path).toBe(`/_quanttrade/api/ai/nanogpt/jobs/${jobs[1]!.id}?offset=0`)
+      secondJobReads.push(path)
+      if (secondJobReads.length === 1) return new Response(null, { status: 502 })
+      return toolResponse('prepare_fixture')
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  const model = await plugin.getLanguageModel?.()
+  if (!model) throw new Error('Missing NanoGPT language model')
+  const result = streamText({
+    model: model as LanguageModel,
+    prompt: 'Prepare the offline fixture only.',
+    maxRetries: 0,
+    stopWhen: stepCountIs(2),
+    tools: {
+      read_fixture: tool({
+        inputSchema: z.object({}),
+        execute: async () => {
+          reads++
+          return { fixture: 'read-once' }
+        },
+      }),
+      prepare_fixture: tool({
+        inputSchema: z.object({}),
+        execute: async () => {
+          preparations++
+          return { status: 'awaiting_confirmation', fixtureOnly: true }
+        },
+      }),
+    },
+  })
+  await result.text
+  expect(await result.steps).toHaveLength(2)
+  expect(reads).toBe(1)
+  expect(preparations).toBe(1)
+  expect(jobs).toHaveLength(2)
+  expect(jobs[0]!.id).not.toBe(jobs[1]!.id)
+  expect(secondJobReads).toHaveLength(2)
+  expect(secondJobReads[0]).toBe(secondJobReads[1])
+  expect(JSON.stringify(jobs[1]!.request.messages)).toContain('read-once')
+})
+
 test.each(['reasoning', 'reasoning_content'])(
   'NanoGPT DeepSeek thinking streams %s and preserves it on the tool followup',
   async (reasoningField) => {

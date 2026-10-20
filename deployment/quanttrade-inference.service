@@ -1,0 +1,24 @@
+[Unit]
+Description=QuantTrade isolated inference jobs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=quanttrade
+Group=quanttrade
+WorkingDirectory=/opt/quanttrade/shared
+ExecStart=/opt/node-v24.21.0-linux-x64/bin/node --experimental-transform-types /opt/quanttrade/current/src/server/nanogpt-worker-index.ts
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=1260
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/quanttrade/shared/data/operator-token
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

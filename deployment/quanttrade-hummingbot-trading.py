@@ -90,6 +90,25 @@ class OpenOrdersRequest(BaseModel):
     connector_name: Literal['hyperliquid_perpetual', 'lighter_perpetual', 'hyperliquid', 'lighter']
 
 
+class BuilderMarketRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_name: Literal['desk'] = 'desk'
+    connection_revision: str = Field(pattern=r'^[a-f0-9]{64}$')
+    trading_pair: str = Field(min_length=3, max_length=100)
+    dex: str = Field(pattern=r'^[a-z0-9_]{1,30}$')
+    coin: str = Field(min_length=3, max_length=90)
+    asset_id: StrictInt = Field(ge=110000)
+    collateral_token: StrictInt = Field(ge=0)
+    max_leverage: StrictInt = Field(ge=1, le=125)
+    only_isolated: StrictBool
+
+
+class BuilderCollateralRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_name: Literal['desk'] = 'desk'
+    trading_pair: str = Field(min_length=3, max_length=100, pattern=r'^[A-Za-z0-9_:./]+-USD$')
+
+
 class BracketLeg(BaseModel):
     model_config = ConfigDict(extra='forbid')
     trigger_price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
@@ -255,10 +274,92 @@ async def lighter_native_orders(connector, dto, order_factory=None, now_ms=None)
     return {**result, 'grouping': dto.grouping, 'client_order_ids': ids, 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair}
 
 
+async def hl_builder_metadata(connector, pair):
+    """Independent public metadata proof before a builder asset can be signed.
+
+    Preserve null entries in perpDexs: their positions are part of asset identity.
+    No balance aggregation, account-mode changes, or collateral transfers occur.
+    """
+    symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=pair)
+    if not isinstance(symbol, str) or ':' not in symbol:
+        raise ActionRejected('Builder market coin mapping is unavailable')
+    dex = symbol.split(':', 1)[0]
+    dexs = await connector._api_post(path_url='/info', data={'type': 'perpDexs'}, is_auth_required=False)
+    if not isinstance(dexs, list) or len(dexs) > 100:
+        raise ActionRejected('Builder DEX catalog is unavailable or exceeds the supported bound')
+    indices = [i for i, row in enumerate(dexs) if isinstance(row, dict) and row.get('name') == dex]
+    if len(indices) != 1 or indices[0] < 1:
+        raise ActionRejected('Builder DEX identity is unavailable or ambiguous')
+    meta = await connector._api_post(path_url='/info', data={'type': 'meta', 'dex': dex}, is_auth_required=False)
+    if not isinstance(meta, dict) or not isinstance(meta.get('universe'), list) or len(meta['universe']) > 10000:
+        raise ActionRejected('Builder market metadata is unavailable')
+    matches = [(i, row) for i, row in enumerate(meta['universe']) if isinstance(row, dict) and row.get('name') == symbol]
+    if len(matches) != 1 or matches[0][1].get('isDelisted', False):
+        raise ActionRejected('Builder market is unavailable or delisted')
+    index, market = matches[0]
+    asset = 100000 + indices[0] * 10000 + index
+    if type(meta.get('collateralToken')) is not int or meta['collateralToken'] != 0:
+        raise ActionRejected('Only USDC-collateral builder execution is verified; this market uses another or unknown collateral')
+    if type(market.get('maxLeverage')) is not int or not 1 <= market['maxLeverage'] <= 125:
+        raise ActionRejected('Builder leverage limits are unavailable')
+    if 'onlyIsolated' in market and type(market['onlyIsolated']) is not bool:
+        raise ActionRejected('Builder margin mode limits are unavailable')
+    if not connector.coin_to_asset or symbol not in connector.coin_to_asset:
+        await connector._update_trading_rules()
+    if type(connector.coin_to_asset.get(symbol)) is not int or connector.coin_to_asset[symbol] != asset:
+        raise ActionRejected('Builder asset mapping does not match official metadata; no order was submitted')
+    mapped_pair = await connector.trading_pair_associated_to_exchange_symbol(symbol=symbol)
+    if mapped_pair != pair or pair not in connector.trading_rules:
+        raise ActionRejected('Builder trading pair or precision rules are unavailable')
+    return {'dex': dex, 'coin': symbol, 'asset_id': asset, 'collateral_token': 0,
+            'max_leverage': market['maxLeverage'], 'only_isolated': market.get('onlyIsolated', False) is True,
+            'trading_pair': mapped_pair}
+
+
+async def builder_market_readiness(connector, dto):
+    metadata = await hl_builder_metadata(connector, dto.trading_pair)
+    for field in ['dex', 'coin', 'asset_id', 'collateral_token', 'max_leverage', 'only_isolated']:
+        if metadata[field] != getattr(dto, field):
+            raise ActionRejected('Builder market metadata changed; refresh and review the trade again')
+    return {'ready': True, 'account_name': dto.account_name, 'connection_revision': dto.connection_revision, **metadata}
+
+
+async def builder_available_collateral(connector, dto):
+    """Read only independently scoped standard-mode collateral.
+
+    Unified spot cash minus holds is not proof of spare initial margin across
+    all DEXs. Until that proof exists, shared/default/legacy modes are unknown,
+    never a fabricated zero or a sum of the same shared collateral.
+    """
+    metadata = await hl_builder_metadata(connector, dto.trading_pair)
+    owner = connector._auth._api_address
+    async def info(body):
+        return await connector._api_post(path_url='/info', data={**body, 'user': owner}, is_auth_required=False)
+    mode = await info({'type': 'userAbstraction'})
+    if mode != 'disabled':
+        raise ActionRejected('Builder available collateral is unverified for this account abstraction mode; shared collateral is not assumed available or zero')
+    state = await info({'type': 'clearinghouseState', 'dex': metadata['dex']})
+    try:
+        if not isinstance(state, dict) or not isinstance(state.get('withdrawable'), str):
+            raise ValueError('Missing withdrawable')
+        available = Decimal(state['withdrawable'])
+    except (ValueError, InvalidOperation):
+        raise ActionRejected('Builder DEX available collateral is unverified') from None
+    if not available.is_finite() or available < 0:
+        raise ActionRejected('Builder available collateral is unverified')
+    if await info({'type': 'userAbstraction'}) != mode:
+        raise ActionRejected('Account abstraction mode changed during collateral verification')
+    return {'verified': True, 'account_name': dto.account_name, 'trading_pair': dto.trading_pair,
+            'coin': metadata['coin'], 'dex': metadata['dex'], 'collateral_token': 0,
+            'currency': 'USDC', 'available': format(available, 'f') if available else '0', 'account_mode': mode, 'scope': 'dex'}
+
+
 async def hl_asset(connector, pair):
     if not connector.coin_to_asset:
         await connector._update_trading_rules()
     symbol = await connector.exchange_symbol_associated_to_pair(trading_pair=pair)
+    if ':' in symbol:
+        return (await hl_builder_metadata(connector, pair))['asset_id']
     if symbol not in connector.coin_to_asset:
         raise ActionRejected('Market is unavailable on this account connector')
     return connector.coin_to_asset[symbol]
@@ -323,6 +424,10 @@ def lighter_order_id(order):
 
 async def leverage(connector, name, pair, value, mode):
     if name == 'hyperliquid_perpetual':
+        if ':' in pair:
+            metadata = await hl_builder_metadata(connector, pair)
+            if value > metadata['max_leverage'] or metadata['only_isolated'] and mode != 'isolated':
+                raise ActionRejected('Builder leverage or margin mode violates the market limits')
         result = hl_default(await hl_action(connector, {'type': 'updateLeverage', 'asset': await hl_asset(connector, pair), 'isCross': mode == 'cross', 'leverage': value}))
     else:
         await connector._ensure_account_ready()
@@ -662,7 +767,7 @@ async def open_orders(connector, name):
     """Read resting orders independently of fills/history and never mutate account state.
 
     Lighter accountActiveOrders permits omitted market_id for all-market reads.
-    Hyperliquid's empty dex is the standard book; builder books are not covered.
+    Hyperliquid books are read independently for the standard and builder DEXs.
     """
     spot = name in ['lighter', 'hyperliquid']
     is_hl = name.startswith('hyperliquid')
@@ -673,6 +778,49 @@ async def open_orders(connector, name):
         raw = await connector._api_post(path_url='/info', data={'type': 'frontendOpenOrders', 'user': connector._auth._api_address, 'dex': ''}, is_auth_required=False)
         if not isinstance(raw, list):
             raise ValueError('Native open-order response is malformed')
+        builder_quotes = {}
+        if not spot:
+            try:
+                dexs = await connector._api_post(path_url='/info', data={'type': 'perpDexs'}, is_auth_required=False)
+                if not isinstance(dexs, list) or len(dexs) > 100 or any(row is not None and (not isinstance(row, dict) or not isinstance(row.get('name'), str) or not row['name'] or ':' in row['name']) for row in dexs):
+                    raise ValueError('Invalid builder catalog')
+                names = [row['name'] for row in dexs if row is not None]
+                if len(names) != len(set(names)):
+                    raise ValueError('Ambiguous builder catalog')
+                scope, complete, errors = 'all-perpetual-markets', True, []
+                semaphore = asyncio.Semaphore(4)
+                async def read_dex(dex):
+                    async with semaphore:
+                        try:
+                            rows, meta = await asyncio.gather(
+                                connector._api_post(path_url='/info', data={'type': 'frontendOpenOrders', 'user': connector._auth._api_address, 'dex': dex}, is_auth_required=False),
+                                connector._api_post(path_url='/info', data={'type': 'meta', 'dex': dex}, is_auth_required=False))
+                            if not isinstance(rows, list) or not isinstance(meta, dict) or type(meta.get('collateralToken')) is not int:
+                                raise ValueError('Invalid builder book')
+                            if meta['collateralToken'] == 0:
+                                quote = 'USDC'
+                            else:
+                                spot_meta = await connector._api_post(path_url='/info', data={'type': 'spotMeta'}, is_auth_required=False)
+                                tokens = spot_meta.get('tokens', []) if isinstance(spot_meta, dict) else []
+                                matches = [t for t in tokens if isinstance(t, dict) and t.get('index') == meta['collateralToken']]
+                                if len(matches) != 1 or not isinstance(matches[0].get('name'), str):
+                                    raise ValueError('Unknown builder collateral')
+                                quote = matches[0]['name']
+                            if any(not isinstance(row, dict) or not isinstance(row.get('coin'), str) or not row['coin'].startswith(dex + ':') for row in rows):
+                                raise ValueError('Wrong builder market scope')
+                            return dex, quote, rows, None
+                        except Exception:
+                            return dex, None, [], 'Builder open-order coverage failed for ' + dex + '.'
+                for dex, quote, rows, error in await asyncio.gather(*(read_dex(dex) for dex in names)):
+                    if error:
+                        complete = False
+                        errors.append(error)
+                    else:
+                        builder_quotes[dex] = quote
+                        raw.extend(rows)
+            except Exception:
+                complete = False
+                errors = ['Hyperliquid builder catalog is unavailable; this is the standard perpetual book only.']
     else:
         await connector._ensure_account_ready()
         response = await connector._api_get(path_url='/api/v1/accountActiveOrders', params={'account_index': connector._account_index, 'market_type': 'spot' if spot else 'perp'}, is_auth_required=True)
@@ -700,8 +848,12 @@ async def open_orders(connector, name):
                     if coin.startswith('@') or '/' in coin:
                         continue
                     if ':' in coin:
-                        raise ValueError('Unexpected builder market in standard book')
-                    symbol = coin + '-USDC'
+                        dex = coin.split(':', 1)[0]
+                        if dex not in builder_quotes:
+                            raise ValueError('Unknown builder market scope')
+                        symbol = coin + '-' + builder_quotes[dex]
+                    else:
+                        symbol = coin + '-USDC'
                 oid = row.get('oid')
                 if isinstance(oid, bool) or not isinstance(oid, (int, str)) or not str(oid).isdigit() or int(oid) <= 0:
                     raise ValueError('Malformed native identity')
@@ -751,7 +903,7 @@ async def open_orders(connector, name):
             complete = False
             if 'Some native orders could not be identified or mapped; the account book is incomplete.' not in errors:
                 errors.append('Some native orders could not be identified or mapped; the account book is incomplete.')
-    return {'connector_name': name, 'scope': scope, 'complete': complete, 'orders': orders, **({'error': ' '.join(errors)} if errors else {})}
+    return {'connector_name': name, 'scope': scope, 'complete': complete, 'orders': orders, **({'error': ' '.join(errors)[:300]} if errors else {})}
 
 
 async def snapshot(connector, name, pair, history_cursor=None, fills_cursor=None, start_time=0):
@@ -986,6 +1138,28 @@ async def open_orders_route(dto: OpenOrdersRequest, request: Request):
         return await open_orders(connector, dto.connector_name)
     except Exception:
         raise HTTPException(status_code=503, detail='Native open-order read is unavailable; current orders are not known to be empty') from None
+
+
+@router.post('/builder-market-readiness')
+async def builder_market_readiness_route(dto: BuilderMarketRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, 'hyperliquid_perpetual')
+        return await builder_market_readiness(connector, dto)
+    except ActionRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='Builder execution readiness could not be verified; no order was submitted') from None
+
+
+@router.post('/builder-available-collateral')
+async def builder_available_collateral_route(dto: BuilderCollateralRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, 'hyperliquid_perpetual')
+        return await builder_available_collateral(connector, dto)
+    except ActionRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='Builder available collateral is unverified; no zero balance is assumed') from None
 
 
 def install(app, auth_user):

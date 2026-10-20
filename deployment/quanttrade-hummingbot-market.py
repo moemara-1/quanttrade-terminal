@@ -60,6 +60,12 @@ def bounded_effective(original):
     return wrapped
 
 
+async def verify_builder_submission(connector, connector_name, trading_pair):
+    if connector_name == 'hyperliquid_perpetual' and ':' in trading_pair:
+        from quanttrade_hummingbot_trading import hl_builder_metadata
+        await hl_builder_metadata(connector, trading_pair)
+
+
 def install(app, auth_user):
     from fastapi import APIRouter, Depends, HTTPException
     from pydantic import BaseModel, ConfigDict, Field
@@ -116,6 +122,12 @@ def install(app, auth_user):
             raise HTTPException(400, "Market order is below exchange minimum notional")
         if request.connector_name in ("hyperliquid", "lighter") and request.position_action == "CLOSE":
             raise HTTPException(400, "Spot orders cannot be reduce-only")
+        try:
+            await verify_builder_submission(connector, request.connector_name, request.trading_pair)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
+        except Exception:
+            raise HTTPException(503, "Builder market identity could not be verified; no order was submitted") from None
         submit = connector.buy if request.trade_type == "BUY" else connector.sell
         order_id = submit(trading_pair=request.trading_pair, amount=amount, order_type=order_type,
                           price=price, position_action=PositionAction[request.position_action],

@@ -6,6 +6,7 @@ const catalog = z.array(
     venue: z.string(),
     symbol: z.string().min(1),
     base: z.string().min(1),
+    quote:z.string().optional(),
     name: z.string().optional(),
     marketId: z.number().int().optional(),
   }),
@@ -18,6 +19,13 @@ const names: Record<string, string> = {
   ripple: 'XRP',
   hyperliquid: 'HYPE',
 }
+export function nativeCatalogCoverage(response:Response){
+  const complete=response.headers.get('X-QuantTrade-Catalog-Complete')!=='false'
+  let failedDexs:Array<string>=[]
+  const header=response.headers.get('X-QuantTrade-Failed-Dexs')
+  if(header&&header.length<=4096){try{const parsed=z.array(z.string().max(64)).max(100).safeParse(JSON.parse(header));if(parsed.success)failedDexs=parsed.data}catch{failedDexs=[]}}
+  return {complete,failedDexs}
+}
 export async function searchNativeInstruments(query: string, requestedMarket?: string) {
   const markets = requestedMarket ? [requestedMarket] : ['lighter', 'hyperliquid']
   const raw = query.trim().toLowerCase()
@@ -28,7 +36,7 @@ export async function searchNativeInstruments(query: string, requestedMarket?: s
   )
   const compact = raw.replace(/[\s/]+/g, '-').toUpperCase()
   const baseQuery = compact.replace(
-    /-(USDT|USDC|USD)(?:-(USDT|USDC|USD))?$/,
+    /-(USDT|USDC|USDH|USD)(?:-(USDT|USDC|USDH|USD))?$/,
     '',
   )
   const sources = await Promise.all(
@@ -52,15 +60,17 @@ export async function searchNativeInstruments(query: string, requestedMarket?: s
           .filter(
             (row) =>
               row.base.toUpperCase() === (names[raw] ?? baseQuery) ||
+              (!raw.includes(':')&&row.base.split(':').at(-1)?.toUpperCase()===baseQuery)||
               row.base.toLowerCase().includes(raw) ||
               row.symbol.toLowerCase().includes(raw) ||
               nameHints.has(row.base.toUpperCase()) ||
               Boolean(row.name?.toLowerCase().includes(raw)),
           )
           .map((row) => ({
-            id: `${market}:${row.symbol}${marketType === 'perpetual' ? '-USDC' : ''}`,
+            id: `${market}:${row.symbol}${marketType === 'perpetual' ? '-'+(row.quote??row.symbol.split('-').at(-1)) : ''}`,
             market,
-            symbol: row.symbol + (marketType === 'perpetual' ? '-USDC' : ''),
+            symbol: row.symbol + (marketType === 'perpetual' ? '-'+(row.quote??row.symbol.split('-').at(-1)) : ''),
+            quote:row.quote??row.symbol.split('-').at(-1),
             base: row.base,
             name: row.name ?? `${row.base} ${marketType}`,
             nameMatchSource: row.name
@@ -74,6 +84,7 @@ export async function searchNativeInstruments(query: string, requestedMarket?: s
         return {
           market,
           status: 'ok' as const,
+          ...nativeCatalogCoverage(response),
           catalogCount: rows.length,
           instruments,
         }
@@ -90,6 +101,6 @@ export async function searchNativeInstruments(query: string, requestedMarket?: s
   return {
     instruments: sources.flatMap((source) => source.instruments),
     sources: sources.map(({ instruments: _, ...source }) => source),
-    note: 'Names are discovery hints, not interchangeable execution identifiers. Select an exact returned market and symbol; a missing full name does not prove the asset is unlisted.',
+    note: 'Names are discovery hints, not interchangeable execution identifiers. Select an exact returned market and symbol; zero matches or partial coverage do not prove absence from a venue.',
   }
 }

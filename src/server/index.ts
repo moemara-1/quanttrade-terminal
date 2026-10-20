@@ -26,6 +26,8 @@ import { AdvancedProtection } from './advanced-protection.ts';
 import { createProtectionAdapter } from './protection-adapter.ts';
 import { ProtectionMonitor } from './protection-monitor.ts';
 import { LiquidationCollector } from './liquidations.ts';
+import { LlmArena } from './llm-arena.ts';
+import { NanoGptWorkerClient } from './nanogpt-worker.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
 import { notionalLimit } from './notional-limits.ts';
@@ -50,6 +52,8 @@ function token(name:string):string {
 }
 const store=new DeskStore(resolve('data','desk.sqlite'));
 const markets=new PublicMarkets();
+const arena=new LlmArena(resolve('data','llm-arena.sqlite'),markets);
+arena.startTimer();
 const liquidations=new LiquidationCollector(resolve('data','liquidations.sqlite'));
 liquidations.start();
 const execution=new HummingbotExecution({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT});
@@ -67,14 +71,14 @@ const operationClient=new HummingbotOperations({url:env.HUMMINGBOT_URL,username:
 const operations=new VenueOperations(desk,operationClient,markets);
 const lighterNativeOrders=new LighterNativeOrders(desk,operationClient,markets,Date.now,()=>execution.balances('lighter','perpetual'));
 const advancedProtection:AdvancedProtection=new AdvancedProtection(resolve('data','advanced-protection.sqlite'),createProtectionAdapter(desk,execution,operationClient,():ChasePlans=>chasePlans));
-const hyperliquidNativeTwap=new HyperliquidNativeTwap(desk,operationClient,markets,Date.now,advancedProtection,()=>execution.balances('hyperliquid','perpetual'));
+const hyperliquidNativeTwap=new HyperliquidNativeTwap(desk,operationClient,markets,Date.now,advancedProtection,symbol=>execution.hyperliquidAvailableCollateral(symbol));
 const chasePlans:ChasePlans=new ChasePlans(resolve('data','chase-runs.sqlite'),desk,execution,operationClient,Date.now,markets,advancedProtection);
 const protectionMonitor=new ProtectionMonitor(advancedProtection,hyperliquidNativeTwap,chasePlans);
 chasePlans.startTimer();
 protectionMonitor.startTimer();
-const app=createApp({arbitrage,scannerDetails:new ScannerDetails(markets,new VenueResearch()),scanners:new DiscoveryScanners(markets,new OptionsScanner()),advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
+const app=createApp({nanogptJobs:new NanoGptWorkerClient('http://127.0.0.1:4319',token('operator-token')),arena,arbitrage,scannerDetails:new ScannerDetails(markets,new VenueResearch()),scanners:new DiscoveryScanners(markets,new OptionsScanner()),advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
 const server=app.listen(4318,'127.0.0.1',()=>console.log(`QuantTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
 server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);void closeServices().then(()=>{process.exitCode=1;});});
-async function closeServices(){liquidations.close();workflows.close();await protectionMonitor.close();await chasePlans.close();advancedProtection.close();arbitrage.close();store.close();app.locals.hostedAuthClose();}
+async function closeServices(){arena.close();liquidations.close();workflows.close();await protectionMonitor.close();await chasePlans.close();advancedProtection.close();arbitrage.close();store.close();app.locals.hostedAuthClose();}
 function shutdown() {server.close(()=>{void closeServices().then(()=>process.exit(0));});setTimeout(()=>process.exit(1),5000).unref();}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);

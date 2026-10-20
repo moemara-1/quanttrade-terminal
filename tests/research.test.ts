@@ -58,3 +58,14 @@ test('market stats selects matching native asset and refuses an unknown coin',as
   assert.deepEqual((await service.execute({venue:'hyperliquid',action:'market-stats',coin:'ETH'})).data,{asset:{name:'ETH',maxLeverage:25},context:{markPx:'10'}});
   await assert.rejects(()=>service.execute({venue:'hyperliquid',action:'market-stats',coin:'UNKNOWN'}),/Unknown/);
 });
+
+test('builder research infers exact DEX and preserves qualified coin',async()=>{
+ const bodies:Record<string,unknown>[]=[];
+ const service=new VenueResearch(async(_url,init)=>{const b=JSON.parse(String(init?.body));bodies.push(b);return Response.json(b.type==='metaAndAssetCtxs'?[{universe:[{name:'para:PAPER'}]},[{markPx:'1'}]]:[]);});
+ await service.execute({venue:'hyperliquid',action:'market-stats',coin:'para:PAPER'});
+ assert.deepEqual(bodies[0],{type:'metaAndAssetCtxs',dex:'para'});
+ await service.execute({venue:'hyperliquid',action:'open-orders',wallet,dex:'para'});
+ assert.deepEqual(bodies[1],{type:'frontendOpenOrders',user:wallet,dex:'para'});
+ await assert.rejects(service.execute({venue:'hyperliquid',action:'market-stats',coin:'para:PAPER',dex:'xyz'}));
+ await assert.rejects(service.execute({venue:'hyperliquid',action:'open-orders',wallet,dex:'../../evil'}));
+});

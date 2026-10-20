@@ -1,3 +1,4 @@
+import { hummingbotTradingPair } from './execution.ts';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
@@ -16,14 +17,14 @@ type Plan=z.infer<typeof hyperliquidNativeTwapSchema>;
 
 /** Native slices are venue-managed; this admission estimate is not a future price cap. */
 export class HyperliquidNativeTwap {
- constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection,private readonly balances?:()=>Promise<{currency:string;available:string}[]>){}
+ constructor(private readonly desk:TradingDesk,private readonly client:OperationClient,private readonly markets:QuoteSource,private readonly clock:()=>number=Date.now,private readonly protection?:AdvancedProtection,private readonly balances?:(symbol:string)=>Promise<{currency:string;available:string}[]>){}
  list(){
   const receiptSchema=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.string(),twap_id:z.string().regex(/^[1-9]\d*$/).refine(value=>Number.isSafeInteger(Number(value))),reviewedPlan:hyperliquidNativeTwapSchema});
   const runs=this.desk.store.operations().flatMap(operation=>{
    const receipt=receiptSchema.safeParse(operation.result);
    if(operation.state!=='completed'||!receipt.success||receipt.data.reviewedPlan.action!=='create')return [];
    const plan=receipt.data.reviewedPlan;
-   if(plan.requestId!==operation.id||receipt.data.trading_pair!==plan.symbol.replace(/-USDC$/,'-USD'))return [];
+   if(plan.requestId!==operation.id||receipt.data.trading_pair!==hummingbotTradingPair(plan.symbol))return [];
    return [{id:operation.id,accountName:plan.accountName,connectionRevision:plan.connectionRevision,venue:plan.venue,marketType:plan.marketType,symbol:plan.symbol,side:plan.side,size:plan.size,mode:plan.mode,twapId:receipt.data.twap_id,proposedAt:plan.proposedAt,status:'accepted' as const,currentAccount:this.desk.status().accountName===plan.accountName&&this.desk.modeFor(plan.venue)==='live'&&this.desk.store.connectionFingerprint(plan.accountName,plan.venue)===plan.connectionRevision}];
   });
   return {runs,scope:'quanttrade-accepted-native-twap-receipts',complete:false,note:'Latest 200 recorded operations only. Accepted is a submission acknowledgment, not proof a TWAP is running or filled. External and uncertain native TWAP submissions are not included.'};
@@ -49,7 +50,7 @@ export class HyperliquidNativeTwap {
    const receipt=z.object({status:z.literal('accepted'),twap_id:z.literal(request.twapId),reviewedPlan:z.object({requestId:z.literal(request.requestId),action:z.literal('create'),accountName:z.literal(request.accountName),connectionRevision:z.literal(request.connectionRevision),symbol:z.literal(request.symbol),side:z.literal(request.side),size:positive})}).safeParse(operation?.result);
    if(operation?.state!=='completed'||!receipt.success||!new Decimal(receipt.data.reviewedPlan.size).eq(request.size))throw new Error('Native TWAP evidence does not match an owned accepted request');
   }
-  const result=await this.client.perform('hyperliquid-twap-evidence',{request_id:createHash('sha256').update(JSON.stringify(request)).digest('hex'),account_name:request.accountName,connector_name:'hyperliquid_perpetual',trading_pair:request.symbol.replace(/-USDC$/,'-USD'),twap_id:request.twapId,side:request.side,amount:request.size});
+  const result=await this.client.perform('hyperliquid-twap-evidence',{request_id:createHash('sha256').update(JSON.stringify(request)).digest('hex'),account_name:request.accountName,connector_name:'hyperliquid_perpetual',trading_pair:hummingbotTradingPair(request.symbol),twap_id:request.twapId,side:request.side,amount:request.size});
   authorized();return result;
  }
  private authorize(plan:Plan):void{
@@ -74,8 +75,9 @@ export class HyperliquidNativeTwap {
    const latestReferenceNotional=new Decimal(preview.notional).div(ordinaryMultiplier);
    if(latestReferenceNotional.lt(100))throw new Error('Native Hyperliquid TWAP requires at least 100 USDC reference notional');
    notional=latestReferenceNotional.mul(Decimal.max('1.03',ordinaryMultiplier));
+   if(market.dex&&!plan.reduceOnly&&(!this.balances||plan.leverage===undefined))throw Error('Builder available collateral is unverified; a scoped balance reader and reviewed leverage are required');
    if(this.balances&&!plan.reduceOnly&&plan.leverage!==undefined){
-    const balances=await this.balances();this.authorize(plan);
+    const balances=await this.balances(plan.symbol);this.authorize(plan);
     const collateral=balances.filter(row=>row.currency==='USDC'||row.currency==='USD');
     if(collateral.length!==1)throw Error('Fresh Hyperliquid USDC available margin is unavailable');
     const available=new Decimal(collateral[0]!.available);
@@ -93,7 +95,7 @@ export class HyperliquidNativeTwap {
   try{
    if(plan.action==='create')this.desk.store.reserveOperation(plan.requestId,'live',new Date(this.clock()).toISOString().slice(0,10),notional.toFixed(),this.desk.status().dailyNotionalLimit);
    this.authorize(plan);attempted=true;
-   const result=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.literal(plan.symbol.replace(/-USDC$/,'-USD')),twap_id:z.string().regex(/^[1-9]\d*$/)}).passthrough().parse(await this.client.perform(plan.action==='create'?'hyperliquid-twap':'hyperliquid-twap-cancel',{request_id:plan.requestId,account_name:plan.accountName,connector_name:'hyperliquid_perpetual',trading_pair:plan.symbol.replace(/-USDC$/,'-USD'),...(plan.action==='create'?{side:plan.side,amount:plan.size,duration_minutes:plan.durationMinutes,randomize:plan.randomize,reduce_only:plan.reduceOnly,...(plan.leverage!==undefined?{leverage:plan.leverage,margin_mode:plan.marginMode}:{})}:{twap_id:plan.twapId})}));
+   const result=z.object({status:z.literal('accepted'),connector_name:z.literal('hyperliquid_perpetual'),trading_pair:z.literal(hummingbotTradingPair(plan.symbol)),twap_id:z.string().regex(/^[1-9]\d*$/)}).passthrough().parse(await this.client.perform(plan.action==='create'?'hyperliquid-twap':'hyperliquid-twap-cancel',{request_id:plan.requestId,account_name:plan.accountName,connector_name:'hyperliquid_perpetual',trading_pair:hummingbotTradingPair(plan.symbol),...(plan.action==='create'?{side:plan.side,amount:plan.size,duration_minutes:plan.durationMinutes,randomize:plan.randomize,reduce_only:plan.reduceOnly,...(plan.leverage!==undefined?{leverage:plan.leverage,margin_mode:plan.marginMode}:{})}:{twap_id:plan.twapId})}));
    if(plan.action==='cancel'&&result.twap_id!==plan.twapId)throw new Error('TWAP cancellation acknowledgment identity mismatch');
    const receipt=plan.action==='create'?{...result,reviewedPlan:plan}:result;
    this.desk.store.finishOperation(plan.requestId,'completed',receipt);

@@ -144,3 +144,10 @@ test('raw 24h gainers and BTC-relative strength are distinct rankings across ven
       .total,
   ).toBe(1)
 })
+
+test('builder assistant scan returns exact quoted pair and partial coverage rather than an absent-market claim',()=>{
+ const s=snapshot();s.sources[0]={...s.sources[0],complete:false,failedDexs:['xyz'],message:'Builder coverage incomplete'};
+ s.markets=[{...s.markets[0],base:'flx:PAPER',symbol:'flx:PAPER-USDH',quote:'USDH',openInterestUsd:null}];
+ const result=scanSnapshot(s,{scanner:'strength',search:'PAPER'});
+ expect(result.rows[0]?.pair).toBe('flx:PAPER-USDH-USDH');expect(result.coverageComplete).toBe(false);expect(result.sources[0]?.failedDexs).toEqual(['xyz']);
+});

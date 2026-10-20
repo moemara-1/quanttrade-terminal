@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PublicMarkets } from '../src/server/markets.ts';
 test('Hyperliquid market mapping retains precision and normalizes percent change', async () => {
-  const service = new PublicMarkets(async () => Response.json([{ universe: [{ name: 'BTC', szDecimals: 5 }] }, [{ markPx: '100', prevDayPx: '80', dayNtlVlm: '2000', funding: '0.0001', openInterest: '5' }]]));
+  const service = new PublicMarkets(async (_url,init) => JSON.parse(String(init?.body)).type==='perpDexs'?Response.json([null]):Response.json([{ universe: [{ name: 'BTC', szDecimals: 5 }] }, [{ markPx: '100', prevDayPx: '80', dayNtlVlm: '2000', funding: '0.0001', openInterest: '5' }]]));
   const markets = await service.list('hyperliquid');
   assert.equal(markets[0].symbol, 'BTC-USDC');
   assert.equal(markets[0].change24h, 25);
@@ -25,14 +25,14 @@ test('malformed Lighter contracts are unavailable without taking healthy contrac
   await assert.rejects(broken.list('lighter'),/valid contracts/i);
 });
 test('non-finite market values are rejected', async () => {
-  const service = new PublicMarkets(async () => Response.json([{universe:[{name:'BTC',szDecimals:5}]},[{markPx:'NaN',prevDayPx:'80',dayNtlVlm:'2000',funding:'0',openInterest:'5'}]]));
+  const service = new PublicMarkets(async (_url,init) => JSON.parse(String(init?.body)).type==='perpDexs'?Response.json([null]):Response.json([{universe:[{name:'BTC',szDecimals:5}]},[{markPx:'NaN',prevDayPx:'80',dayNtlVlm:'2000',funding:'0',openInterest:'5'}]]));
   await assert.rejects(service.list('hyperliquid'));
 });
 test('simultaneous market readers share one upstream request', async () => {
   let calls=0;
-  const service = new PublicMarkets(async () => {calls++; return Response.json([{universe:[]},[]]);});
+  const service = new PublicMarkets(async (_url,init) => {calls++; return Response.json(JSON.parse(String(init?.body)).type==='perpDexs'?[null]:[{universe:[]},[]]);});
   await Promise.all([service.list('hyperliquid'), service.list('hyperliquid')]);
-  assert.equal(calls,1);
+  assert.equal(calls,2);
 });
 
 test('Hyperliquid spot keeps real token names and queries the exchange coin alias',async()=>{
@@ -71,7 +71,7 @@ test('each contract publishes its own leverage cap including PRL 3x, while unkno
  const row={symbol:'PRL',market_id:1,status:'active',market_type:'perp',supported_size_decimals:2,supported_price_decimals:4,min_base_amount:'5',min_quote_amount:'10',mark_price:'2',daily_price_change:0,daily_quote_token_volume:10,open_interest:1};
  const lighter=new PublicMarkets(async()=>Response.json({code:200,order_book_details:[{...row,min_initial_margin_fraction:3333},{...row,symbol:'BTC',min_initial_margin_fraction:200},{...row,symbol:'UNKNOWN'}]}));
  const rows=await lighter.list('lighter');assert.equal(rows.find(r=>r.base==='PRL')?.maxLeverage,3);assert.equal(rows.find(r=>r.base==='BTC')?.maxLeverage,50);assert.equal(rows.find(r=>r.base==='UNKNOWN')?.maxLeverage,null);
- const hl=new PublicMarkets(async()=>Response.json([{universe:[{name:'BTC',szDecimals:5,maxLeverage:40},{name:'UNKNOWN',szDecimals:3}]},Array.from({length:2},()=>({markPx:'100',prevDayPx:'100',dayNtlVlm:'1',funding:'0',openInterest:'1'}))]));
+ const hl=new PublicMarkets(async(_url,init)=>JSON.parse(String(init?.body)).type==='perpDexs'?Response.json([null]):Response.json([{universe:[{name:'BTC',szDecimals:5,maxLeverage:40},{name:'UNKNOWN',szDecimals:3}]},Array.from({length:2},()=>({markPx:'100',prevDayPx:'100',dayNtlVlm:'1',funding:'0',openInterest:'1'}))]));
  const mapped=await hl.list('hyperliquid');assert.equal(mapped.find(r=>r.base==='BTC')?.maxLeverage,40);assert.equal(mapped.find(r=>r.base==='UNKNOWN')?.maxLeverage,null);
 });
 
@@ -80,11 +80,12 @@ test('historical candles request the selected boundary and exclude the cursor ca
  const end=Date.now()-86400000;
  const service=new PublicMarkets(async(_url,init)=>{
   const body=JSON.parse(String(init?.body));requests.push(body);
+  if(body.type==='perpDexs')return Response.json([null]);
   if(body.type==='metaAndAssetCtxs') return Response.json([{universe:[{name:'BTC',szDecimals:5}]},[{markPx:'100',prevDayPx:'100',dayNtlVlm:'1',funding:'0',openInterest:'1'}]]);
   return Response.json([{t:end-3600000,o:100,h:101,l:99,c:100,v:1},{t:end,o:100,h:101,l:99,c:100,v:1}]);
  });
  const candles=await service.candles('hyperliquid','BTC-USDC','1h','perpetual',end,20);
- const request=requests[1].req as Record<string,unknown>;
+ const request=requests.find(row=>row.type==='candleSnapshot')?.req as Record<string,unknown>;
  assert.equal(request.endTime,end);assert.equal(request.startTime,end-20*3600000);assert.equal(candles.length,1);
  await assert.rejects(service.candles('hyperliquid','BTC-USDC','1h','perpetual',end,1001),/limit/);
 });
@@ -92,4 +93,68 @@ test('historical candles request the selected boundary and exclude the cursor ca
 test('Lighter funding selects the native venue and converts eight-hour fraction to hourly',async()=>{
  const service=new PublicMarkets(async(url)=>String(url).includes('funding-rates')?Response.json({code:200,funding_rates:[{market_id:4097,exchange:'binance',rate:.8},{market_id:4097,exchange:'lighter',rate:.0008}]}):Response.json({code:200,order_book_details:[{symbol:'PRL',market_id:4097,status:'active',market_type:'perp',supported_size_decimals:2,supported_price_decimals:4,min_base_amount:'5',min_quote_amount:'10',mark_price:'2',daily_price_change:0,daily_quote_token_volume:10,open_interest:1,min_initial_margin_fraction:3333}]}));
  const [market]=await service.list('lighter');assert.equal(market.marketId,4097);assert.equal(market.fundingRate,.0001);
+});
+
+test('HIP-3 catalog retains DEX asset identity, collateral and isolated leverage constraints',async()=>{
+ const context={markPx:'1',prevDayPx:'1',dayNtlVlm:'10',funding:'0.001',openInterest:'2'};
+ const requests:Record<string,unknown>[]=[];
+ const service=new PublicMarkets(async(_url,init)=>{
+  const b=JSON.parse(String(init?.body));requests.push(b);
+  if(b.type==='perpDexs')return Response.json([null,{name:'bad'},{name:'para'},{name:'flx'}]);
+  if(b.type==='spotMeta')return Response.json({tokens:[{index:0,name:'USDC'},{index:360,name:'USDH'}]});
+  if(b.type==='metaAndAssetCtxs'){
+   if(b.dex==='bad')return new Response('unavailable',{status:503});
+   return Response.json([{collateralToken:b.dex==='flx'?360:0,universe:[{name:b.dex==='para'?'para:PAPER':b.dex==='flx'?'flx:PAPER':'BTC',szDecimals:0,maxLeverage:3,onlyIsolated:!!b.dex,marginMode:b.dex?'noCross':undefined}]},[context]]);
+  }
+  if(b.type==='l2Book')return Response.json({levels:[[],[]],time:Date.now()});
+  return Response.json([]);
+ });
+ const rows=await service.list('hyperliquid');
+ const paper=rows.find(row=>row.base==='para:PAPER');assert.ok(paper);
+ assert.equal(paper.assetId,120000);assert.equal(paper.dex,'para');assert.equal(paper.coin,'para:PAPER');assert.equal(paper.quote,'USDC');assert.equal(paper.onlyIsolated,true);assert.deepEqual(paper.marginModes,['isolated']);
+ assert.equal(rows.find(row=>row.base==='flx:PAPER')?.quote,'USDH');
+ assert.equal(service.coverage('hyperliquid').complete,false);
+ assert.deepEqual(service.coverage('hyperliquid').failedDexs,['bad']);
+ await service.book('hyperliquid','para:PAPER-USDC');await service.candles('hyperliquid','para:PAPER-USDC','1h');
+ assert.equal(requests.find(b=>b.type==='l2Book')?.coin,'para:PAPER');
+ assert.equal((requests.find(b=>b.type==='candleSnapshot')?.req as Record<string,unknown>).coin,'para:PAPER');
+});
+
+test('HIP-3 unknown collateral is excluded with explicit incomplete coverage',async()=>{
+ const service=new PublicMarkets(async(_url,init)=>{
+  const b=JSON.parse(String(init?.body));
+  if(b.type==='perpDexs')return Response.json([null,{name:'odd'}]);
+  if(b.type==='spotMeta')return Response.json({tokens:[{index:0,name:'USDC'}]});
+  return Response.json([{collateralToken:b.dex?999:0,universe:b.dex?[{name:'odd:PAPER',szDecimals:0}]:[]},b.dex?[{markPx:'1',prevDayPx:'1',dayNtlVlm:'1',funding:'0',openInterest:'1'}]:[]]);
+ });
+ assert.deepEqual(await service.list('hyperliquid'),[]);assert.equal(service.coverage('hyperliquid').complete,false);
+});
+
+test('malformed builder context preserves healthy core markets and reports incomplete coverage',async()=>{
+ const service=new PublicMarkets(async(_url,init)=>{
+  const b=JSON.parse(String(init?.body));
+  if(b.type==='perpDexs')return Response.json([null,{name:'para'}]);
+  if(b.type==='spotMeta')return Response.json({tokens:[{index:0,name:'USDC'}]});
+  return Response.json([{collateralToken:0,universe:[{name:b.dex?'para:PAPER':'BTC',szDecimals:0}]},[{markPx:b.dex?'NaN':'1',prevDayPx:'1',dayNtlVlm:'1',funding:'0',openInterest:'1'}]]);
+ });
+ assert.deepEqual((await service.list('hyperliquid')).map(row=>row.coin),['BTC']);
+ assert.deepEqual(service.coverage('hyperliquid'),{complete:false,failedDexs:['para']});
+});
+
+test('builder context cache preserves actual observation time across core refreshes',async()=>{
+ const original=Date.now;let clock=original(),builderCalls=0;Date.now=()=>clock;
+ try{
+ const service=new PublicMarkets(async(_url,init)=>{const b=JSON.parse(String(init?.body));if(b.type==='perpDexs')return Response.json([null,{name:'para'}]);if(b.type==='spotMeta')return Response.json({tokens:[]});if(b.dex)builderCalls++;return Response.json([{collateralToken:0,universe:[{name:b.dex?'para:PAPER':'BTC',szDecimals:0}]},[{markPx:'1',prevDayPx:'1',dayNtlVlm:'1',funding:'0',openInterest:'1'}]]);});
+ const first=await service.list('hyperliquid');clock+=6000;const second=await service.list('hyperliquid');
+ assert.equal(builderCalls,1);assert.equal(second.find(m=>m.dex==='para')?.updatedAt,first.find(m=>m.dex==='para')?.updatedAt);assert.notEqual(second.find(m=>!m.dex)?.updatedAt,first.find(m=>!m.dex)?.updatedAt);
+ }finally{Date.now=original;}
+});
+
+test('fresh builder trade reads refresh only its DEX while retaining catalog identity',async()=>{
+ const original=Date.now;let clock=original();Date.now=()=>clock;const calls:Record<string,number>={};
+ try{
+ const service=new PublicMarkets(async(_url,init)=>{const b=JSON.parse(String(init?.body));if(b.type==='perpDexs')return Response.json([null,{name:'para'},{name:'xyz'}]);if(b.type==='spotMeta')return Response.json({tokens:[]});calls[b.dex??'core']=(calls[b.dex??'core']??0)+1;return Response.json([{collateralToken:0,universe:[{name:b.dex?b.dex+':PAPER':'BTC',szDecimals:0}]},[{markPx:'1',prevDayPx:'1',dayNtlVlm:'1',funding:'0',openInterest:'1'}]]);});
+ await service.list('hyperliquid');clock+=16000;const [a,b]=await Promise.all([service.refreshMarket('hyperliquid','para:PAPER-USDC'),service.refreshMarket('hyperliquid','para:PAPER-USDC')]);
+ assert.equal(calls.para,2);assert.equal(calls.xyz,1);assert.equal(a?.updatedAt,clock);assert.equal(a?.assetId,110000);assert.deepEqual(a,b);
+ }finally{Date.now=original;}
 });

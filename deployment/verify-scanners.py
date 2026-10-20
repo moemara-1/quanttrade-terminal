@@ -15,12 +15,13 @@ for venue in ('hyperliquid', 'lighter'):
     assert sources[venue]['status'] == 'ok' and sources[venue]['count'] > 0
     assert any(row['venue'] == venue for row in result['markets'])
 for row in result['markets']:
-    assert row['symbol'] == row['base']+'-USDC'
+    assert row['symbol'] == row['base']+'-'+row.get('quote', 'USDC')
     assert row['price'] > 0 and math.isfinite(row['price'])
     assert row['oiToVolume'] is None or math.isfinite(row['oiToVolume'])
 for row in result['comparisons']:
     a, b = row['hyperliquid'], row['lighter']
     assert a['base'] == b['base'] == row['base']
+    assert a.get('quote', 'USDC') == b.get('quote', 'USDC')
     assert abs(a['observedAt']-b['observedAt']) <= 30000
     assert math.isclose(row['markGapPct'], abs(a['price']-b['price'])/((a['price']+b['price'])/2)*100, rel_tol=1e-9, abs_tol=1e-9)
     if row['longVenue'] is not None:

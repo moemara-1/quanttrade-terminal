@@ -1,12 +1,16 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import type { MarketType, OrderDraft, Proposal, Venue } from '../shared/types.ts';
+import type { Market, MarketType, OrderDraft, Proposal, Venue } from '../shared/types.ts';
 import { parseCredentials } from './connections.ts';
 import Decimal from 'decimal.js';
 import type { ExecutionClient } from './trading.ts';
 
 export interface HummingbotConfig { url: string; username: string; password: string; accountName: string }
 const connectors = { hyperliquid: 'hyperliquid_perpetual', lighter: 'lighter_perpetual' };
+export function hummingbotTradingPair(symbol:string):string {
+  const pair=symbol.replace(/-USDC$/,'-USD');
+  return pair.includes(':')?pair.toUpperCase():pair;
+}
 export class HummingbotExecution implements ExecutionClient {
   readonly configured: boolean;
   constructor(private readonly config: HummingbotConfig, private readonly request: typeof fetch = fetch) {
@@ -30,6 +34,16 @@ export class HummingbotExecution implements ExecutionClient {
   async disconnect(venue:Venue): Promise<void> {
     await this.post(`/quanttrade/connections/${encodeURIComponent(this.config.accountName)}/${venue}`,{},220_000,'DELETE');
   }
+  async validateBuilderMarket(market:Market,accountName:string,connectionRevision:string|null):Promise<void> {
+    if(accountName!==this.config.accountName)throw new Error('Builder readiness account does not match the connected account');
+    if(!connectionRevision||!/^[a-f0-9]{64}$/.test(connectionRevision))throw new Error('Builder readiness requires the current verified connection');
+    if(market.venue!=='hyperliquid'||market.marketType==='spot'||!market.dex||!market.coin?.startsWith(market.dex+':')||market.symbol!==market.coin+'-USDC'||market.quote!=='USDC'||market.collateralToken!==0)throw new Error('Only exact USDC-collateral Hyperliquid builder markets are verified for execution');
+    const input={account_name:accountName,connection_revision:connectionRevision,trading_pair:hummingbotTradingPair(market.symbol),dex:market.dex,coin:market.coin,asset_id:market.assetId,collateral_token:market.collateralToken,max_leverage:market.maxLeverage,only_isolated:market.onlyIsolated??false};
+    const schema=z.object({account_name:z.string(),connection_revision:z.string().regex(/^[a-f0-9]{64}$/),trading_pair:z.string(),dex:z.string(),coin:z.string(),asset_id:z.number().int().min(110000),collateral_token:z.literal(0),max_leverage:z.number().int().min(1).max(125),only_isolated:z.boolean()}).strict();
+    schema.parse(input);
+    const parsed=schema.extend({ready:z.literal(true)}).safeParse(await this.post('/quanttrade/trading/builder-market-readiness',input,30_000));
+    if(!parsed.success||Object.entries(input).some(([key,value])=>parsed.data[key as keyof typeof parsed.data]!==value))throw new Error('Builder readiness metadata or connection identity changed; refresh and review the trade again');
+  }
   async verifiedConnectionRevision(venue:Venue):Promise<string> {
     if(venue!=='lighter')throw new Error('Existing connection recovery is supported for Lighter only');
     const result=z.object({accountName:z.string(),venue:z.literal('lighter'),connectionRevision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(await this.post(`/quanttrade/connections/${encodeURIComponent(this.config.accountName)}/lighter/verified-revision`,{},55_000));
@@ -47,6 +61,18 @@ export class HummingbotExecution implements ExecutionClient {
       return {currency:row.token,total:total.toString(),available:available.toString(),frozen:Decimal.max(0,total.minus(available)).toString()};
     });
   }
+  async hyperliquidAvailableCollateral(symbol:string):Promise<{currency:string;available:string}[]> {
+    if(!symbol.includes(':'))return this.balances('hyperliquid','perpetual');
+    const match=/^([a-z0-9_]+):([A-Za-z0-9_.]+)-USDC$/.exec(symbol);
+    if(!match)throw new Error('Builder available collateral is unverified for this symbol or collateral');
+    const tradingPair=hummingbotTradingPair(symbol),coin=symbol.slice(0,-5),dex=match[1];
+    let raw:unknown;
+    try{raw=await this.post('/quanttrade/trading/builder-available-collateral',{account_name:this.config.accountName,trading_pair:tradingPair},30_000);}
+    catch{throw new Error('Builder available collateral is unverified; core Hyperliquid funds cannot be substituted');}
+    const parsed=z.object({verified:z.literal(true),account_name:z.literal(this.config.accountName),trading_pair:z.literal(tradingPair),coin:z.literal(coin),dex:z.literal(dex),collateral_token:z.literal(0),currency:z.literal('USDC'),available:z.string().max(80).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/),account_mode:z.literal('disabled'),scope:z.literal('dex')}).strict().safeParse(raw);
+    if(!parsed.success)throw new Error('Builder available collateral is unverified or belongs to another market scope');
+    return [{currency:'USDC',available:parsed.data.available}];
+  }
   async connections(): Promise<Venue[]> {
     const names=await this.connectorNames();
     return (Object.keys(connectors) as Venue[]).filter(venue=>names.includes(connectors[venue]));
@@ -63,7 +89,7 @@ export class HummingbotExecution implements ExecutionClient {
   }
   async place(order: OrderDraft, protectionPrice?: string, requestId?:string): Promise<string> {
     // The Hyperliquid connector names USDC-collateralized perps BASE-USD.
-    const tradingPair = order.venue === 'hyperliquid' && order.marketType !== 'spot' ? order.symbol.replace(/-USDC$/, '-USD') : order.symbol;
+    const tradingPair = order.venue === 'hyperliquid' && order.marketType !== 'spot' ? hummingbotTradingPair(order.symbol) : order.symbol;
     const connectorName=order.marketType==='spot'?order.venue:connectors[order.venue];
     if ((order.leverage!==undefined||order.trigger)&&!requestId) throw new Error('Exchange state changes require a persistent request ID');
     if (order.leverage!==undefined) {
@@ -113,7 +139,7 @@ export class HummingbotExecution implements ExecutionClient {
     const tp=legs.find(leg=>leg.kind==='tp')!,sl=legs.find(leg=>leg.kind==='sl')!;
     const reference=new Decimal(prices[0]!);
     if (![tp.trigger_price,sl.trigger_price].every(price=>new Decimal(price).isFinite()&&new Decimal(price).gt(0))||!(entry.side==='buy'?new Decimal(sl.trigger_price).lt(reference)&&reference.lt(tp.trigger_price):new Decimal(tp.trigger_price).lt(reference)&&reference.lt(sl.trigger_price))) throw new Error('Entry bracket thresholds must protect the reviewed entry side');
-    const result=z.object({status:z.literal('accepted'),grouping:z.literal('normalTpsl'),order_ids:z.array(z.string().regex(/^(?:\d+|0x[0-9a-f]{32})$/)).length(3),client_order_ids:z.array(z.string().regex(/^0x[0-9a-f]{32}$/)).length(3),entry_order_id:z.string().regex(/^\d+$/),fill_price:z.string().optional(),fill_size:z.string().optional()}).parse(await this.post('/quanttrade/trading/entry-bracket-orders',{request_id:requestId,account_name:this.config.accountName,connector_name:'hyperliquid_perpetual',trading_pair:entry.symbol.replace(/-USDC$/,'-USD'),side:entry.side,amount:entry.size,entry_price:prices[0],entry_tif:entry.type==='market'?'Ioc':entry.postOnly?'Alo':'Gtc',...(entry.leverage!==undefined?{leverage:entry.leverage,margin_mode:entry.marginMode}:{}),take_profit:{trigger_price:tp.trigger_price,execution_price:tp.execution_price,is_market:tp.is_market},stop_loss:{trigger_price:sl.trigger_price,execution_price:sl.execution_price,is_market:sl.is_market}},35_000));
+    const result=z.object({status:z.literal('accepted'),grouping:z.literal('normalTpsl'),order_ids:z.array(z.string().regex(/^(?:\d+|0x[0-9a-f]{32})$/)).length(3),client_order_ids:z.array(z.string().regex(/^0x[0-9a-f]{32}$/)).length(3),entry_order_id:z.string().regex(/^\d+$/),fill_price:z.string().optional(),fill_size:z.string().optional()}).parse(await this.post('/quanttrade/trading/entry-bracket-orders',{request_id:requestId,account_name:this.config.accountName,connector_name:'hyperliquid_perpetual',trading_pair:hummingbotTradingPair(entry.symbol),side:entry.side,amount:entry.size,entry_price:prices[0],entry_tif:entry.type==='market'?'Ioc':entry.postOnly?'Alo':'Gtc',...(entry.leverage!==undefined?{leverage:entry.leverage,margin_mode:entry.marginMode}:{}),take_profit:{trigger_price:tp.trigger_price,execution_price:tp.execution_price,is_market:tp.is_market},stop_loss:{trigger_price:sl.trigger_price,execution_price:sl.execution_price,is_market:sl.is_market}},35_000));
     if (new Set(result.order_ids).size!==3||new Set(result.client_order_ids).size!==3||result.order_ids[0]!==result.entry_order_id||(result.fill_price===undefined)!==(result.fill_size===undefined)) throw new Error('Entry bracket acknowledgment is incomplete; inspect exchange state');
     if (result.fill_price!==undefined&&result.fill_size!==undefined&&(!new Decimal(result.fill_price).isFinite()||new Decimal(result.fill_price).lte(0)||!new Decimal(result.fill_size).isFinite()||new Decimal(result.fill_size).lte(0)||new Decimal(result.fill_size).gt(entry.size))) throw new Error('Entry bracket fill acknowledgment is invalid; inspect exchange state');
     return {orderId:'native-entry-oco:hyperliquid:'+result.order_ids.join(','),entryOrderId:'native:hyperliquid:'+result.entry_order_id,...(result.fill_price?{fillPrice:result.fill_price,fillSize:result.fill_size}:{})};
@@ -121,7 +147,7 @@ export class HummingbotExecution implements ExecutionClient {
   async cancel(proposal: Proposal): Promise<void> {
     if (!proposal.orderId) throw new Error('Order has no exchange ID');
     if (proposal.order.trigger) {
-      const tradingPair=proposal.order.venue==='hyperliquid'?proposal.order.symbol.replace(/-USDC$/,'-USD'):proposal.order.symbol;
+      const tradingPair=proposal.order.venue==='hyperliquid'?hummingbotTradingPair(proposal.order.symbol):proposal.order.symbol;
       const prefix='native:'+proposal.order.venue+':';
       let nativeId=proposal.orderId.startsWith(prefix)?proposal.orderId.slice(prefix.length):undefined;
       if (!nativeId&&proposal.orderId.startsWith('native-client:'+proposal.order.venue+':')) {
@@ -218,7 +244,7 @@ export class HummingbotExecution implements ExecutionClient {
       const result=new Decimal(value);return result.isFinite()&&result.gte(0)?result:undefined;
     };
     const prefix='native:'+order.venue+':',clientPrefix='native-client:'+order.venue+':';
-    const pair=order.venue==='hyperliquid'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;
+    const pair=order.venue==='hyperliquid'?hummingbotTradingPair(order.symbol):order.symbol;
     let nativeId=orderId.startsWith(prefix)?identity(orderId.slice(prefix.length)):undefined;
     let clientId=orderId.startsWith(clientPrefix)?identity(orderId.slice(clientPrefix.length)):undefined;
     if(!nativeId&&!clientId){
@@ -272,7 +298,7 @@ export class HummingbotExecution implements ExecutionClient {
   }
   async orderEvidence(order:OrderDraft,orderId:string):Promise<{status:'filled'|'pending'|'failed';fillPrice?:string;fillSize?:string;error?:string}> {
     const connector=order.marketType==='spot'?order.venue:connectors[order.venue];
-    const pair=order.venue==='hyperliquid'&&order.marketType!=='spot'?order.symbol.replace(/-USDC$/,'-USD'):order.symbol;
+    const pair=order.venue==='hyperliquid'&&order.marketType!=='spot'?hummingbotTradingPair(order.symbol):order.symbol;
     // Native submissions are not recorded in Hummingbot's connector order DB.
     // Their exact receipt identity is already sufficient for a scoped venue read.
     if(order.venue==='lighter'&&order.marketType!=='spot'&&/^native(?:-client)?:lighter:[1-9]\d*$/.test(orderId))return this.lighterEvidence(order,orderId);

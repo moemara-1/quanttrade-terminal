@@ -128,3 +128,10 @@ test('quote percentage conversion floors base precision without a float overspen
   expect(availableBasePercentage('10', '2', 50, 2)).toBe('2.5')
   expect(availableBasePercentage('1', '0', 100, 2)).toBe('')
 })
+
+test('isolated-only native ticket requires an explicit selection and never defaults cross',async()=>{
+ const {nativeMarginError}=await import('../trading-scope');
+ expect(nativeMarginError({onlyIsolated:true},'cross',false,false)).toContain('Isolated');
+ expect(nativeMarginError({onlyIsolated:true},'isolated',true,false)).toBeNull();
+ expect(nativeMarginError({onlyIsolated:true},'cross',false,true)).toBeNull();
+});

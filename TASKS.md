@@ -316,3 +316,26 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Saved refs now own row existence, class/venue matching, reorder/removal and navigation. Missing metadata renders label-only Unavailable row with no quote/sparkline or cached price. XMR/class/native-venue regressions pass.
 - [completed] 4,083 frontend tests, TypeScript, lint and 11-task build pass. Hosted Favorites(1) renders XMR-USDT Unavailable, while Top Crypto displays Bitcoin/Ethereum metadata and live quotes. Native-context discovery regression covered with real bundled catalog. No saved ticker content or financial actions changed.
 - [completed] Deployed frontend-only 20261019-2 with hosted read/auth checks; services unchanged. Finalized for commit/push.
+## NanoGPT trade setup reliability
+- [completed] Traced provider startup exceptions and transient relay HTTP failures bypassing recovery; current model minimax/minimax-m2.7 verified without reading keys.
+- [completed] Reproduced failing backend/frontend regressions; distinguished terminal relay failure markers, provider status and proxy errors.
+- [completed] Implemented bounded startup/proxy recovery with same request/offset, safe diagnostic headers and terminal-stream no-replay guards.
+- [completed] Atomic inference now withholds incomplete steps, retries unexposed drafts once and never replays completed tools; token-limited steps remain terminal. 20 relay regressions,4,105 frontend/355 backend/123 Python tests, TypeScript/lint and11-task build pass. Hosted20-3 and actual background-tab BTC/funding/TIA conversation pass with current MiniMax unchanged. Provider outages remain possible.
+
+## Builder markets and LLM arena
+- [completed] Verified official builder DEX indexes/collateral and scoped execution readiness/all-DEX order coverage. PAPER asset180038 was subsequently officially delisted; active catalog correctly excludes it. Hosted active USDC builder metadata/book/candles/connector mapping pass.
+- [completed] Numeric research arguments accept bounded digit strings and numbers, reject invalid inputs; actual hosted Lighter BTC marketId funding tool passes.
+- [completed] Exact builder catalogs/quotes/research, collateral-aware symbols, isolated-only controls and passive native execution readiness implemented. Non-USDC execution and unverified shared-mode builder TWAP collateral remain explicitly blocked.
+- [completed] User chose paper first, configurable credit/loss rules, then future autonomous live on separate user-selected wallets. Current runtime is paper-only, scheduled with free risk checks and memory-only24h key lease.
+- [completed] Paper runtime, budgets, independent portfolios, management/arena UI and21 lifecycle/accounting regressions implemented; no live execution dependency.
+- [in_progress] Hosted paper hold evaluation passed with one call/about$0.0014 actual AI usage; paused/archived test bot, key cleared. Corrected real candle seconds-vs-milliseconds discrepancy with red/green realistic fixtures. Desktop UI verified; final mobile Discover entry build/deploy/QA and authorized commit/push remain.
+
+## Celestia news coverage
+- [completed] Fixed bare TIA/full-name/native-pair normalization and Celestia aliases; boundary checks avoid TIAA false matches. Feed source availability and publication window are explicit; zero configured RSS matches never establish no catalyst. Actual assistant returns coverage/unknown catalyst correctly. No invented cause for the historical price spike.
+
+## Trading Agents live modes and critical relay follow-up
+- [completed] Isolated inference20-5 and validated complete JSON transport20-6 deployed.32 focused/367 backend tests, staged TypeScript,123 Python tests and real SDK compatibility pass. MiMo SSE breaks72–80s and JSON stalls90s; authorized alternate MiniMax M2.7 activated through Intelligence settings, existing key/server-backed mode retained. Four real scanner/detail tools plus report complete without retry; model steps19.5/16.4/39.6s. Bridge/exchange services unchanged; no financial actions. Provider uptime/latency remain external constraints.
+- [pending] Plugins-store configuration uses App Server defaults rather than the local ledger. Intelligence provider wizard reads the real saved configuration correctly. Verify stopped/read-only tool queue behavior before claiming all assistant lifecycle issues resolved.
+- [pending] Add genuine Paper/Live agent mode, explicit account/revision binding and deterministic execution limits; paper QA only.
+- [pending] Add conversational paused-agent drafts, compact Trading Agents UI and meaningful error states.
+- [pending] Verify suites/types/build, hosted/browser behavior, final commit/push; no live financial QA actions.

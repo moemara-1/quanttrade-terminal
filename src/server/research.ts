@@ -10,13 +10,14 @@ const wallet = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const coin = z.string().min(1).max(64).regex(/^(?:[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?|@\d+)$/);
 const dates = {startTime:integer(0,8_640_000_000_000_000),endTime:integer(0,8_640_000_000_000_000)};
 const hl = {venue:z.literal('hyperliquid'),...common};
+const dex=z.string().regex(/^[a-z0-9]{0,6}$/).optional();
 const lighter = {venue:z.literal('lighter'),...common};
 const marketId = integer(0,32767);
 const requestSchema = z.union([
-  z.object({...hl,action:z.literal('market-stats'),coin:coin.optional()}).strict(),
+  z.object({...hl,action:z.literal('market-stats'),coin:coin.optional(),dex}).strict(),
   z.object({...hl,action:z.literal('funding-history'),coin,...dates}).strict(),
   z.object({...hl,action:z.literal('predicted-funding')}).strict(),
-  ...(['account-state','spot-balances','open-orders','order-history','fills','user-fees','rate-limits'] as const).map(action=>z.object({...hl,action:z.literal(action),wallet}).strict()),
+  ...(['account-state','spot-balances','open-orders','order-history','fills','user-fees','rate-limits'] as const).map(action=>z.object({...hl,action:z.literal(action),wallet,...(action==='account-state'||action==='open-orders'?{dex}:{})}).strict()),
   z.object({...hl,action:z.literal('order-status'),wallet,orderId:integer(1,Number.MAX_SAFE_INTEGER)}).strict(),
   z.object({...lighter,action:z.literal('funding-rates'),marketId:marketId.optional()}).strict(),
   z.object({...lighter,action:z.literal('funding-history'),marketId,...dates,resolution:z.enum(['1h','1d']).optional().default('1h')}).strict(),
@@ -92,7 +93,10 @@ export class VenueResearch {
   }
   private async hyperliquid(input:Extract<ResearchRequest,{venue:'hyperliquid'}>):Promise<unknown> {
     if(input.action==='market-stats') {
-      const [meta,contexts]=z.tuple([z.object({universe:records}).passthrough(),records]).parse(await this.json(HL,{type:'metaAndAssetCtxs'}));
+      const prefix=input.coin?.includes(':')?input.coin.split(':')[0]:undefined;
+      if(prefix&&input.dex!==undefined&&prefix!==input.dex)throw Error('Coin namespace does not match the requested DEX');
+      const scope=input.dex??prefix;
+      const [meta,contexts]=z.tuple([z.object({universe:records}).passthrough(),records]).parse(await this.json(HL,{type:'metaAndAssetCtxs',...(scope!==undefined?{dex:scope}:{})}));
       if(meta.universe.length!==contexts.length) throw new Error('Public market metadata is inconsistent');
       if(input.coin) {
         const index=meta.universe.findIndex(asset=>asset.name===input.coin);
@@ -105,6 +109,7 @@ export class VenueResearch {
     if(input.action==='predicted-funding') return z.array(z.tuple([z.string(),z.array(z.tuple([z.string(),objectSchema.nullable()]))])).parse(await this.json(HL,{type:'predictedFundings'}));
     const types={'account-state':'clearinghouseState','spot-balances':'spotClearinghouseState','open-orders':'frontendOpenOrders','order-history':'historicalOrders','fills':'userFills','user-fees':'userFees','rate-limits':'userRateLimit','order-status':'orderStatus'} as const;
     const body:ObjectValue={type:types[input.action],user:input.wallet};
+    if('dex' in input&&input.dex!==undefined)body.dex=input.dex;
     if(input.action==='order-status') body.oid=input.orderId;
     const response=await this.json(HL,body);
     if(['open-orders','order-history','fills'].includes(input.action)) return records.parse(response);

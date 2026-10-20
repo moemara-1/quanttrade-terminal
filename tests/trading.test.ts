@@ -242,3 +242,29 @@ test('disabled caps allow approved notional above former defaults and keep turno
 test('disabled operation cap still reserves once and rejects changed reservation amounts', () => {
  const store=new DeskStore(':memory:');try{store.reserveOperation('uncapped','live','2026-10-14','6000',null);store.reserveOperation('uncapped','live','2026-10-14','6000',null);assert.equal(store.used('live','2026-10-14'),'6000');assert.throws(()=>store.reserveOperation('uncapped','live','2026-10-14','7000',null),/different/);assert.throws(()=>store.reserveOperation('finite','live','2026-10-14','1','5000'),/Daily/);}finally{store.close();}
 });
+
+test('live builder proposals require connection-scoped execution readiness while paper reads remain available',async()=>{
+ const store=new DeskStore(':memory:');
+ const market={...quote,base:'para:PAPER',symbol:'para:PAPER-USDC',dex:'para',coin:'para:PAPER',assetId:180038,collateralToken:0,onlyIsolated:true,maxLeverage:3,marginModes:['isolated' as const]};
+ const order={...draft,symbol:market.symbol,leverage:3,marginMode:'isolated' as const};
+ let calls=0,probes=0;
+ const execution:ExecutionClient={configured:true,place:async()=>{calls++;return 'never';},cancel:async()=>{}};
+ const config:DeskConfig={mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'http://localhost'};
+ const desk=new TradingDesk(store,{list:async()=>[{...market,updatedAt:Date.now()}]},execution,config);
+ try{
+  await assert.rejects(desk.propose(order,'agent'),/builder.*readiness/i);assert.equal(calls,0);
+  execution.validateBuilderMarket=async(market,account,revision)=>{probes++;assert.equal(market.assetId,180038);assert.equal(account,'desk');assert.equal(revision,null);};
+  assert.equal((await desk.propose(order,'agent')).status,'pending');assert.equal(probes,1);assert.equal(calls,0);
+  desk.setVenueMode('hyperliquid','paper');assert.equal((await desk.propose(order,'agent')).status,'pending');assert.equal(probes,1);
+ }finally{store.close();}
+});
+
+test('stale builder quotes refresh before readiness while missing refresh remains rejected',async()=>{
+ for(const refresh of [false,true]){
+  const store=new DeskStore(':memory:');const now=Date.now();let probes=0;
+  const market={...quote,base:'para:PAPER',symbol:'para:PAPER-USDC',dex:'para',assetId:180038,onlyIsolated:true,maxLeverage:3,updatedAt:now-16000};
+  const source={list:async()=>[market],...(refresh?{refreshMarket:async()=>({...market,updatedAt:now})}:{})};
+  const desk=new TradingDesk(store,source,{configured:true,place:async()=>{throw Error('No execution');},cancel:async()=>{},validateBuilderMarket:async(row)=>{probes++;assert.equal(row.updatedAt,now);}},{mode:'live',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'http://localhost'},()=>now);
+  try{const pending=desk.propose({...draft,symbol:market.symbol,leverage:3,marginMode:'isolated'},'agent');if(refresh)assert.equal((await pending).status,'pending');else await assert.rejects(pending,/stale/);assert.equal(probes,refresh?1:0);}finally{store.close();}
+ }
+});

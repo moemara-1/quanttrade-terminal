@@ -4,6 +4,8 @@ import { marketRefToPath } from '@pairlens/shared/market-ref'
 const venue = z.enum(['lighter', 'hyperliquid'])
 const nullableNumber = z.number().finite().nullable()
 const source = z.object({
+  complete:z.boolean().optional(),
+  failedDexs:z.array(z.string()).optional(),
   id: z.string(),
   status: z.enum(['ok', 'error']),
   observedAt: nullableNumber,
@@ -11,6 +13,8 @@ const source = z.object({
   message: z.string().nullable(),
 })
 export const scannerMarketSchema = z.object({
+  quote:z.string().optional(),
+  dex:z.string().optional(),
   venue,
   symbol: z.string(),
   base: z.string(),
@@ -118,9 +122,9 @@ export function scannerMarketPath(market: {
   return marketRefToPath({
     cls: 'perp',
     market: market.venue,
-    id: market.symbol.endsWith('-USDC-USDC')
+    id: /^.+-([A-Za-z0-9_.]+)-\1$/.test(market.symbol)
       ? market.symbol
-      : `${market.symbol}-USDC`,
+      : `${market.symbol}-${market.symbol.slice(market.symbol.lastIndexOf('-')+1)}`,
   })
 }
 export function scannerPercent(

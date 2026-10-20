@@ -3,6 +3,12 @@ export type Venue = 'hyperliquid' | 'lighter';
 export type TradingMode = 'paper' | 'live';
 export type OrderSide = 'buy' | 'sell';
 export interface Market {
+  dex?: string;
+  coin?: string;
+  assetId?: number;
+  collateralToken?: number;
+  onlyIsolated?: boolean;
+  marginModes?: ('cross'|'isolated')[];
   marketId?: number;
   maxLeverage?: number | null;
   marketType?: MarketType;

@@ -2,21 +2,22 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import type { CopilotToolDeps } from './tool-deps'
 
-const limit = z
-  .union([z.number(), z.string().regex(/^\d+$/)])
-  .transform(Number)
-  .pipe(z.number().int().min(1).max(100))
-  .default(30)
+const integer = (min: number, max: number) =>
+  z
+    .union([z.number(), z.string().regex(/^\d+$/)])
+    .transform(Number)
+    .pipe(z.number().int().min(min).max(max))
+const limit = integer(1, 100).default(30)
 const wallet = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
 const coin = z
   .string()
   .min(1)
   .max(100)
   .regex(/^[A-Za-z0-9:_.-]+$/)
-const marketId = z.number().int().min(0).max(32767)
+const marketId = integer(0, 32767)
 const dates = {
-  startTime: z.number().int().nonnegative(),
-  endTime: z.number().int().nonnegative(),
+  startTime: integer(0, 8_640_000_000_000_000),
+  endTime: integer(0, 8_640_000_000_000_000),
 }
 const hl = { venue: z.literal('hyperliquid'), limit }
 const lighter = { venue: z.literal('lighter'), limit }
@@ -46,7 +47,7 @@ const researchSchema = z.union([
       ...hl,
       action: z.literal('order-status'),
       wallet,
-      orderId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+      orderId: integer(1, Number.MAX_SAFE_INTEGER),
     })
     .strict(),
   z

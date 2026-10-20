@@ -6,7 +6,7 @@ const numberValue = z.union([z.number(), z.string().min(1)]).transform(Number).r
 const positive = numberValue.refine((n) => n > 0);
 const nonnegative = numberValue.refine((n) => n >= 0);
 const hlContext = z.object({ markPx: positive, prevDayPx: positive, dayNtlVlm: nonnegative, funding: numberValue, openInterest: nonnegative });
-const hlMeta = z.tuple([z.object({ universe: z.array(z.object({ name: z.string(), szDecimals: z.number().int().min(0).max(6), maxLeverage:z.number().int().positive().nullable().optional(), isDelisted: z.boolean().optional() })) }), z.array(z.unknown())]);
+const hlMeta = z.tuple([z.object({ collateralToken:z.number().int().nonnegative().optional(), universe: z.array(z.object({ name: z.string(), szDecimals: z.number().int().min(0).max(6), maxLeverage:z.number().int().positive().nullable().optional(), onlyIsolated:z.boolean().optional(),marginMode:z.string().optional(),isDelisted: z.boolean().optional() })) }), z.array(z.unknown())]);
 const hlSpotMeta=z.tuple([z.object({tokens:z.array(z.object({name:z.string(),index:z.number().int().nonnegative(),szDecimals:z.number().int().min(0).max(8)})),universe:z.array(z.object({name:z.string(),index:z.number().int().nonnegative(),tokens:z.tuple([z.number().int().nonnegative(),z.number().int().nonnegative()]),isDelisted:z.boolean().optional()}))}),z.array(z.unknown())]);
 const spotContext=z.object({markPx:positive,prevDayPx:positive,dayNtlVlm:nonnegative,coin:z.string()});
 const lighterSpotAsset=z.object({symbol:z.string(),market_id:z.number().int(),status:z.string(),market_type:z.literal('spot'),supported_size_decimals:z.number().int().min(0).max(18),supported_price_decimals:z.number().int().min(0).max(18),min_base_amount:positive,min_quote_amount:nonnegative,last_trade_price:positive,daily_price_change:numberValue,daily_quote_token_volume:nonnegative,is_frozen:z.boolean().optional()});
@@ -24,12 +24,16 @@ const INTERVALS: Record<string, number> = { '1m':60, '5m':300, '15m':900, '1h':3
 const LIGHTER = 'https://mainnet.zklighter.elliot.ai';
 const HYPERLIQUID = 'https://api.hyperliquid.xyz/info';
 export interface MarketService {
+  refreshMarket?(venue:Venue,symbol:string,marketType?:MarketType):Promise<Market|undefined>;
+  coverage?(venue:Venue):{complete:boolean;failedDexs:string[]};
   list(venue: Venue, marketType?: MarketType): Promise<Market[]>;
   candles(venue: Venue, symbol: string, interval: string, marketType?: MarketType, endTs?: number, limit?: number): Promise<Candle[]>;
   book(venue: Venue, symbol: string, marketType?: MarketType): Promise<OrderBook>;
 }
 
 export class PublicMarkets implements MarketService {
+  private hlCoverage={complete:false,failedDexs:[] as string[]};
+  coverage(venue:Venue):{complete:boolean;failedDexs:string[]} {return venue==='hyperliquid'?structuredClone(this.hlCoverage):{complete:true,failedDexs:[]};}
   private readonly cache = new Map<string, { expires: number; promise: Promise<unknown> }>();
   private readonly lighterIds = new Map<string, number>();
   private readonly spotCoins = new Map<string, string>();
@@ -52,17 +56,44 @@ export class PublicMarkets implements MarketService {
     return this.cached(`markets:${venue}:${marketType}`, 5000, async () => {
       if (marketType==='spot') return this.spotList(venue);
       if (venue === 'hyperliquid') {
-        const [meta, contexts] = hlMeta.parse(await this.json(HYPERLIQUID, {type:'metaAndAssetCtxs'}));
+        const core=hlMeta.parse(await this.json(HYPERLIQUID, {type:'metaAndAssetCtxs'}));
+        const failedDexs:string[]=[];
+        let dexes:({name:string}|null)[]=[];
+        try{dexes=await this.cached('hl:dexes',60_000,async()=>z.array(z.object({name:z.string().regex(/^[a-z0-9]{1,6}$/)}).nullable()).max(100).parse(await this.json(HYPERLIQUID,{type:'perpDexs'})));}
+        catch{failedDexs.push('*');}
+        const collateral=new Map<number,string>([[0,'USDC']]);
+        if(dexes.some(Boolean)){
+          try{const spot=await this.cached('hl:collateral',60_000,async()=>z.object({tokens:z.array(z.object({index:z.number().int().nonnegative(),name:z.string()}))}).parse(await this.json(HYPERLIQUID,{type:'spotMeta'})));for(const token of spot.tokens)if(/^[A-Za-z0-9_.]+$/.test(token.name))collateral.set(token.index,token.name);}
+          catch{failedDexs.push('collateral');}
+        }
+        const batches:{dex:string;index:number;data:z.infer<typeof hlMeta>;observedAt:number}[]=[{dex:'',index:0,data:core,observedAt:Date.now()}];
+        // Four concurrent reads bound upstream load; the original array index owns the asset ID.
+        const pending=dexes.flatMap((dex,index)=>dex?[{dex:dex.name,index}]:[]);
+        let next=0;
+        await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
+          while(next<pending.length){const item=pending[next++];try{const result=await this.cached(`hl:contexts:${item.dex}`,30_000,async()=>{const data=hlMeta.parse(await this.json(HYPERLIQUID,{type:'metaAndAssetCtxs',dex:item.dex}));if(data[0].universe.length!==data[1].length)throw Error('Inconsistent metadata');return {data,observedAt:Date.now()};});batches.push({...item,...result});}catch{failedDexs.push(item.dex);}}
+        }));
+        const rows=batches.flatMap(({dex,index,data:[meta,contexts],observedAt})=>{
+        try{
         if (meta.universe.length !== contexts.length) throw new Error('Hyperliquid market metadata is inconsistent');
+        const collateralToken=meta.collateralToken??(dex?undefined:0);
+        const quote=collateralToken===undefined?undefined:collateral.get(collateralToken);
+        if(!quote){failedDexs.push(dex||'core');return [];}
         return meta.universe.flatMap((asset, i): Market[] => {
           if (asset.isDelisted) return [];
+          if(dex&&!asset.name.startsWith(dex+':')){failedDexs.push(dex);return [];}
           const context = hlContext.parse(contexts[i]);
-          return [{venue, symbol:`${asset.name}-USDC`, base:asset.name, price:String(context.markPx),
+          const onlyIsolated=asset.onlyIsolated===true||asset.marginMode==='noCross'||asset.marginMode==='strictIsolated';
+          return [{venue, dex,coin:asset.name,assetId:dex?100000+index*10000+i:i,collateralToken,onlyIsolated,marginModes:onlyIsolated?['isolated']:['cross','isolated'],quote,symbol:`${asset.name}-${quote}`, base:asset.name, price:String(context.markPx),
             change24h: new Decimal(context.markPx).div(context.prevDayPx).minus(1).mul(100).toNumber(),
             volume24h:String(context.dayNtlVlm), fundingRate:context.funding, openInterest:String(context.openInterest),
             maxLeverage:asset.maxLeverage??null, sizeDecimals:asset.szDecimals, priceDecimals:6-asset.szDecimals, minSize:new Decimal(10).pow(-asset.szDecimals).toFixed(),
-            minNotional:'10', updatedAt:Date.now()}];
-        }).sort((a,b) => Number(b.volume24h)-Number(a.volume24h));
+            minNotional:'10', updatedAt:observedAt}];
+        });
+        }catch(error){if(!dex)throw error;failedDexs.push(dex);return [];}
+        });
+        this.hlCoverage={complete:failedDexs.length===0,failedDexs:[...new Set(failedDexs)].sort()};
+        return rows.sort((a,b) => Number(b.volume24h)-Number(a.volume24h));
       }
       const response = lighterMeta.parse(await this.json(`${LIGHTER}/api/v1/orderBookDetails?filter=perp`));
       const assets=response.order_book_details.flatMap((raw)=>{
@@ -125,6 +156,16 @@ export class PublicMarkets implements MarketService {
     const market = (await this.list(venue,marketType)).find((item) => item.symbol === symbol);
     if (!market) throw new Error('Unknown market');
     return market;
+  }
+  async refreshMarket(venue:Venue,symbol:string,marketType:MarketType='perpetual'):Promise<Market|undefined>{
+    const market=(await this.list(venue,marketType)).find(row=>row.symbol===symbol);
+    if(!market||venue!=='hyperliquid'||marketType!=='perpetual'||!market.dex||Date.now()-market.updatedAt<=15_000)return market;
+    const refreshed=await this.cached(`hl:refresh:${market.dex}`,1000,async()=>{
+      this.cache.delete(`hl:contexts:${market.dex}`);
+      this.cache.delete('markets:hyperliquid:perpetual');
+      return this.list(venue,marketType);
+    });
+    return refreshed.find(row=>row.symbol===symbol);
   }
   async candles(venue: Venue, symbol: string, interval: string, marketType:MarketType='perpetual', endTs?:number, limit=240): Promise<Candle[]> {
     if (!Object.hasOwn(INTERVALS, interval)) throw new Error('Unsupported candle interval');

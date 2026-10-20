@@ -8654,6 +8654,82 @@ index d295e08..8afa1df 100644
                <Button
                  variant="ghost"
                  size="sm"
+diff --git a/apps/terminal/src/components/bots/bots-page.tsx b/apps/terminal/src/components/bots/bots-page.tsx
+index e94e412..b09d4d3 100644
+--- a/apps/terminal/src/components/bots/bots-page.tsx
++++ b/apps/terminal/src/components/bots/bots-page.tsx
+@@ -9,6 +9,7 @@ import { BotList } from './bot-list'
+ import { BotsAssistantSurface } from './bots-assistant-surface'
+ import { BotsEmptyState } from './bots-empty-state'
+ import { CreateBotDialog } from './create-bot-dialog'
++import { ArenaPanel } from './arena-panel'
+ 
+ import type { BotDefinition } from '@pairlens/bot-engine/types'
+ import { PAGE_COLUMN_FLUSH, PAGE_GROUND } from '@/components/chrome/page-chrome'
+@@ -28,7 +29,62 @@ import { useIndicatorScriptsStore } from '@/stores/indicator-scripts-store'
+  * Which bot that is lives in the URL (`?bot=<id>`), so the address always names
+  * the deployment on screen.
+  */
+-export function BotsPage({
++type BotsPageProps = {
++  botId?: string | null
++  deployScriptId?: string | null
++}
++
++export function BotsPage(props: BotsPageProps = {}) {
++  const [tab, setTab] = useState<'strategy' | 'arena'>('strategy')
++  const active = props.deployScriptId ? 'strategy' : tab
++  return (
++    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
++      <div
++        role="tablist"
++        aria-label="Bot engines"
++        className="flex shrink-0 gap-1 px-3 pb-2"
++      >
++        {(['strategy', 'arena'] as const).map((value) => (
++          <button
++            key={value}
++            id={`bots-tab-${value}`}
++            type="button"
++            role="tab"
++            aria-selected={active === value}
++            aria-controls={`bots-panel-${value}`}
++            tabIndex={active === value ? 0 : -1}
++            onKeyDown={(event) => {
++              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
++                event.preventDefault()
++                const next = active === 'strategy' ? 'arena' : 'strategy'
++                setTab(next)
++                document.getElementById(`bots-tab-${next}`)?.focus()
++              }
++            }}
++            onClick={() => setTab(value)}
++            className={`rounded-md px-3 py-2 text-xs ${active === value ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}`}
++          >
++            {value === 'strategy' ? 'Strategy bots' : 'LLM Arena'}
++          </button>
++        ))}
++      </div>
++      <div
++        id={`bots-panel-${active}`}
++        role="tabpanel"
++        aria-labelledby={`bots-tab-${active}`}
++        className="flex min-h-0 min-w-0 flex-1"
++      >
++        {active === 'strategy' ? (
++          <StrategyBotsPage {...props} />
++        ) : (
++          <ArenaPanel />
++        )}
++      </div>
++    </div>
++  )
++}
++
++function StrategyBotsPage({
+   botId = null,
+   deployScriptId = null,
+ }: {
 diff --git a/apps/terminal/src/components/copilot/copilot-chat-message.tsx b/apps/terminal/src/components/copilot/copilot-chat-message.tsx
 index 8feeacd..39bfa79 100644
 --- a/apps/terminal/src/components/copilot/copilot-chat-message.tsx
@@ -11070,7 +11146,7 @@ index 0bcabb1..6329d9b 100644
    )
  }
 diff --git a/apps/terminal/src/components/terminal/trade-entry-panel.tsx b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
-index 0d3b2e9..6bb0bce 100644
+index 0d3b2e9..3dfb288 100644
 --- a/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 +++ b/apps/terminal/src/components/terminal/trade-entry-panel.tsx
 @@ -4,6 +4,7 @@ import {
@@ -11096,7 +11172,7 @@ index 0d3b2e9..6bb0bce 100644
  import { OutcomeSwitch } from '@/components/predictions/outcome-switch'
  import { track } from '@/lib/analytics-events'
  import { useSwapPresets } from '@/hooks/use-swap-presets'
-@@ -62,6 +71,20 @@ import {
+@@ -62,6 +71,21 @@ import {
    formatPrice,
  } from '@/lib/format-price'
  import { useContractSize } from '@/lib/futures/contract-size'
@@ -11110,6 +11186,7 @@ index 0d3b2e9..6bb0bce 100644
 +} from '@/lib/plugins/quanttrade-session'
 +import {
 +  availablePercentage,
++  nativeMarginError,
 +  tradingAvailableBalance,
 +  tradingBalanceMap,
 +  validateNativeOrder,
@@ -11117,7 +11194,7 @@ index 0d3b2e9..6bb0bce 100644
  import {
    balanceScopeFor,
    credentialsForMarket,
-@@ -269,24 +292,16 @@ function showTradeToast(opts: TradeToastProps) {
+@@ -269,24 +293,16 @@ function showTradeToast(opts: TradeToastProps) {
  
  // ── Helpers ───────────────────────────────────────────────────────────
  
@@ -11147,7 +11224,7 @@ index 0d3b2e9..6bb0bce 100644
  }
  
  function formatAvailable(v: string): string {
-@@ -416,6 +431,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -416,6 +432,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    const { t } = useTranslation()
    const navigate = useNavigate()
    const [side, setSide] = useState<'buy' | 'sell'>('buy')
@@ -11159,7 +11236,7 @@ index 0d3b2e9..6bb0bce 100644
    const [orderType, setOrderType] = useState<'market' | 'limit' | 'workflow'>(
      'market',
    )
-@@ -470,6 +490,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -470,6 +491,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // the swap paths (slippage, input-leg sizing, on-chain journaling). Reading
    // one for the other is what would have sent a contract order down a swap.
    const isPrediction = marketInfo?.assetClasses.includes('prediction') ?? false
@@ -11167,7 +11244,7 @@ index 0d3b2e9..6bb0bce 100644
    const usesWallet = marketInfo?.walletChain != null
    const isDex = usesWallet && !isPrediction
    // Resting limit orders (Jupiter Trigger / KyberSwap LO) where supported
-@@ -484,7 +505,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -484,7 +506,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // What it adds is leverage, a reduce-only intent, and a size denominated in
    // contracts rather than in the base asset.
    const isPerp = marketInfo?.assetClasses.includes('crypto-perp') ?? false
@@ -11182,7 +11259,7 @@ index 0d3b2e9..6bb0bce 100644
  
    // Derived here rather than beside the other pair state above, because a
    // stock's key is the bare ticker and its quote can only come from the venue.
-@@ -604,12 +631,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -604,12 +632,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and a futures margin balance, and they are not the same number.
    const balanceMap = useBalanceMap(
      usesWallet
@@ -11200,7 +11277,7 @@ index 0d3b2e9..6bb0bce 100644
    )
  
    // Slippage, priority fee, tip and lane come from the execution preset in
-@@ -682,7 +710,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -682,7 +711,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // and would do it on orders that are only closing a position. So it rides
    // only on a deliberate choice, and never on a reduce-only order.
    const [leverageDirty, setLeverageDirty] = useState(false)
@@ -11211,7 +11288,7 @@ index 0d3b2e9..6bb0bce 100644
    useEffect(() => {
      // Both reset on every venue or contract change. The clamp is separate
      // from the reset because a venue switch can also LOWER the ceiling, and
-@@ -692,8 +723,16 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -692,8 +724,16 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    useEffect(() => {
      setLeverage(1)
      setLeverageDirty(false)
@@ -11229,7 +11306,7 @@ index 0d3b2e9..6bb0bce 100644
  
    // A price is denominated in the instrument that is on screen. Moving to a
    // prediction outcome must therefore drop whatever the previous pair left in
-@@ -711,8 +750,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -711,8 +751,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      setLimitPrice('')
    }, [isPrediction, pairKey])
  
@@ -11245,7 +11322,7 @@ index 0d3b2e9..6bb0bce 100644
    useEffect(() => {
      if (!isPrediction) return
      if (limitOnly && orderType !== 'limit') setOrderType('limit')
-@@ -761,8 +805,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -761,8 +806,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      !regionHintDismissed && marketCreds.length > 0 && !isRegionExplicitlySet()
  
    const sizeAsset = sizeCcy === 'base' ? baseLabel : quoteAsset
@@ -11258,7 +11335,7 @@ index 0d3b2e9..6bb0bce 100644
    // One shared rule with the phone's ticket — see `predictionCollateral`.
    const collateral = predictionCollateral((c) => balanceMap.get(c)?.total)
    // What the Max chip stakes. Floored to cents rather than rounded: a chip
-@@ -773,11 +819,15 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -773,11 +820,15 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      if (!Number.isFinite(total) || total <= 0) return ''
      return String(Math.floor(total * 100) / 100)
    })()
@@ -11279,7 +11356,7 @@ index 0d3b2e9..6bb0bce 100644
  
    // ── Live price sample ──
    // The ref above is written by the stream without waking this component, and
-@@ -790,12 +840,50 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -790,12 +841,50 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // Mounted only where a figure actually moves on its own — a market order. A
    // limit ticket prices off the field the user typed.
    const [priceSample, setPriceSample] = useState<TicketPriceSample | null>(null)
@@ -11331,7 +11408,7 @@ index 0d3b2e9..6bb0bce 100644
        prev.last === sample.last &&
        prev.bid === sample.bid &&
        prev.ask === sample.ask
-@@ -852,7 +940,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -852,7 +941,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      ? null
      : orderType === 'limit'
        ? Number(limitPrice) || null
@@ -11344,7 +11421,7 @@ index 0d3b2e9..6bb0bce 100644
    const perpContracts = isPerp ? Number(size) : 0
    const perpBaseEquivalent =
      showBaseEquivalent && perpContracts > 0
-@@ -865,30 +957,135 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -865,30 +958,135 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          price: perpReferencePrice,
        })
      : null
@@ -11420,13 +11497,13 @@ index 0d3b2e9..6bb0bce 100644
 -        selectedWorkflowId !== null &&
 -        workflowCompatIssues.length === 0))
 +  const marginDraftError =
-+    isPerp &&
++    (isPerp&&isQuantTradeVenue(market)?nativeMarginError(contractLimits,marginMode,marginModeDirty,effectiveReduceOnly):null) ?? (isPerp &&
 +    isQuantTradeVenue(market) &&
 +    (leverageDirty || nativeWorkflow) &&
 +    !effectiveReduceOnly &&
 +    !marginModeDirty
 +      ? 'Choose Cross or Isolated when changing leverage.'
-+      : null
++      : null)
 +  const workflowGraphError =
 +    orderType === 'workflow' && isQuantTradeVenue(market) && selectedWorkflow
 +      ? (workflowGraphReviewError(market, {
@@ -11501,7 +11578,7 @@ index 0d3b2e9..6bb0bce 100644
  
    // Live funds (DEX swaps are always on-chain; CEX honors the credential mode)
    // get a longer hold + an explicit "funds commit" note.
-@@ -899,6 +1096,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -899,6 +1097,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    // or a click-mode user is told to hold a button that fires on release.
    const [confirmMode] = useTradeConfirmMode()
    const submitHint = useMemo(() => {
@@ -11511,7 +11588,7 @@ index 0d3b2e9..6bb0bce 100644
      const hold = confirmMode === 'hold'
      if (orderType === 'workflow') {
        return hold
-@@ -913,7 +1113,15 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -913,7 +1114,15 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
      return hold
        ? t('terminal.trade.holdToPlace')
        : t('terminal.trade.clickToPlace')
@@ -11528,7 +11605,7 @@ index 0d3b2e9..6bb0bce 100644
  
    const handleSideChange = (newSide: 'buy' | 'sell') => {
      setSide(newSide)
-@@ -922,7 +1130,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -922,7 +1131,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  
    const handleSellPctChange = (pct: number) => {
      setSellPct(pct)
@@ -11543,7 +11620,7 @@ index 0d3b2e9..6bb0bce 100644
      setSizeCcy('base')
    }
  
-@@ -950,6 +1164,56 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -950,6 +1165,56 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  
    const handleSubmit = async () => {
      if (!canSubmit) return
@@ -11600,7 +11677,7 @@ index 0d3b2e9..6bb0bce 100644
  
      // ── Prediction path: contracts at a probability price ──
      //
-@@ -1422,7 +1686,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1422,7 +1687,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
        let tgtCcy: string | undefined =
          sizeCcy === 'base' ? 'base_ccy' : 'quote_ccy'
  
@@ -11612,7 +11689,7 @@ index 0d3b2e9..6bb0bce 100644
          tgtCcy = undefined
          if (sizeCcy === 'quote' && Number(limitPrice) > 0) {
            orderSize = (Number(size) / Number(limitPrice)).toFixed(8)
-@@ -1446,6 +1713,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1446,6 +1714,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          credentialId: selectedCred.id,
          ...(tgtCcy ? { tgtCcy } : {}),
          ...(orderType === 'limit' ? { price: String(limitPrice) } : {}),
@@ -11626,7 +11703,7 @@ index 0d3b2e9..6bb0bce 100644
          ...(extendedHours && extendedHoursEligible
            ? { extendedHours: true }
            : {}),
-@@ -1455,6 +1729,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1455,6 +1730,13 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          // state at the venue, and a close should not rewrite it. Matches the
          // positions pane, which closes without leverage for the same reason.
          ...(isPerp && leverageDirty && !reduceOnly ? { leverage } : {}),
@@ -11640,7 +11717,7 @@ index 0d3b2e9..6bb0bce 100644
          ...(isPerp && contractSizeKnown ? { contractSize } : {}),
          ...(isPerp && reduceOnly ? { reduceOnly: true } : {}),
        })
-@@ -1504,6 +1785,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1504,6 +1786,10 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
    const body = (
      <div className="flex shrink-0 flex-col">
        <div className="flex flex-col gap-2.5 py-2.5">
@@ -11651,7 +11728,7 @@ index 0d3b2e9..6bb0bce 100644
          {/* Wallet status. The "nothing connected here" case belongs to the
              connect gate below — what's left is a vault that can't be read, and
              an account that exists but hasn't been picked for this pane. */}
-@@ -1663,7 +1948,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1663,7 +1949,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  
          {/* Order type tabs — Market + Limit + Workflow. A DEX venue gets the
              row only when it rests orders, which is also what a workflow's
@@ -11660,7 +11737,7 @@ index 0d3b2e9..6bb0bce 100644
          {(!isDex || dexSupportsLimit) && !limitOnly && (
            <Tabs
              value={orderType}
-@@ -1688,7 +1973,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1688,7 +1974,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                >
                  {t('terminal.trade.orderTypeLimit')}
                </TabsTrigger>
@@ -11669,7 +11746,7 @@ index 0d3b2e9..6bb0bce 100644
                  <TabsTrigger
                    value="workflow"
                    disabled={outsideRegularHours}
-@@ -1713,8 +1998,105 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1713,8 +1999,105 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          )}
  
          {/* Workflow selector */}
@@ -11776,7 +11853,7 @@ index 0d3b2e9..6bb0bce 100644
              <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                {t('terminal.trade.workflow')}
              </span>
-@@ -1730,9 +2112,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1730,9 +2113,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                  <select
                    className="h-6 w-full rounded-lg border border-transparent bg-muted/40 px-2 text-[11px]"
                    value={selectedWorkflowId ?? ''}
@@ -11790,7 +11867,7 @@ index 0d3b2e9..6bb0bce 100644
                  >
                    <option value="">{t('terminal.trade.selectWorkflow')}</option>
                    {wfWorkflows.map((wf) => (
-@@ -1781,9 +2165,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1781,9 +2166,8 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -11802,7 +11879,7 @@ index 0d3b2e9..6bb0bce 100644
              Never persisted — see the state declaration. */}
          {isPerp && maxLeverage > 1 && (
            <div className="space-y-1">
-@@ -1791,15 +2174,37 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1791,15 +2175,37 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                <span className="font-mono text-[11px] uppercase tracking-[.16em] text-muted-foreground">
                  {t('terminal.trade.leverage')}
                </span>
@@ -11843,7 +11920,7 @@ index 0d3b2e9..6bb0bce 100644
                    className={cn(
                      'flex-1 rounded-md border px-1 py-0.5 font-mono text-[11.5px] tabular-nums transition-colors',
                      leverage === lev
-@@ -1826,82 +2231,122 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1826,82 +2232,122 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -11870,7 +11947,7 @@ index 0d3b2e9..6bb0bce 100644
 +                    ? 'Choose margin type'
 +                    : 'Keep exchange setting'}
 +                </option>
-+                <option value="cross">Cross</option>
++                {!contractLimits?.onlyIsolated&&<option value="cross">Cross</option>}
 +                <option value="isolated">Isolated</option>
 +              </select>
 +            </label>
@@ -12029,7 +12106,7 @@ index 0d3b2e9..6bb0bce 100644
  
          {/* Stake presets, in collateral. Max is the whole balance, floored to
              cents so the chip can never ask for more than the account holds. */}
-@@ -1946,6 +2391,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1946,6 +2392,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
              <button
                type="button"
                className="ml-0.5 text-muted-foreground hover:text-foreground"
@@ -12039,7 +12116,7 @@ index 0d3b2e9..6bb0bce 100644
                onClick={() => setPresetsConfigOpen(true)}
              >
                <Settings2 className="size-3" />
-@@ -1986,6 +2434,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -1986,6 +2435,9 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                <button
                  type="button"
                  className="ml-0.5 text-muted-foreground hover:text-foreground"
@@ -12049,7 +12126,7 @@ index 0d3b2e9..6bb0bce 100644
                  onClick={() => setPresetsConfigOpen(true)}
                >
                  <Settings2 className="size-3" />
-@@ -2007,6 +2458,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2007,6 +2459,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                </span>
              </div>
              <Slider
@@ -12057,7 +12134,7 @@ index 0d3b2e9..6bb0bce 100644
                value={[sellPct]}
                min={0}
                max={100}
-@@ -2106,7 +2558,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2106,7 +2559,7 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
          {/* Reduce-only. The intent flag that makes a closing order safe: the
              venue shrinks the position and refuses to flip it, so a size larger
              than what is open cannot open the opposite side by accident. */}
@@ -12066,7 +12143,7 @@ index 0d3b2e9..6bb0bce 100644
            <div className="flex items-start justify-between gap-3">
              <div className="min-w-0">
                <label
-@@ -2116,7 +2568,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2116,7 +2569,11 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                  {t('terminal.trade.reduceOnly')}
                </label>
                <p className="mt-0.5 text-[10.5px] leading-snug text-muted-foreground/70">
@@ -12079,7 +12156,7 @@ index 0d3b2e9..6bb0bce 100644
                </p>
              </div>
              <Switch
-@@ -2133,13 +2589,21 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2133,13 +2590,21 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
              level is explicitly an estimate: the real one depends on the whole
              margin balance, the venue's maintenance tier and funding paid since
              entry, none of which exist before the position does. */}
@@ -12104,7 +12181,7 @@ index 0d3b2e9..6bb0bce 100644
                </span>
                <span className="text-foreground">
                  {perpNotionalValue === null
-@@ -2147,6 +2611,19 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2147,6 +2612,19 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
                    : `${perpNotionalValue.toFixed(2)} ${quoteAsset}`}
                </span>
              </div>
@@ -12124,7 +12201,7 @@ index 0d3b2e9..6bb0bce 100644
              <div className="flex items-center justify-between">
                <span className="uppercase tracking-[.16em]">
                  {t('terminal.trade.estLiquidation')}
-@@ -2158,6 +2635,38 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2158,6 +2636,38 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            </div>
          )}
  
@@ -12163,7 +12240,7 @@ index 0d3b2e9..6bb0bce 100644
          {/* What holding it costs. Renders nothing where the venue publishes no
              rate for this contract. */}
          {isPerp && <FundingEntryRow market={market} pairKey={pairKey} />}
-@@ -2174,9 +2683,33 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2174,9 +2684,33 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
            />
          )}
  
@@ -12197,7 +12274,7 @@ index 0d3b2e9..6bb0bce 100644
          <TradeConfirmButton
            side={side === 'buy' ? 'buy' : 'sell'}
            disabled={!canSubmit}
-@@ -2204,6 +2737,66 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2204,6 +2738,66 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
              </span>
            }
          />
@@ -12264,7 +12341,7 @@ index 0d3b2e9..6bb0bce 100644
        </div>
  
        {/* Presets config dialog */}
-@@ -2264,19 +2857,23 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
+@@ -2264,19 +2858,23 @@ export const TradeEntryPanel = memo(function TradeEntryPanel({
  const PRICE_SAMPLE_MS = 1000
  
  type TicketPriceSample = {
@@ -13450,7 +13527,7 @@ index e51eeb9..b6fe0ff 100644
  
    test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..e1c2a09 100644
+index ce0d317..1d71f81 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -46,6 +46,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
@@ -13462,10 +13539,11 @@ index ce0d317..e1c2a09 100644
    'Markets: pull candles, tickers, order books, the live trade tape, signals, multi-timeframe reads and comparisons for ANY instrument on ANY connected venue. You are never limited to what is on screen. Search instruments you do not know the id of, and open any of them with open_instrument.',
    'Prediction markets: read a whole event with get_prediction_event (every outcome, its probability, bid, ask and 24h move, plus what the whole field costs) and find one with search_prediction_events. A prediction price lives on the event, so these are the only tools that can see one: candles and order books address a single outcome. Never say you cannot see the prices on a prediction board without calling get_prediction_event first.',
    'Perps and equities: funding, open interest and liquidation clusters for perpetuals; the trading session, calendars, fundamentals and insider filings for stocks.',
-@@ -60,6 +62,11 @@ const CAPABILITIES = [
+@@ -60,6 +62,12 @@ const CAPABILITIES = [
  ]
  
  const WORKING_RULES = [
++  'News and catalysts: get_news covers only the returned configured feed headlines and known ticker/project aliases; it is not an exhaustive search. Zero headline matches do not prove there is no news or catalyst. Never infer that a price move is purely technical, newsless or caused by missing news from an empty result. For requested catalyst research, use web_search at most once with the exact full project name plus ticker (TIA is Celestia), verify source and publication time, and distinguish dated reports from a verified cause. Fetch time is not publication time. If broader research is unavailable or inconclusive, say the catalyst is unknown. Do not delay an already-specified trade for repeated news searches.',
 +  'Use get_scanner_detail for selected opportunity funding and strength histories. Actual 24-hour funding is the signed sum of verified hourly settlement samples in the returned completed UTC window; partial history is not a full total. Current hourly ×24 or ×24×365 is a constant-rate scenario, never a prediction or a historical measurement. A large annualized percentage is not an hourly yield. Do not claim net profit without verified fees, bid/ask execution and slippage. Cross-exchange paired entry is sequential, not atomic: one reviewed plan may stop after an exposed partial/uncertain first leg. Never substitute two unrelated order cards or auto-unwind an unhedged leg without review.',
 +  'For broad Lighter/Hyperliquid opportunity discovery use scan_markets before selecting candidates. Set strengthMetric change24h for raw gainers/losers or relativeStrength24h for BTC-relative rankings; report which ranking, venue coverage, asOf, filters, total and truncated scope you actually read. A top row is a candidate, not evidence of a best trade or executable arbitrage. Reuse its exact venue and native pair; verify fresh quote, book liquidity, account margin, contract constraints and risk before preparing the requested trade. Respect an explicitly chosen venue rather than switching because another account read appears empty. Do not repeat market-wide scans once the user has chosen an exact trade.',
 +  'Explicit execution requests take priority over further research. Once the user specifies the instrument, direction and entry intent, use the exact connected account and prepare the requested single confirmation card after only the necessary account, fresh quote, instrument precision and risk checks. Do not restart market discovery, re-read the same charts or open unrelated instruments. Do not ask whether to prepare after the user already asked to open, set up or send the trade. Opening a chart is navigation, not preparation or execution. If a material field is missing, ask one concise question containing all missing choices and then prepare. A request for a good entry or stop zone permits a focused fresh chart read, not another market-wide search.',
@@ -13474,7 +13552,7 @@ index ce0d317..e1c2a09 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +80,23 @@ const WORKING_RULES = [
+@@ -73,8 +81,23 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -13500,7 +13578,7 @@ index ce0d317..e1c2a09 100644
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
    'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
-@@ -94,7 +116,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +117,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13908,7 +13986,7 @@ index 5a3bae1..a37411c 100644
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
 diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
-index b543053..2c1b0ce 100644
+index b543053..c0b809e 100644
 --- a/apps/terminal/src/lib/copilot/context-tools.ts
 +++ b/apps/terminal/src/lib/copilot/context-tools.ts
 @@ -2,7 +2,12 @@
@@ -13925,7 +14003,45 @@ index b543053..2c1b0ce 100644
  import type { CopilotToolDeps } from './tool-deps'
  
  // ---------------------------------------------------------------------------
-@@ -64,15 +69,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -19,6 +24,37 @@ function assetClassFor(market?: string): 'crypto' | 'stocks' {
+   return market === 'alpaca' ? 'stocks' : 'crypto'
+ }
+ 
++const newsCoverageSchema = z.object({
++  scope: z.string().max(80).optional(),
++  sources: z
++    .array(
++      z.object({
++        name: z.string().max(100),
++        status: z.enum(['available', 'unavailable']),
++      }),
++    )
++    .max(30)
++    .optional(),
++  normalizedTickers: z.array(z.string().max(100)).max(100).optional(),
++  totalMatchedArticles: z.number().int().nonnegative().optional(),
++  cachedArticleCount: z.number().int().nonnegative().optional(),
++  truncated: z.boolean().optional(),
++  newestPublishedAt: z.string().nullable().optional(),
++  oldestPublishedAt: z.string().nullable().optional(),
++})
++const newsProjectNames: Record<string, string> = {
++  TIA: 'Celestia',
++  BTC: 'Bitcoin',
++  ETH: 'Ethereum',
++  SOL: 'Solana',
++  HYPE: 'Hyperliquid',
++  DOGE: 'Dogecoin',
++  XRP: 'XRP',
++  BNB: 'BNB',
++  XMR: 'Monero',
++  ZEC: 'Zcash',
++}
++
+ /** Defensive parse of an ai:web-search plugin response (untrusted third parties). */
+ function parseSearchResults(raw: unknown): Array<{
+   url: string
+@@ -64,15 +100,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
        }),
        execute: async ({ limit }) => {
          try {
@@ -13971,7 +14087,73 @@ index b543053..2c1b0ce 100644
            }
          }
        },
-@@ -131,17 +160,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -80,7 +140,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+ 
+     get_news: tool({
+       description:
+-        'Get recent market news with sentiment scores. Pass a ticker/symbol to filter (e.g. "BTC", "SOL"); omit for broad market news.',
++        'Read recent headlines from the configured news feed, filtered by ticker or known project name. This is not an exhaustive search; zero hits do not establish that no news or catalyst exists. Use one focused full-name web search when catalyst research needs broader coverage.',
+       inputSchema: z.object({
+         symbol: z
+           .string()
+@@ -98,9 +158,40 @@ export function buildContextTools(deps: CopilotToolDeps) {
+             tickers: sym,
+             limit: limit ?? 15,
+           })
++          const rawCoverage = newsCoverageSchema.safeParse(
++            (res as typeof res & { coverage?: unknown }).coverage,
++          )
++          const articles = (res.articles ?? []).slice(0, limit ?? 15)
++          const ticker = baseAsset(
++            (sym ?? '').replace(/^CRYPTO:/i, '').replaceAll('/', '-'),
++          )
++          const project = newsProjectNames[ticker] ?? sym ?? 'crypto markets'
+           return {
++            status: articles.length ? 'available' : 'no-matches',
+             symbol: sym ?? null,
+-            articles: (res.articles ?? []).slice(0, limit ?? 15).map((a) => ({
++            fetchedAt: res.fetchedAt ?? null,
++            catalystAssessment: 'unknown',
++            coverage: {
++              ...(rawCoverage.success ? rawCoverage.data : {}),
++              scope: rawCoverage.success
++                ? (rawCoverage.data.scope ?? 'provider-headline-feed')
++                : 'provider-headline-feed',
++              exhaustive: false,
++              warning:
++                'Only returned feed headlines were searched. Zero matches do not establish the absence of news or a catalyst. Use article publication times, not fetch time, to assess freshness; headlines alone do not prove the cause of a price move.',
++            },
++            ...(articles.length
++              ? {}
++              : {
++                  nextResearch: {
++                    tool: 'web_search',
++                    query: `${project}${project !== ticker && ticker ? ` (${ticker})` : ''} latest news official announcements`,
++                    maxFollowups: 1,
++                    instruction:
++                      'If catalyst research was requested, perform one focused search and verify source, exact asset and publication time. If unavailable or inconclusive, report the catalyst as unknown, not newsless. Do not delay an already-specified trade for repeated news searches.',
++                  },
++                }),
++            articles: articles.map((a) => ({
+               title: a.title,
+               url: a.url,
+               source: a.source,
+@@ -116,10 +207,13 @@ export function buildContextTools(deps: CopilotToolDeps) {
+           // plainly, or the model reports "no news" for an outage.
+           const providerDown = /API error: 5\d\d/.test(message)
+           return {
++            status: 'unavailable',
++            catalystAssessment: 'unknown',
++            coverage: { exhaustive: false },
+             articles: [],
+             error: providerDown
+               ? 'The news provider is unavailable right now, so no articles could be fetched. This is not the same as there being no news.'
+-              : message || 'News data requires being signed in.',
++              : 'The news feed could not be read. Its coverage and any current catalyst remain unknown.',
+           }
+         }
+       },
+@@ -131,17 +225,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
        inputSchema: z.object({}),
        execute: async () => {
          try {
@@ -13999,7 +14181,7 @@ index b543053..2c1b0ce 100644
            }
          }
        },
-@@ -176,7 +210,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -176,7 +275,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
  
      get_trade_journal: tool({
        description:
@@ -14008,7 +14190,7 @@ index b543053..2c1b0ce 100644
        inputSchema: z.object({
          pair: z
            .string()
-@@ -192,17 +226,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -192,17 +291,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
            })
            const buys = entries.filter((e) => e.side === 'buy').length
            return {
@@ -14056,14 +14238,14 @@ index a34eeca..86a6054 100644
      ...buildPortfolioTools(deps),
      ...buildChartTools(deps),
 diff --git a/apps/terminal/src/lib/copilot/market-tools.ts b/apps/terminal/src/lib/copilot/market-tools.ts
-index 048abff..52ecf45 100644
+index 048abff..ea372c9 100644
 --- a/apps/terminal/src/lib/copilot/market-tools.ts
 +++ b/apps/terminal/src/lib/copilot/market-tools.ts
 @@ -6,6 +6,7 @@ import {
    computeSignalsWithRegime,
    findRecentSignal,
  } from '@pairlens/strategy-engine'
-+import { searchNativeInstruments } from './native-instrument-search'
++import { nativeCatalogCoverage,searchNativeInstruments } from './native-instrument-search'
  import {
    isCurrentTarget,
    resolveTarget,
@@ -14076,7 +14258,7 @@ index 048abff..52ecf45 100644
    deps: CopilotToolDeps,
    target: { market: string; pair: string; timeframe: string },
    limit: number,
-@@ -163,6 +164,120 @@ function fetchTradesSnapshot(
+@@ -163,6 +164,122 @@ function fetchTradesSnapshot(
  }
  
  export function buildMarketTools(deps: CopilotToolDeps) {
@@ -14088,6 +14270,7 @@ index 048abff..52ecf45 100644
 +      value: Promise<Array<{ venue: string; symbol: string; base: string }>>
 +    }
 +  >()
++  const coverage=new Map<string,ReturnType<typeof nativeCatalogCoverage>>()
 +  async function resolveNativeTarget(target: Target): Promise<Target> {
 +    const venue = target.market.replace(/-spot$/, '')
 +    if (venue !== 'lighter' && venue !== 'hyperliquid') return target
@@ -14110,6 +14293,7 @@ index 048abff..52ecf45 100644
 +          throw new Error(
 +            `Venue catalog unavailable (HTTP ${response.status}); no pair was inferred.`,
 +          )
++        coverage.set(key,nativeCatalogCoverage(response))
 +        return z
 +          .array(
 +            z.object({
@@ -14130,7 +14314,7 @@ index 048abff..52ecf45 100644
 +      throw err
 +    }
 +    const terminalPair = (symbol: string) =>
-+      marketType === 'perpetual' ? `${symbol}-USDC` : symbol
++      marketType === 'perpetual' ? `${symbol}-${symbol.split('-').at(-1)}` : symbol
 +    const exact = rows.filter(
 +      (row) =>
 +        row.symbol.toUpperCase() === target.pair ||
@@ -14141,14 +14325,14 @@ index 048abff..52ecf45 100644
 +      ? exact
 +      : rows.filter(
 +          (row) =>
-+            row.base.toUpperCase() === base &&
++            (row.base.toUpperCase() === base||(!base.includes(':')&&row.base.split(':').at(-1)?.toUpperCase()===base)) &&
 +            (marketType === 'perpetual' || target.pair === base),
 +        )
 +    if (candidates.length !== 1)
 +      throw new Error(
 +        candidates.length
 +          ? 'Ambiguous venue instrument; select an exact catalog pair.'
-+          : 'Instrument is not listed in the selected venue catalog; no other venue was used.',
++          : coverage.get(key)?.complete===false?'Instrument was not found in incomplete venue catalog coverage; unavailable DEX scopes may contain it. No ticker or alternate venue was inferred.':'Instrument is not listed in the selected venue catalog; no other venue was used.',
 +      )
 +    return { ...target, pair: terminalPair(candidates[0].symbol) }
 +  }
@@ -14163,7 +14347,7 @@ index 048abff..52ecf45 100644
 +      return fetchCandles(targetDeps, target, limit)
 +    const marketType = target.market.endsWith('-spot') ? 'spot' : 'perpetual'
 +    const symbol =
-+      marketType === 'spot' ? target.pair : target.pair.slice(0, -5)
++      marketType === 'spot' ? target.pair : target.pair.slice(0,target.pair.lastIndexOf('-'))
 +    const query = new URLSearchParams({
 +      venue,
 +      marketType,
@@ -14197,7 +14381,7 @@ index 048abff..52ecf45 100644
    return {
      get_market_snapshot: tool({
        description:
-@@ -186,7 +301,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -186,7 +303,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
              target,
              candles: summarizeCandles(candles),
              ticker:
@@ -14215,7 +14399,7 @@ index 048abff..52ecf45 100644
              regime,
              latestSignal: signal,
            }
-@@ -236,11 +360,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -236,11 +362,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
        }),
        execute: async (args) => {
          const target = resolveTarget(deps, { ...args, timeframe: undefined })
@@ -14240,7 +14424,7 @@ index 048abff..52ecf45 100644
            const candles = await loadCandles(deps, target, 60)
            return { target, ticker: tickerFromCandles(candles) }
          } catch (err) {
-@@ -284,7 +417,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -284,7 +419,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
          depth: z.number().int().min(1).max(50).optional().default(15),
        }),
        execute: async (args) => {
@@ -14259,7 +14443,7 @@ index 048abff..52ecf45 100644
          const snap = await fetchOrderbookSnapshot(
            deps,
            target.market,
-@@ -333,7 +476,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -333,7 +478,17 @@ export function buildMarketTools(deps: CopilotToolDeps) {
          limit: z.number().int().min(5).max(200).optional().default(50),
        }),
        execute: async (args) => {
@@ -14278,7 +14462,7 @@ index 048abff..52ecf45 100644
          const trades = await fetchTradesSnapshot(
            deps,
            target.market,
-@@ -391,7 +544,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -391,7 +546,16 @@ export function buildMarketTools(deps: CopilotToolDeps) {
            .describe('Defaults to 15m, 1h, 4h, 1d'),
        }),
        execute: async (args) => {
@@ -14296,7 +14480,7 @@ index 048abff..52ecf45 100644
          const tfs = args.timeframes ?? ['15m', '1h', '4h', '1d']
          const results = await Promise.all(
            tfs.map(async (tf) => {
-@@ -459,12 +621,19 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -459,12 +623,19 @@ export function buildMarketTools(deps: CopilotToolDeps) {
                const candles = await loadCandles(deps, target, lookback + 5)
                const newest = toNewestFirst(candles)
                if (newest.length < 2)
@@ -14317,7 +14501,7 @@ index 048abff..52ecf45 100644
                  lastPrice: last,
                  changePct: past ? ((last - past) / past) * 100 : 0,
                  trend: summary.shortTermTrend,
-@@ -472,7 +641,9 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -472,7 +643,9 @@ export function buildMarketTools(deps: CopilotToolDeps) {
                }
              } catch (err) {
                return {
@@ -14327,7 +14511,7 @@ index 048abff..52ecf45 100644
                  error: err instanceof Error ? err.message : String(err),
                }
              }
-@@ -510,11 +681,25 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -510,11 +683,25 @@ export function buildMarketTools(deps: CopilotToolDeps) {
        inputSchema: z.object({
          query: z
            .string()
@@ -14353,7 +14537,7 @@ index 048abff..52ecf45 100644
          const market = (
            args.market ??
            deps.getContextInfo().market ??
-@@ -538,13 +723,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
+@@ -538,13 +725,20 @@ export function buildMarketTools(deps: CopilotToolDeps) {
              (page as { items?: Array<Record<string, unknown>> })?.items ?? []
            return {
              query: args.query,

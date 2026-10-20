@@ -1,5 +1,11 @@
 import type { BalanceRecord } from '@/stores/balances-store'
 
+export function nativeMarginError(limits:{onlyIsolated?:boolean}|null,mode:'cross'|'isolated',explicit:boolean,reduceOnly:boolean):string|null {
+  return !reduceOnly&&limits?.onlyIsolated&&(!explicit||mode!=='isolated')
+    ? 'This market supports Isolated margin only. Select Isolated before submitting.'
+    : null
+}
+
 /** A missing or mismatched account is never permission to merge balances. */
 export function tradingBalanceMap(
   balances: ReadonlyArray<BalanceRecord>,

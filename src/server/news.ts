@@ -9,12 +9,20 @@ const sources:NewsSource[]=[
  {url:'https://www.cnbc.com/id/20409666/device/rss/rss.html',name:'CNBC Market Insider',domain:'cnbc.com',kind:'markets'}
 ];
 const object=z.record(z.unknown());
-const cryptoAliases:Record<string,string[]>={BTC:['bitcoin','btc'],ETH:['ethereum','ether','eth'],SOL:['solana','sol'],HYPE:['hyperliquid','hype'],DOGE:['dogecoin','doge'],XRP:['ripple','xrp'],BNB:['binance','bnb']};
+const cryptoAliases:Record<string,string[]>={BTC:['bitcoin','btc'],ETH:['ethereum','ether','eth'],SOL:['solana','sol'],HYPE:['hyperliquid','hype'],DOGE:['dogecoin','doge'],XRP:['ripple','xrp'],BNB:['binance','bnb'],TIA:['celestia','tia'],XMR:['monero','xmr'],ZEC:['zcash','zec']};
 // Company names from the terminal's equity catalog. Ambiguous ticker words
 // require explicit $/exchange notation; they must not tag generic prose.
 const stockAliases:Record<string,string[]>={AAPL:['Apple'],NVDA:['Nvidia'],MSFT:['Microsoft'],TSLA:['Tesla'],AMZN:['Amazon'],GOOGL:['Alphabet','Google'],META:['Meta Platforms'],AVGO:['Broadcom'],AMD:['Advanced Micro Devices'],NFLX:['Netflix'],ORCL:['Oracle'],CRM:['Salesforce'],ADBE:['Adobe'],INTC:['Intel'],PLTR:['Palantir'],'BRK.B':['Berkshire Hathaway'],JPM:['JPMorgan','JPMorgan Chase'],V:['Visa'],MA:['Mastercard'],BAC:['Bank of America'],GS:['Goldman Sachs'],COIN:['Coinbase'],HOOD:['Robinhood'],MSTR:['MicroStrategy'],PYPL:['PayPal'],SOFI:['SoFi Technologies'],LLY:['Eli Lilly'],ABBV:['AbbVie'],UNH:['UnitedHealth'],JNJ:['Johnson & Johnson'],XOM:['Exxon Mobil','ExxonMobil'],CVX:['Chevron'],WMT:['Walmart'],COST:['Costco'],PG:['Procter & Gamble','Procter and Gamble'],KO:['Coca-Cola','Coca Cola'],PEP:['PepsiCo','Pepsi'],HD:['Home Depot'],DIS:['Disney'],UBER:['Uber'],ABNB:['Airbnb'],SHOP:['Shopify'],BA:['Boeing'],CAT:['Caterpillar'],GE:['GE Aerospace','General Electric'],SPY:['SPDR S&P 500 ETF'],QQQ:['Invesco QQQ'],VOO:['Vanguard S&P 500 ETF'],VTI:['Vanguard Total Market ETF'],IWM:['iShares Russell 2000'],DIA:['SPDR Dow Jones'],GLD:['SPDR Gold Shares'],TLT:['iShares 20+ Year Treasury'],ARKK:['ARK Innovation']};
 const escaped=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 function matches(title:string,words:string[]){return words.some(word=>new RegExp('\\b'+escaped(word)+'\\b','i').test(title));}
+function normalizedTicker(value:string){
+ const trimmed=value.trim(),isCrypto=/^CRYPTO:/i.test(trimmed),name=trimmed.replace(/^CRYPTO:/i,'').replace(/[-/](?:USDC|USDT|USD)(?:[-/](?:USDC|USDT|USD))?$/i,'').toLowerCase();
+ const crypto=Object.entries(cryptoAliases).find(([symbol,names])=>symbol.toLowerCase()===name||names.some(alias=>alias.toLowerCase()===name));
+ if(crypto)return 'CRYPTO:'+crypto[0];
+ if(isCrypto)return 'CRYPTO:'+name.toUpperCase();
+ const stock=Object.entries(stockAliases).find(([symbol,names])=>symbol.toLowerCase()===name||names.some(alias=>alias.toLowerCase()===name));
+ return stock?.[0]??trimmed.toUpperCase();
+}
 function stockMention(title:string,symbol:string,names:string[]){
  if(symbol==='V'?/\b(?:Visa|VISA)\b/.test(title):matches(title,names))return true;
  const token=escaped(symbol);
@@ -56,7 +64,7 @@ type Article=ReturnType<typeof parseNewsRss>[number];
 const query=z.object({tickers:z.string().max(2000).optional(),topics:z.string().max(500).optional(),sort:z.enum(['LATEST','EARLIEST','RELEVANCE']).default('LATEST'),limit:z.coerce.number().int().min(1).max(200).default(50),time_from:z.string().regex(/^\d{8}T\d{4}$/).optional(),time_to:z.string().regex(/^\d{8}T\d{4}$/).optional()}).strict();
 function time(value:string){const date=Date.parse(value.slice(0,4)+'-'+value.slice(4,6)+'-'+value.slice(6,8)+'T'+value.slice(9,11)+':'+value.slice(11,13)+':00Z');if(!Number.isFinite(date))throw new Error('Invalid news time');return date;}
 export class NewsService {
- private cache:{articles:Article[];fetchedAt:string;expires:number;availableKinds:Set<NewsSource['kind']>}|undefined;
+ private cache:{articles:Article[];fetchedAt:string;expires:number;availableKinds:Set<NewsSource['kind']>;sources:Array<{name:string;domain:string;kind:NewsSource['kind'];status:'available'|'unavailable'}>}|undefined;
  private pending:Promise<void>|undefined;
  constructor(private request:typeof fetch=fetch,private feeds:NewsSource[]=sources){}
  private async load(){
@@ -78,20 +86,22 @@ export class NewsService {
     unique.set(article.url,previous?{...previous,topics:[...new Map([...previous.topics,...article.topics].map(topic=>[topic.topic,topic])).values()],tickerSentiment:[...new Map([...previous.tickerSentiment,...article.tickerSentiment].map(ticker=>[ticker.ticker,ticker])).values()]}:article);
    }
    const availableKinds=new Set(this.feeds.filter((_,index)=>results[index]?.status==='fulfilled').map(feed=>feed.kind));
-   this.cache={articles:[...unique.values()].sort((a,b)=>b.timePublished.localeCompare(a.timePublished)),fetchedAt:new Date().toISOString(),expires:Date.now()+120_000,availableKinds};
+   const coverageSources=this.feeds.map((feed,index)=>({name:feed.name,domain:feed.domain,kind:feed.kind,status:results[index]?.status==='fulfilled'?'available' as const:'unavailable' as const}));
+   this.cache={articles:[...unique.values()].sort((a,b)=>b.timePublished.localeCompare(a.timePublished)),fetchedAt:new Date().toISOString(),expires:Date.now()+120_000,availableKinds,sources:coverageSources};
   })();
   try{await this.pending;}finally{this.pending=undefined;}
  }
  async get(raw:unknown){
   const p=query.parse(raw);await this.load();if(!this.cache)throw new Error('News unavailable');
   if(p.topics?.split(',').some(topic=>topic.trim()==='financial_markets')&&!this.cache.availableKinds.has('markets'))throw new Error('Equities news feeds unavailable');
-  if(p.tickers?.includes('CRYPTO:BTC')&&p.tickers.includes('CRYPTO:ETH')&&!this.cache.availableKinds.has('crypto'))throw new Error('Crypto news feeds unavailable');
+  const tokens=[...new Set((p.tickers?.split(',')??[]).map(normalizedTicker).filter(Boolean))];
+  if(tokens.includes('CRYPTO:BTC')&&tokens.includes('CRYPTO:ETH')&&!this.cache.availableKinds.has('crypto'))throw new Error('Crypto news feeds unavailable');
   let articles=this.cache.articles;
-  if(p.tickers){const tokens=p.tickers.split(',');const cryptoWire=tokens.includes('CRYPTO:BTC')&&tokens.includes('CRYPTO:ETH');articles=articles.filter(a=>cryptoWire?a.topics.some(t=>t.topic==='blockchain'):a.tickerSentiment.some(t=>tokens.includes(t.ticker)));}
+  if(tokens.length){const cryptoWire=tokens.includes('CRYPTO:BTC')&&tokens.includes('CRYPTO:ETH');articles=articles.filter(a=>cryptoWire?a.topics.some(t=>t.topic==='blockchain'):a.tickerSentiment.some(t=>tokens.includes(t.ticker)));}
   if(p.topics){const topics=p.topics.split(',').map(t=>t.trim()).filter(Boolean);articles=articles.filter(a=>topics.every(topic=>a.topics.some(t=>t.topic===topic)));}
   if(p.time_from){const min=time(p.time_from);articles=articles.filter(a=>Date.parse(a.timePublished)>=min);}
   if(p.time_to){const max=time(p.time_to)+59_999;articles=articles.filter(a=>Date.parse(a.timePublished)<=max);}
   if(p.sort==='EARLIEST')articles=[...articles].reverse();
-  return {articles:articles.slice(0,p.limit),fetchedAt:this.cache.fetchedAt};
+  return {articles:articles.slice(0,p.limit),fetchedAt:this.cache.fetchedAt,coverage:{scope:'configured-rss-headlines' as const,exhaustive:false as const,matching:'headline-mentions-and-known-aliases' as const,normalizedTickers:tokens,sources:this.cache.sources,cachedArticleCount:this.cache.articles.length,totalMatchedArticles:articles.length,truncated:articles.length>p.limit,newestPublishedAt:this.cache.articles[0]?.timePublished??null,oldestPublishedAt:this.cache.articles.at(-1)?.timePublished??null,warning:'These are only recent headlines retained by the configured RSS feeds, not an exhaustive news search. Zero matches do not establish the absence of news or a catalyst; article bodies and sources outside these feeds were not searched.'}};
  }
 }

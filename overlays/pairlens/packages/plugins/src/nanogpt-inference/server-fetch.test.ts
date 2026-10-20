@@ -12,6 +12,134 @@ const init = {
 afterEach(() => {
   globalThis.fetch = originalFetch
 })
+
+test('recovers proxy failures with identical creation body and same response offset', async () => {
+  const bodies: Array<unknown> = []
+  const paths: Array<string> = []
+  install(async (path, options) => {
+    if (options?.method === 'POST') {
+      bodies.push(options.body)
+      return bodies.length === 1
+        ? new Response(null, { status: 503 })
+        : Response.json({ id }, { status: 201 })
+    }
+    paths.push(path)
+    return paths.length === 1
+      ? new Response(null, { status: 504 })
+      : new Response('OK', {
+          headers: {
+            'x-quanttrade-ai-upstream': '1',
+            'retry-after': '2',
+            'x-request-id': 'safe-id',
+          },
+        })
+  })
+  const response = await fetchNanogptOnServer(url, init)
+  expect(await response.text()).toBe('OK')
+  expect(bodies).toHaveLength(2)
+  expect(bodies[0]).toBe(bodies[1])
+  expect(paths[0]).toBe(paths[1])
+  expect(response.headers.get('retry-after')).toBe('2')
+  expect(response.headers.get('x-request-id')).toBe('safe-id')
+  expect(response.headers.get('x-quanttrade-ai-upstream')).toBe('1')
+})
+
+test.each([502, 503, 504])(
+  'bounds proxy response recovery for %s',
+  async (status) => {
+    let reads = 0
+    install(async (_path, options) =>
+      options?.method === 'POST'
+        ? Response.json({ id }, { status: 201 })
+        : (reads++, new Response(null, { status })),
+    )
+    await expect(fetchNanogptOnServer(url, init)).rejects.toMatchObject({
+      name: 'NanoGPTServerError',
+      statusCode: status,
+    })
+    expect(reads).toBe(3)
+  },
+)
+
+test('bounds proxy creation recovery without changing its idempotency body', async () => {
+  const bodies: Array<unknown> = []
+  install(async (_path, options) => {
+    bodies.push(options?.body)
+    return new Response(null, { status: 502 })
+  })
+  await expect(fetchNanogptOnServer(url, init)).rejects.toMatchObject({
+    statusCode: 502,
+  })
+  expect(bodies).toHaveLength(3)
+  expect(new Set(bodies).size).toBe(1)
+})
+
+test('aborting proxy backoff prevents any retry', async () => {
+  const controller = new AbortController()
+  let reads = 0
+  install(async (_path, options) => {
+    if (options?.method === 'POST') return Response.json({ id }, { status: 201 })
+    if (options?.method === 'DELETE') return new Response(null, { status: 204 })
+    reads++
+    setTimeout(() => controller.abort(), 5)
+    return new Response(null, { status: 503 })
+  })
+  await expect(
+    fetchNanogptOnServer(url, { ...init, signal: controller.signal }),
+  ).rejects.toThrow('canceled')
+  expect(reads).toBe(1)
+})
+
+test('proxy recovery after delivered bytes retains the exact consumed offset', async () => {
+  const paths: Array<string> = []
+  let starts = 0
+  install(async (path, options) => {
+    if (options?.method === 'POST') {
+      starts++
+      return Response.json({ id }, { status: 201 })
+    }
+    paths.push(path)
+    if (paths.length === 1) {
+      let reads = 0
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (reads++ === 0) controller.enqueue(new TextEncoder().encode('€'))
+            else controller.error(new Error('interruption'))
+          },
+        }),
+      )
+    }
+    if (paths.length === 2) return new Response(null, { status: 502 })
+    return new Response('done')
+  })
+  expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('€done')
+  expect(starts).toBe(1)
+  expect(paths.slice(1)).toEqual([
+    `/_quanttrade/api/ai/nanogpt/jobs/${id}?offset=3`,
+    `/_quanttrade/api/ai/nanogpt/jobs/${id}?offset=3`,
+  ])
+})
+
+test('does not retry terminal relay failures or provider HTTP errors', async () => {
+  for (const headers of [
+    { 'x-quanttrade-ai-failure': 'upstream-stream' },
+    { 'x-quanttrade-ai-upstream': '1' },
+  ]) {
+    let reads = 0
+    install(async (_path, options) =>
+      options?.method === 'POST'
+        ? Response.json({ id }, { status: 201 })
+        : (reads++, new Response(null, { status: 502, headers })),
+    )
+    if ('x-quanttrade-ai-failure' in headers)
+      await expect(fetchNanogptOnServer(url, init)).rejects.toMatchObject({
+        failureReason: 'upstream-stream',
+      })
+    else expect((await fetchNanogptOnServer(url, init)).status).toBe(502)
+    expect(reads).toBe(1)
+  }
+})
 function install(
   handler: (url: string, init?: RequestInit) => Promise<Response>,
 ) {
@@ -35,6 +163,7 @@ test('retries a lost creation acknowledgment with identical idempotency body', a
   expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('OK')
   expect(bodies).toHaveLength(2)
   expect(bodies[0]).toBe(bodies[1])
+  expect(JSON.parse(String(bodies[0])).atomic).toBe(true)
 })
 
 test('resumes raw byte offset after interrupted multibyte stream without recreating job', async () => {

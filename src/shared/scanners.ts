@@ -1,6 +1,8 @@
 import type { Venue } from './types.ts';
 
 export interface ScannerSource {
+  complete?: boolean;
+  failedDexs?: string[];
   id: string;
   status: 'ok' | 'error';
   observedAt: number | null;
@@ -8,6 +10,8 @@ export interface ScannerSource {
   message: string | null;
 }
 export interface ScannerMarket {
+  quote?: string;
+  dex?: string;
   venue: Venue;
   symbol: string;
   base: string;

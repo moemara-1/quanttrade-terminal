@@ -29,6 +29,6 @@ for market in ('perpetual', 'spot'):
     if market == 'spot':
         assert orders['scope'] == 'all-spot-markets' and orders['complete']
     else:
-        assert orders['scope'] == 'standard-perpetual-markets'
-        assert not orders['complete'] and orders.get('error')
+        assert orders['scope'] == 'all-perpetual-markets'
+        assert orders['complete'] or orders.get('error')
     print('Hyperliquid ' + market + ': verified connection, balances and native order read; no orders submitted.')

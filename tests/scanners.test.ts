@@ -63,3 +63,11 @@ test('non-contemporaneous venues are not compared and extreme derived values nev
  const result=await scanner.get();assert.equal(result.comparisons.length,0);
  assert.equal(result.markets.find(r=>r.base==='ETH')!.oiToVolume,null);
 });
+
+test('builder scanners preserve namespaced assets, quote units and failed DEX coverage without unsafe arb aliases',async()=>{
+ const svc={...service([market('hyperliquid','para:PAPER',{dex:'para',quote:'USDC'}),market('hyperliquid','flx:PAPER',{symbol:'flx:PAPER-USDH',dex:'flx',quote:'USDH'})],[market('lighter','PAPER')]),coverage:()=>({complete:false,failedDexs:['xyz']})};
+ const result=await new DiscoveryScanners(svc,{get:async()=>emptyOptions},()=>now).get();
+ assert.equal(result.markets.length,3);assert.equal(result.comparisons.length,0);
+ const flx=result.markets.find(row=>row.base==='flx:PAPER')!;assert.equal(flx.quote,'USDH');assert.equal(flx.openInterestUsd,null);assert.equal(flx.relativeStrength24h,null);
+ const source=result.sources.find(row=>row.id==='hyperliquid')!;assert.equal(source.complete,false);assert.deepEqual(source.failedDexs,['xyz']);assert.match(source.message!,/incomplete/i);
+});

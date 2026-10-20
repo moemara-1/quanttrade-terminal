@@ -482,3 +482,20 @@ test('both venues discover their actual contracts from familiar CEX query format
     }
   }
 })
+
+test('builder discovery keeps collateral and namespace identity for reads and ambiguous search results',async()=>{
+ const urls:Array<string>=[];
+ const plugin=createQuantTradeConnector(quantTradeManifest('hyperliquid'),async(url)=>{urls.push(url);return Response.json(url.includes('/markets')?[
+ {...market,symbol:'para:PAPER-USDC',base:'para:PAPER',quote:'USDC'},
+ {...market,symbol:'flx:PAPER-USDH',base:'flx:PAPER',quote:'USDH'},
+ ]:[])});
+ const page=await plugin.execute(request('market-data:discovery:search',{query:'PAPER'})) as InstrumentPage;
+ expect(page.items.map(row=>row.symbol)).toEqual(['para:PAPER-USDC-USDC','flx:PAPER-USDH-USDH']);
+ expect(page.items.map(row=>row.quote)).toEqual(['USDC','USDH']);
+ const familiar=await plugin.execute(request('market-data:discovery:search',{query:'PAPER-USDC'})) as InstrumentPage;
+ expect(familiar.items.map(row=>row.symbol)).toEqual(['para:PAPER-USDC-USDC','flx:PAPER-USDH-USDH']);
+ await plugin.execute({...request('market-data:history'),context:{...context,pair:'flx:PAPER-USDH-USDH'}});
+ expect(urls.at(-1)).toContain('flx%3APAPER-USDH');
+ const exact=await plugin.execute(request('market-data:discovery:search',{query:'para:PAPER'})) as InstrumentPage;
+ expect(exact.items.map(row=>row.symbol)).toEqual(['para:PAPER-USDC-USDC']);
+});

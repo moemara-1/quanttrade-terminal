@@ -1,3 +1,4 @@
+import { hummingbotTradingPair } from './execution.ts';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
@@ -45,7 +46,7 @@ export function createProtectionAdapter(desk:TradingDesk,execution:Pick<Hummingb
    if(proof.status==='settled')return;
    if(proof.status!=='open'||!proof.exchangeId||!/^[1-9]\d*$/.test(proof.exchangeId))throw Error('Owned protective order cancellation identity is unavailable');
    const operationId=createHash('sha256').update(requestId+':'+id).digest('hex');
-   const payload={request_id:operationId,account_name:run.input.accountName,connector_name:run.input.venue+'_perpetual',trading_pair:run.input.venue==='hyperliquid'?run.input.symbol.replace(/-USDC$/,'-USD'):run.input.symbol,exchange_order_id:proof.exchangeId};
+   const payload={request_id:operationId,account_name:run.input.accountName,connector_name:run.input.venue+'_perpetual',trading_pair:run.input.venue==='hyperliquid'?hummingbotTradingPair(run.input.symbol):run.input.symbol,exchange_order_id:proof.exchangeId};
    const previous=desk.store.claimOperation(operationId,createHash('sha256').update(JSON.stringify(payload)).digest('hex'));
    if(previous){if(previous.state==='completed')return;throw Error('Owned protection cancellation outcome uncertain; no retry permitted');}
    try{authorize(run,true);z.object({status:z.literal('accepted')}).parse(await client.perform('cancel-order',payload));desk.store.finishOperation(operationId,'completed',{orderId:id});}

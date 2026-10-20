@@ -33,7 +33,12 @@ test('agent credential can draft but cannot approve, cancel, halt or impersonate
     }
     const approved=await fetch(`${url}/api/proposals/${proposal.id}/approve`,{method:'POST',headers:{...headers,Authorization:'Bearer operator-token'},body:'{}'});
     assert.equal(approved.status,200);
-    assert.equal((await fetch(`${url}/api/public/markets?venue=hyperliquid`)).status,200);
+    markets.coverage=()=>({complete:false,failedDexs:['para']});
+    const catalog=await fetch(`${url}/api/public/markets?venue=hyperliquid`);
+    assert.equal(catalog.status,200);
+    assert.equal(catalog.headers.get('X-QuantTrade-Catalog-Complete'),'false');
+    assert.deepEqual(JSON.parse(catalog.headers.get('X-QuantTrade-Failed-Dexs')??'null'),['para']);
+    assert(Array.isArray(await catalog.json()),'Legacy array catalog contract remains intact');
     const native=await fetch(`${url}/api/terminal/orders`,{method:'POST',headers:{...headers,Authorization:'Bearer operator-token',Origin:'http://127.0.0.1:4317'},body:JSON.stringify({clientOrderId:'native-api',mode:'paper',order:{venue:'hyperliquid',symbol:'BTC-USDC',side:'buy',type:'limit',size:'1',price:'100',rationale:'Native review'}})});
     assert.equal(native.status,200);
     assert.equal((await native.json() as {status:string}).status,'paper-open');

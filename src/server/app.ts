@@ -19,15 +19,18 @@ import type { HyperliquidNativeTwap } from './hyperliquid-native-twap.ts';
 import type { ChasePlans } from './chase-plans.ts';
 import type { AdvancedProtection } from './advanced-protection.ts';
 import {NanoGptJobs,NanoGptJobError} from './nanogpt-jobs.ts';
+import type {NanoGptJobService} from './nanogpt-worker.ts';
 import type { DiscoveryScanners } from './scanners.ts';
 import type { ScannerDetails } from './scanner-detail.ts';
 import type { ArbitragePlans } from './arbitrage-plans.ts';
+import type { LlmArena } from './llm-arena.ts';
 
 interface Services {
+  arena?:Pick<LlmArena,'list'|'models'|'create'|'get'|'update'|'start'|'pause'|'evaluate'|'closePosition'|'archive'>;
   scanners?:Pick<DiscoveryScanners,'get'>;
   scannerDetails?:Pick<ScannerDetails,'get'>;
   arbitrage?:Pick<ArbitragePlans,'prepare'|'execute'|'get'|'list'>;
-  nanogptJobs?:NanoGptJobs;
+  nanogptJobs?:NanoGptJobService;
   advancedProtection?:Pick<AdvancedProtection,'get'>;
   hyperliquidNativeTwap?:Pick<HyperliquidNativeTwap,'execute'|'evidence'> & Partial<Pick<HyperliquidNativeTwap,'list'>>;
   chasePlans?:Pick<ChasePlans,'start'|'list'|'cancel'|'cancelReviewed'>;
@@ -124,7 +127,13 @@ export function createApp(services: Services) {
     if(!services.scanners){res.status(503).json({error:'Discovery scanners unavailable'});return;}
     res.json(await services.scanners.get());
   });
-  app.get('/api/public/markets',async(req,res)=>res.json(await markets.list(venueSchema.parse(req.query.venue),marketTypeSchema.parse(req.query.marketType))));
+  app.get('/api/public/markets',async(req,res)=>{
+    const venue=venueSchema.parse(req.query.venue),marketType=marketTypeSchema.parse(req.query.marketType);
+    const rows=await markets.list(venue,marketType);
+    const coverage=marketType==='perpetual'?markets.coverage?.(venue):{complete:true,failedDexs:[]};
+    if(coverage)res.set({'X-QuantTrade-Catalog-Complete':String(coverage.complete),'X-QuantTrade-Failed-Dexs':JSON.stringify(coverage.failedDexs)});
+    res.json(rows);
+  });
   app.get('/api/public/candles',async(req,res)=>res.json(await markets.candles(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),z.string().default('1h').parse(req.query.interval),marketTypeSchema.parse(req.query.marketType),z.coerce.number().int().nonnegative().optional().parse(req.query.endTs),z.coerce.number().int().min(1).max(1000).optional().parse(req.query.limit))));
   app.get('/api/public/book',async(req,res)=>res.json(await markets.book(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),marketTypeSchema.parse(req.query.marketType))));
   const sessionCookie=(req:express.Request)=>req.get('Cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(cookieName+'='))?.slice(cookieName.length+1)??'';
@@ -177,25 +186,25 @@ export function createApp(services: Services) {
   });
   const inferenceOperator:RequestHandler=(_req,res,next)=>{if(res.locals.role!=='operator'){res.status(403).json({error:'Inference requires the operator session'});return;}next();};
   const inferenceFailure=(res:express.Response,error:unknown)=>res.status(error instanceof NanoGptJobError?error.status:400).json({error:error instanceof NanoGptJobError?error.message:'Invalid inference request'});
-  app.post('/api/ai/nanogpt/jobs',inferenceOperator,express.json({limit:'2mb'}),(req,res)=>{
-    try{res.status(201).json({id:nanogptJobs.start(String(res.locals.aiOwner),req.body)});}catch(error){inferenceFailure(res,error);}
+  app.post('/api/ai/nanogpt/jobs',inferenceOperator,express.json({limit:'2mb'}),async(req,res)=>{
+    try{res.status(201).json({id:await nanogptJobs.start(String(res.locals.aiOwner),req.body)});}catch(error){inferenceFailure(res,error);}
   });
   app.get('/api/ai/nanogpt/jobs/:id',inferenceOperator,async(req,res)=>{
     let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
     const disconnect=()=>{void reader?.cancel().catch(()=>undefined);};res.once('close',disconnect);
     try{
       const raw=req.query.offset??'0';if(typeof raw!=='string'||!/^\d+$/.test(raw))throw new NanoGptJobError(400,'Invalid inference response offset');
-      const response=nanogptJobs.read(String(res.locals.aiOwner),String(req.params.id),Number(raw));
+      const response=await nanogptJobs.read(String(res.locals.aiOwner),String(req.params.id),Number(raw));
       if(!response){res.set('Retry-After','1').status(202).end();return;}
       res.status(response.status).set('Content-Type',response.headers.get('Content-Type')??'application/octet-stream');
-      if(response.headers.has('X-QuantTrade-AI-Upstream'))res.set('X-QuantTrade-AI-Upstream','1');
+      for(const name of ['X-QuantTrade-AI-Upstream','X-QuantTrade-AI-Failure','X-Request-ID','Retry-After']){const value=response.headers.get(name);if(value)res.set(name,value);}
       res.flushHeaders();reader=response.body?.getReader();
       if(reader)while(!res.destroyed){const chunk=await reader.read();if(chunk.done)break;if(!res.write(chunk.value))await new Promise<void>(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});}
       res.end();
     }catch(error){if(res.headersSent)res.destroy();else inferenceFailure(res,error);}
     finally{res.off('close',disconnect);reader?.releaseLock();}
   });
-  app.delete('/api/ai/nanogpt/jobs/:id',inferenceOperator,(req,res)=>{try{nanogptJobs.cancel(String(res.locals.aiOwner),String(req.params.id));res.status(204).end();}catch(error){inferenceFailure(res,error);}});
+  app.delete('/api/ai/nanogpt/jobs/:id',inferenceOperator,async(req,res)=>{try{await nanogptJobs.cancel(String(res.locals.aiOwner),String(req.params.id));res.status(204).end();}catch(error){inferenceFailure(res,error);}});
   app.use('/api/ai/nanogpt',((error:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{res.status(typeof error==='object'&&error!==null&&'status' in error&&error.status===413?413:400).json({error:'Invalid inference request'});}) satisfies ErrorRequestHandler);
   app.use('/api/sync-state',express.json({limit:'512kb'}));
   app.use(express.json({limit:'32kb'}));
@@ -279,6 +288,16 @@ export function createApp(services: Services) {
     try {await services.execution.disconnect(venue);res.json({venue,connected:false,mode:desk.status().mode,accountName:desk.status().accountName});}
     finally {connecting.delete(venue);}
   });
+  app.use('/api/llm-arena',operator,(_req,res,next)=>{if(!services.arena){res.status(503).json({error:'The paper LLM arena is not available on this server'});return;}next();});
+  app.get('/api/llm-arena',(_req,res)=>res.json({bots:services.arena!.list(),capabilities:{paper:true,live:false}}));
+  app.get('/api/llm-arena/models',async(_req,res)=>res.json(await services.arena!.models()));
+  app.post('/api/llm-arena',(req,res)=>res.status(201).json(services.arena!.create(req.body)));
+  app.patch('/api/llm-arena/:id',(req,res)=>res.json(services.arena!.update(z.string().uuid().parse(req.params.id),req.body)));
+  app.post('/api/llm-arena/:id/start',async(req,res)=>{const {apiKey}=z.object({apiKey:z.string().min(1).max(4096)}).strict().parse(req.body);res.json(await services.arena!.start(z.string().uuid().parse(req.params.id),apiKey));});
+  app.post('/api/llm-arena/:id/pause',(req,res)=>res.json(services.arena!.pause(z.string().uuid().parse(req.params.id))));
+  app.post('/api/llm-arena/:id/evaluate',async(req,res)=>res.json(await services.arena!.evaluate(z.string().uuid().parse(req.params.id))));
+  app.post('/api/llm-arena/:id/close-position',async(req,res)=>res.json(await services.arena!.closePosition(z.string().uuid().parse(req.params.id))));
+  app.post('/api/llm-arena/:id/archive',(req,res)=>{const {archived}=z.object({archived:z.boolean()}).strict().parse(req.body);res.json(services.arena!.archive(z.string().uuid().parse(req.params.id),archived));});
   app.get('/api/markets',async(req,res)=>res.json(await markets.list(venueSchema.parse(req.query.venue))));
   app.get('/api/candles',async(req,res)=>res.json(await markets.candles(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol),z.string().default('1h').parse(req.query.interval))));
   app.get('/api/book',async(req,res)=>res.json(await markets.book(venueSchema.parse(req.query.venue),symbolSchema.parse(req.query.symbol))));

@@ -5,6 +5,14 @@ import {
   encodeAssistantError,
 } from '../assistant-error'
 
+test('an incomplete atomic step is not mislabeled as a broken connection', () => {
+  const error = { name: 'NanoGPTServerError', statusCode: 502, failureReason: 'incomplete-step' }
+  expect(encodeAssistantError(error, 'nanogpt-inference')).toBe('[QT_AI:response-incomplete:502]')
+  const described = describeAssistantError(error, 'nanogpt-inference')
+  expect(described.message).toContain('No tools from that incomplete step were run')
+  expect(described.message).toContain('Earlier steps may have completed')
+})
+
 test.each([
   [401, 'session', 'Sign in to QuantTrade'],
   [403, 'session', 'Sign in to QuantTrade'],
@@ -80,6 +88,20 @@ test('cyclic causes do not recurse forever', () => {
   const error: { message: string; cause?: unknown } = { message: 'unknown' }
   error.cause = error
   expect(describeAssistantError(error).code).toBe('unknown')
+})
+
+test('relay interruptions remain distinct from provider outages through the wire', () => {
+  const error = {
+    name: 'NanoGPTServerError',
+    statusCode: 502,
+    failureReason: 'upstream-stream',
+  }
+  const encoded = encodeAssistantError(error, 'nanogpt-inference')
+  expect(encoded).toBe('[QT_AI:server-interrupted:502]')
+  const result = describeAssistantError(new Error(encoded), 'nanogpt-inference')
+  expect(result.code).toBe('server-interrupted')
+  expect(result.message).toContain('Earlier tool actions may have completed')
+  expect(result.message).not.toContain('temporarily unavailable')
 })
 
 test('SDK retry exhaustion preserves the final provider status without exposing payloads', () => {

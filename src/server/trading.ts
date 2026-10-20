@@ -1,4 +1,4 @@
-import {validateMarketLeverage} from './market-limits.ts';
+import {validateMarketLeverage,validateMarketMarginMode} from './market-limits.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
@@ -29,6 +29,7 @@ export const orderSchema = z.object({
   if (order.type === 'market' && order.price) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Market orders must not include a limit price' });
 });
 export interface ExecutionClient {
+  validateBuilderMarket?(market:Market,accountName:string,connectionRevision:string|null):Promise<void>;
   configured: boolean;
   place(order: OrderDraft, protectionPrice?: string, requestId?:string): Promise<string>;
   cancel(order: Proposal): Promise<void>;
@@ -45,7 +46,10 @@ export interface DeskConfig {
   proposalTtlSeconds: number;
   pairlensUrl: string;
 }
-export interface QuoteSource { list(venue: Venue, marketType?: OrderDraft['marketType']): Promise<Market[]> }
+export interface QuoteSource {
+  list(venue: Venue, marketType?: OrderDraft['marketType']): Promise<Market[]>;
+  refreshMarket?(venue:Venue,symbol:string,marketType?:OrderDraft['marketType']):Promise<Market|undefined>;
+}
 
 export class TradingDesk {
   agentConfigured = false;
@@ -132,15 +136,21 @@ export class TradingDesk {
   }
 
   private async quote(order: OrderDraft): Promise<Market> {
-    const market = (await this.markets.list(order.venue,order.marketType ?? 'perpetual')).find((item) => item.symbol === order.symbol);
+    let market = (await this.markets.list(order.venue,order.marketType ?? 'perpetual')).find((item) => item.symbol === order.symbol);
+    if(market?.dex&&order.venue==='hyperliquid'&&this.clock()-market.updatedAt>15_000&&this.markets.refreshMarket)market=await this.markets.refreshMarket(order.venue,order.symbol,order.marketType??'perpetual');
     if (!market) throw new Error('Market is unavailable on the selected venue');
     if (!Number.isFinite(market.updatedAt) || this.clock() - market.updatedAt > 15_000 || market.updatedAt > this.clock() + 5000) throw new Error('Market feed is stale');
     if (!new Decimal(market.price).isFinite() || new Decimal(market.price).lte(0)) throw new Error('Invalid market price');
+    if(order.venue==='hyperliquid'&&order.marketType!=='spot'&&(market.dex||market.base.includes(':'))&&this.modeFor(order.venue)==='live'){
+      if(!this.execution.validateBuilderMarket)throw Error('Hyperliquid builder market execution readiness is unavailable; quotes and paper trading remain available');
+      await this.execution.validateBuilderMarket(market,this.config.accountName,this.store.connectionFingerprint(this.config.accountName,order.venue));
+    }
     return market;
   }
   private validate(order: OrderDraft, market: Market, source:'manual'|'agent'='agent'): string {
 
     validateMarketLeverage(order.leverage,market.maxLeverage);
+    validateMarketMarginMode(order.marginMode,market,order.reduceOnly===true);
     const size = new Decimal(order.size);
     if (size.decimalPlaces() > market.sizeDecimals || size.lt(market.minSize)) throw new Error('Order size violates venue precision or minimum size');
     const price = new Decimal(order.price ?? market.price);

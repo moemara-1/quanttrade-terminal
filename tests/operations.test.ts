@@ -122,3 +122,14 @@ test('native open-order read preserves partial scope and hides provider response
   await assert.rejects(client.perform('open-orders',{}),(error:unknown)=>error instanceof Error&&error.message.includes('HTTP 503')&&!error.message.includes('PRIVATE_SECRET'));
  }finally{state.store.close();}
 });
+
+test('Hyperliquid all-DEX coverage includes builder native orders and preserves incompleteness',async()=>{
+ const s=setup();try{
+ s.store.setConnectionFingerprint('desk','hyperliquid','a'.repeat(64));
+ for(const complete of [true,false]){
+ const operations=new VenueOperations(s.desk,{perform:async()=>({connector_name:'hyperliquid_perpetual',scope:'all-perpetual-markets',complete,...(!complete?{error:'Builder xyz read failed'}:{}),orders:[{symbol:'para:PAPER-USDC',exchangeOrderId:'42'}]})},{list:async()=>[]});
+ const result=await operations.openOrders({venue:'hyperliquid',marketType:'perpetual'});
+ assert.equal(result.complete,complete);assert.equal(result.orders[0]?.symbol,'para:PAPER-USDC');
+ }
+ }finally{s.store.close();}
+});

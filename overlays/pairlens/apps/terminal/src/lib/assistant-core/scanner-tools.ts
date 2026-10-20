@@ -84,7 +84,7 @@ export function scanSnapshot(snapshot: ScannerSnapshot, input: Query) {
           : (query.direction === 'gainers' ? 1 : -1) *
             ((b[query.strengthMetric] ?? 0) - (a[query.strengthMetric] ?? 0)),
       )
-      .map((row) => ({ ...row, pair: `${row.symbol}-USDC` }))
+      .map((row) => ({ ...row, pair: `${row.symbol}-${row.quote??'USDC'}` }))
   } else if (query.scanner === 'option-blocks') {
     rows = snapshot.options.trades
       .filter((row) => !needle || row.instrument.includes(needle))
@@ -96,6 +96,7 @@ export function scanSnapshot(snapshot: ScannerSnapshot, input: Query) {
   return {
     asOf: snapshot.asOf,
     sources,
+    coverageComplete:sources.length>0&&sources.every(source=>source.status==='ok'&&source.complete!==false),
     methodology,
     ...(query.scanner === 'strength'
       ? { rankingMetric: query.strengthMetric, direction: query.direction }

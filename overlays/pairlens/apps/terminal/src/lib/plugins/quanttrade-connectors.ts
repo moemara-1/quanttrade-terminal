@@ -66,7 +66,10 @@ function matchesMarketQuery(
   // A complete stablecoin pair can discover the same base on another quote.
   // Do not strip size multipliers or namespaced bases, or match arbitrary quotes.
   const pair = /^(.*?)(USDTUSDT|USDCUSDC|USDT|USDC|USD)$/.exec(compact)
-  if (pair?.[1]) return base === pair[1]
+  if (pair?.[1]) {
+    const localBase=market.base.split(':').at(-1)?.replace(/[\s/:-]+/g,'').toUpperCase()
+    return base === pair[1] || (!raw.includes(':') && localBase === pair[1])
+  }
   return (
     market.symbol.toLowerCase().includes(raw) ||
     market.symbol
@@ -174,11 +177,8 @@ function bridgeSymbol(
       .string()
       .regex(/^[A-Za-z0-9:_.]+-[A-Za-z0-9:_.]+$/)
       .parse(value)
-  const symbol = z
-    .string()
-    .regex(/^.+-USDC-USDC$/, 'Select a USDC perpetual contract')
-    .parse(value)
-  return symbol.slice(0, -5)
+  const symbol=z.string().regex(/^[A-Za-z0-9:_.]+-([A-Za-z0-9_.]+)-\1$/, 'Select a listed perpetual contract').parse(value)
+  return symbol.slice(0,symbol.lastIndexOf('-'))
 }
 
 export function createQuantTradeConnector(
@@ -191,7 +191,7 @@ export function createQuantTradeConnector(
   const connectorName =
     marketType === 'spot' ? market.replace('-spot', '') : `${market}_perpetual`
   const nativeSymbol = (symbol: string) =>
-    marketType === 'spot' ? symbol : `${symbol}-USDC`
+    marketType === 'spot' ? symbol : `${symbol}-${symbol.slice(symbol.lastIndexOf('-')+1)}`
   const venue = z
     .enum(['hyperliquid', 'lighter'])
     .parse(market.replace('-spot', ''))
@@ -300,7 +300,7 @@ export function createQuantTradeConnector(
                 ...common,
                 kind: 'cex-derivative',
                 assetClass: 'crypto-perp',
-                settle: 'USDC',
+                settle: m.quote ?? 'USDC',
                 contract: 'perp',
                 linear: true,
               }

@@ -47,3 +47,11 @@ test('curated full names discover native candidates without rewriting identifier
   expect(result.instruments[0]?.symbol).toBe('ADA-USDC-USDC')
   expect(result.instruments[0]?.nameMatchSource).toBe('curated-name-hint')
 })
+
+test('builder search preserves USDH and reports partial catalog coverage',async()=>{
+ globalThis.fetch=(async()=>Response.json([{venue:'hyperliquid',base:'flx:PAPER',symbol:'flx:PAPER-USDH',quote:'USDH'},{venue:'hyperliquid',base:'para:PAPER',symbol:'para:PAPER-USDC',quote:'USDC'}],{headers:{'X-QuantTrade-Catalog-Complete':'false','X-QuantTrade-Failed-Dexs':'["xyz"]'}})) as typeof fetch;
+ const result=await searchNativeInstruments('PAPER-USDH','hyperliquid');
+ expect(result.instruments.map(row=>row.symbol)).toEqual(['flx:PAPER-USDH-USDH','para:PAPER-USDC-USDC']);
+ expect(result.sources[0]?.complete).toBe(false);expect(result.sources[0]?.failedDexs).toEqual(['xyz']);
+ expect(result.note).toContain('absence');
+});
