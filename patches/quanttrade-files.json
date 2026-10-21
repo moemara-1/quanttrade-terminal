@@ -35,6 +35,7 @@
   "apps/terminal/src/components/quanttrade/inbox-api.ts",
   "apps/terminal/src/components/quanttrade/native-twap-permission.tsx",
   "apps/terminal/src/components/scanners/arbitrage-review-form.tsx",
+  "apps/terminal/src/components/scanners/scanner-dialog.tsx",
   "apps/terminal/src/components/scanners/scanner-history-chart.tsx",
   "apps/terminal/src/components/scanners/scanner-opportunity-detail.tsx",
   "apps/terminal/src/components/scanners/scanner-report-ui.tsx",

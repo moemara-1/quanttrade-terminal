@@ -90,6 +90,7 @@ export function ScannerOpportunityDetail({
   const query = useQuery({
     queryKey: ['scanner-detail', base, venue],
     queryFn: ({ signal }) => fetchScannerDetail(base, venue, signal),
+    enabled: active,
     staleTime: 60_000,
     retry: false,
     refetchOnWindowFocus: false,
@@ -153,7 +154,7 @@ export function ScannerOpportunityDetail({
   ] as Array<'overview' | 'history' | 'trade'>
   return (
     <div
-      className="mx-auto flex h-full min-h-0 w-full max-w-[780px] flex-col bg-background text-foreground"
+      className="mx-auto flex h-full min-h-0 w-full max-w-none flex-col bg-background text-foreground"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()

@@ -17,8 +17,10 @@ const choice =
   'min-h-8 rounded px-2 text-[10px] focus-visible:outline-2 focus-visible:outline-primary'
 export function ScannerStrengthChart({
   markets,
+  active = true,
 }: {
   markets: Array<ScannerMarket>
+  active?: boolean
 }) {
   const [venue, setVenue] = useState<'lighter' | 'hyperliquid'>(
     markets[0]?.venue ?? 'lighter',
@@ -36,7 +38,7 @@ export function ScannerStrengthChart({
     queryKey: ['scanner-strength-history', venue, window, identity],
     queryFn: ({ signal }) =>
       fetchScannerStrengthHistory({ venue, window, symbols }, signal),
-    enabled: symbols.length > 0,
+    enabled: active && symbols.length > 0,
     staleTime: 60000,
     refetchInterval: 120000,
     refetchIntervalInBackground: false,

@@ -412,9 +412,11 @@ export function MarketResults({
   rows,
   onReview,
   kind = 'strength',
+  active = true,
 }: {
   rows: Array<ScannerMarket>
   onReview?: (market: ScannerMarket) => void
+  active?: boolean
   kind?: 'strength' | 'crowding'
 }) {
   const [tab, setTab] = useState<'overview' | 'screener'>('screener')
@@ -458,7 +460,7 @@ export function MarketResults({
         </span>
       </div>
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <ScannerStrengthChart markets={rows} />
+        <ScannerStrengthChart markets={rows} active={active} />
         <div className="mb-3">
           <InterestMap rows={rows} />
         </div>
