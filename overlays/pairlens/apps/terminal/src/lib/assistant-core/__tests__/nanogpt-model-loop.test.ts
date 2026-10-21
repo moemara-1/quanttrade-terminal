@@ -289,3 +289,16 @@ test.each([
     expect(await result.text).toBe('OK')
   },
 )
+
+test('SDK provider rejection retains the safe relay category through real error wrappers', async () => {
+  const { generateText } = await import('ai')
+  const { describeAssistantError } = await import('../assistant-error')
+  const plugin = createNanogptInferencePlugin(nanogptInferenceManifest)
+  await plugin.initialize?.({apiKey:'offline-fixture-key', model:'fixture'})
+  globalThis.fetch = Object.assign(async () => Response.json({error:'NanoGPT rejected the inference request',providerRejection:'tool-history'},{status:400}),{preconnect:originalFetch.preconnect})
+  const model = await plugin.getLanguageModel?.()
+  let caught: unknown
+  try { await generateText({model:model as LanguageModel,prompt:'Offline fixture',maxRetries:0}) }
+  catch (error) { caught=error }
+  expect(describeAssistantError(caught,'nanogpt-inference').code).toBe('request-history')
+})

@@ -20,6 +20,9 @@ export type AssistantErrorCode =
   | 'timeout'
   | 'tool-input'
   | 'tools'
+  | 'request-context'
+  | 'request-history'
+  | 'request-parameter'
   | 'request'
   | 'unavailable'
   | 'unknown'
@@ -43,6 +46,7 @@ export function describeAssistantError(
   const names: Array<string> = []
   let status: number | undefined
   let incompleteStep = false
+  let rejection: string | undefined
   const pending: Array<{ error: unknown; depth: number }> = [
     { error, depth: 0 },
   ]
@@ -60,6 +64,17 @@ export function describeAssistantError(
     }
     if (typeof current !== 'object') continue
     const details = current as Record<string, unknown>
+    // Read only the relay's fixed enum; never render raw provider bodies.
+    if (typeof details.responseBody === 'string' && details.responseBody.length <= 16384) {
+      try {
+        const body: unknown = JSON.parse(details.responseBody)
+        if (body && typeof body === 'object' && 'providerRejection' in body &&
+          typeof body.providerRejection === 'string' &&
+          ['context-length', 'tool-history', 'reasoning-history', 'parameter', 'model', 'balance', 'rate-limit'].includes(body.providerRejection)) {
+          rejection ??= body.providerRejection
+        }
+      } catch { /* Non-JSON provider bodies carry no trusted diagnostic. */ }
+    }
     incompleteStep ||= details.failureReason === 'incomplete-step'
     if (typeof details.name === 'string') names.push(details.name)
     if ('message' in current && typeof current.message === 'string')
@@ -166,7 +181,7 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'balance' ||
+    encoded === 'balance' || rejection === 'balance' ||
     status === 402 ||
     /insufficient (balance|credits)|payment required/.test(text)
   ) {
@@ -176,7 +191,7 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'model' ||
+    encoded === 'model' || rejection === 'model' ||
     status === 404 ||
     /model (not found|does not exist|unavailable)|unknown model/.test(text)
   ) {
@@ -186,7 +201,7 @@ export function describeAssistantError(
     )
   }
   if (
-    encoded === 'rate-limit' ||
+    encoded === 'rate-limit' || rejection === 'rate-limit' ||
     status === 429 ||
     /rate limit|too many requests/.test(text)
   ) {
@@ -216,6 +231,15 @@ export function describeAssistantError(
       'network',
       `The connection to ${provider} failed or was interrupted. The cause is not yet known. Earlier tool actions may have completed; check order and run status before repeating a trade request.`,
     )
+  }
+  if (encoded === 'request-context' || rejection === 'context-length') {
+    return result('request-context', `${provider} cannot fit this conversation into the selected model's context. Start a new chat for further analysis. Earlier orders and runs remain unchanged; inspect their status before preparing another trade.`)
+  }
+  if (encoded === 'request-history' || rejection === 'tool-history' || rejection === 'reasoning-history') {
+    return result('request-history', `${provider} rejected the conversation's tool history. No tools from this rejected step ran. Earlier actions may have completed; inspect orders and runs before continuing in a new chat.`)
+  }
+  if (encoded === 'request-parameter' || rejection === 'parameter') {
+    return result('request-parameter', `${provider} rejected a request setting. This is a request compatibility error; earlier tool actions may have completed. Check orders and runs before repeating a trade request.`)
   }
   if (encoded === 'request' || status === 400 || status === 422) {
     return result(

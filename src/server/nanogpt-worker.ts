@@ -11,7 +11,7 @@ export interface NanoGptJobService {
 }
 const ownerSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const idSchema = z.string().uuid();
-const safeHeaders = ['Content-Type', 'X-QuantTrade-AI-Upstream', 'X-QuantTrade-AI-Failure', 'X-Request-ID', 'Retry-After'];
+const safeHeaders = ['Content-Type', 'X-QuantTrade-AI-Upstream', 'X-QuantTrade-AI-Failure','X-QuantTrade-AI-Rejection', 'X-Request-ID', 'Retry-After'];
 
 /** App restarts close only this client, never the separately-owned provider jobs. */
 export class NanoGptWorkerClient implements NanoGptJobService {

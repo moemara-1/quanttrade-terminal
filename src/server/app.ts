@@ -206,7 +206,7 @@ export function createApp(services: Services) {
       const response=await nanogptJobs.read(String(res.locals.aiOwner),String(req.params.id),Number(raw));
       if(!response){res.set('Retry-After','1').status(202).end();return;}
       res.status(response.status).set('Content-Type',response.headers.get('Content-Type')??'application/octet-stream');
-      for(const name of ['X-QuantTrade-AI-Upstream','X-QuantTrade-AI-Failure','X-Request-ID','Retry-After']){const value=response.headers.get(name);if(value)res.set(name,value);}
+      for(const name of ['X-QuantTrade-AI-Upstream','X-QuantTrade-AI-Failure','X-QuantTrade-AI-Rejection','X-Request-ID','Retry-After']){const value=response.headers.get(name);if(value)res.set(name,value);}
       res.flushHeaders();reader=response.body?.getReader();
       if(reader)while(!res.destroyed){const chunk=await reader.read();if(chunk.done)break;if(!res.write(chunk.value))await new Promise<void>(resolve=>{const done=()=>{res.off('drain',done);res.off('close',done);resolve();};res.once('drain',done);res.once('close',done);});}
       res.end();

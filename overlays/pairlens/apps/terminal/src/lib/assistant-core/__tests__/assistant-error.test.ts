@@ -208,3 +208,24 @@ test('network failures do not blame browser settings without evidence or recomme
   expect(message).not.toContain('browser network restrictions')
   expect(message).toContain('check order and run status')
 })
+
+test.each([
+  ['context-length', 'request-context'],
+  ['tool-history', 'request-history'],
+  ['reasoning-history', 'request-history'],
+  ['parameter', 'request-parameter'],
+])('safe rejection %s survives SDK wrappers and stream encoding', (category, code) => {
+  const error = {statusCode: 400, responseBody: JSON.stringify({providerRejection: category, error: 'secret-payload'})}
+  const encoded = encodeAssistantError(error, 'nanogpt-inference')
+  expect(encoded).toBe(`[QT_AI:${code}:400]`)
+  const decoded = describeAssistantError(new Error(encoded), 'nanogpt-inference')
+  expect(decoded.code).toBe(code)
+  expect(decoded.message).not.toContain('secret-payload')
+  expect(decoded.message).not.toContain('Check the selected model')
+})
+
+test('untrusted rejection categories never become user-facing text', () => {
+  const safe = describeAssistantError({statusCode:400,responseBody:JSON.stringify({providerRejection:'secret-key'})}, 'nanogpt-inference')
+  expect(safe.code).toBe('request')
+  expect(safe.message).not.toContain('secret-key')
+})

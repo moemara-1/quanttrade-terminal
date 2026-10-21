@@ -13547,7 +13547,7 @@ index e51eeb9..b6fe0ff 100644
  
    test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..2aabc27 100644
+index ce0d317..78e8fe3 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -46,6 +46,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
@@ -13572,12 +13572,16 @@ index ce0d317..2aabc27 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,10 +81,25 @@ const WORKING_RULES = [
+@@ -73,10 +81,29 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
 -  'Orders are PREPARED, never executed by you. place_order returns a proposal the user confirms on a card; paper is the default and live is their explicit choice. If they have granted don’t-ask-again auto-approval, the tool result says so.',
 -  'Never claim an order was placed, filled or cancelled without evidence: either the user confirmed it, or it was auto-approved AND get_open_orders shows it.',
++  'Protection is conditional coverage, never guaranteed execution. Before describing coverage, reconcile the fresh exact-account position quantity with active reduce-only exit orders, trigger direction, order type and mutually exclusive sibling groups; do not count the same position quantity twice across a stop and its take-profit sibling. Stop-limit orders can trigger without filling if price passes their limit; a limit below a sell stop does not guarantee a near-market fill. Market stops also have slippage and execution risk. Pending entry attachments are not active exits for unfilled size, and a paused managed plan may never attach its future exits. State coverage and uncovered quantity as of the verified read, not a blanket fully protected or nothing is naked claim. Never promise that cancel-then-replace has no protection gap or preserves stops unless the exact reviewed actions and fresh exchange evidence establish it.',
++  'Historical paused runs do not establish the state of a current trade. Match the exact run ID, account, connection revision and instrument before linking its error to current orders; separate old paused or uncertain runs from current confirmed execution. Workflows → Activity has reviewed Pause and Stop actions for eligible current-account managed runs. If chat lacks a run-control tool, navigate there instead of claiming the plan cannot be stopped. Pausing or stopping a managed plan does not cancel its existing exchange orders or close positions, and an already-submitting step may still complete; verify both run and exchange afterward. A paused or uncertain plan must never be resumed or recreated automatically.',
++  'A chat response does not schedule future monitoring. Never promise I will watch, check back in two hours, or report future fills unless a real persistent alert or monitoring service has been created and its returned state confirms the requested scope and delivery channel. A workflow scheduler executes its reviewed steps; it is not a chat notification subscription. Otherwise report the current snapshot and offer an explicitly configured supported alert or a fresh status read when asked.',
++  'Compute reward and risk from exact quantities and weighted exit allocations at verified entry or clearly labelled assumed future fills. Separate existing filled exposure from scheduled or resting entries and show their different scenarios. Include the formula, distinguish margin from notional, and label fees, slippage and funding as excluded unless verified; never invent a net-after-fees profit. Do not label a setup best or sound without the requested comparison and actual reward/risk. Respect funding sign: positive means longs pay shorts; negative means shorts pay longs, so a short pays negative funding rather than collecting it.',
 +  'A portfolio cache is not a fresh exchange wallet read. Preserve credentialId, accountName, market type, source time and coverage; an empty or stale cache is unknown, not zero funds or missing credentials. A verified zero Hyperliquid standard-perpetual account value applies only to that exact account and scope: it does not prove all wallets, subaccounts, spot collateral or unified-account funds are empty. Read the relevant fresh native account scopes before sizing; never silently substitute Lighter, invent spendable balances, transfer funds or instruct a top-up as the only remedy from a scoped zero.',
 +  'Read get_risk_limits for actual hosted per-order and daily-notional limits before sizing. Local controls marked Off do not establish backend settings. A verified null hosted notional cap means Off, not zero allowance or a missing credential. Disabled backend caps do not remove exchange balance/margin checks, precision rules, account verification, human confirmation, or the immutable reviewed budget of a workflow or advanced order. Never retry or resume an old paused or uncertain plan merely because a limit changed; reconcile its exchange outcomes and prepare a fresh exact review only when requested.',
 +  'Market scan failures are failed reads, not proof of an upstream outage or bad trading credentials. A 503 alone does not establish the cause. For native venues resolve requested assets through the selected venue catalog; never invent a USDT spelling for Lighter or reuse another venue chart as native evidence. Report each returned requested/resolved pair, venue, timeframe and data timestamp, and distinguish partial comparisons from a complete scan. Broad top-coins data is market-cap context, not proof an asset is listed on the requested exchange or a guaranteed pump candidate. Read failures never establish unchanged orders, an empty account, or working trade execution; private order claims require fresh native account evidence.',
@@ -13601,7 +13605,7 @@ index ce0d317..2aabc27 100644
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
    'You never see API keys, wallet private keys or vault contents. If a task needs a credential the user has not connected, say what is missing and point at Accounts.',
    'Never give financial advice and never guarantee an outcome. Analysis and mechanics, not recommendations to buy or sell.',
-@@ -94,7 +117,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +121,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13611,14 +13615,22 @@ index ce0d317..2aabc27 100644
      `Today's date: ${today} (UTC).`,
      '',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..6bd1e3f 100644
+index 26e075b..4035fb3 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -14,6 +14,12 @@
- import { convertToModelMessages, stepCountIs, streamText } from 'ai'
+@@ -11,9 +11,19 @@
+ // gating is re-read at every step: the user can navigate mid-run, and
+ // the assistant should notice.
+ 
+-import { convertToModelMessages, stepCountIs, streamText } from 'ai'
++import { stepCountIs, streamText } from 'ai'
  
  import { buildAssistantSystemPrompt } from './assistant-brain'
 +import { encodeAssistantError } from './assistant-error'
++import {
++  assistantModelHistory,
++  boundAssistantModelHistory,
++} from './model-history'
 +import {
 +  repeatedPreparationFailure,
 +  tradePreparationReady,
@@ -13627,7 +13639,7 @@ index 26e075b..6bd1e3f 100644
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -36,6 +42,7 @@ import type {
+@@ -36,6 +46,7 @@ import type {
    UIMessage,
    UIMessageChunk,
  } from 'ai'
@@ -13635,23 +13647,52 @@ index 26e075b..6bd1e3f 100644
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -101,10 +108,14 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
-         venues: deps
-           .getMarketData()
-           ?.availableMarkets.map((market) => market.marketId),
+@@ -92,29 +103,45 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+     const tools = buildAssistantToolSet(deps)
+     const toolNames = Object.keys(tools)
+ 
++    const systemPrompt = buildAssistantSystemPrompt({
++      persona,
++      screen: buildScreenContextBlock(deps.registry),
++      surfaceActions: buildSurfaceActionBlock(deps.registry),
++      venues: deps
++        .getMarketData()
++        ?.availableMarkets.map((market) => market.marketId),
++      guides: [
++        ...guidesFor(deps),
++        `Observed approval results from this browser session (submission is not fill confirmation; no record means unknown): ${JSON.stringify(getTradeSubmissions().slice(0, 5))}`,
++      ],
++    })
+     const result = streamText({
+       model: model as LanguageModel,
+-      system: buildAssistantSystemPrompt({
+-        persona,
+-        screen: buildScreenContextBlock(deps.registry),
+-        surfaceActions: buildSurfaceActionBlock(deps.registry),
+-        venues: deps
+-          .getMarketData()
+-          ?.availableMarkets.map((market) => market.marketId),
 -        guides: guidesFor(deps),
-+        guides: [
-+          ...guidesFor(deps),
-+          `Observed approval results from this browser session (submission is not fill confirmation; no record means unknown): ${JSON.stringify(getTradeSubmissions().slice(0, 5))}`,
-+        ],
-       }),
-       messages: await convertToModelMessages(options.messages),
+-      }),
+-      messages: await convertToModelMessages(options.messages),
++      system: systemPrompt,
++      messages: await assistantModelHistory(options.messages),
        tools,
 +      experimental_repairToolCall: repairPositionPlanToolCall,
        // Re-read per step: a navigation in step 2 should put the chart
        // tools back on the table for step 3.
-       prepareStep: () => ({
-@@ -114,7 +125,11 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+-      prepareStep: () => ({
++      prepareStep: ({ messages: stepMessages }) => ({
++        // The SDK supplies system separately, outside prepareStep.messages.
++        // Include it in the same budget, then prevent duplicate injection.
++        system: [],
++        messages: boundAssistantModelHistory([
++          { role: 'system', content: systemPrompt },
++          ...stepMessages,
++        ]),
+         activeTools: activeToolsFor(
+           this.opts.getDeps(),
+           toolNames,
            CHART_TOOLS,
          ),
        }),
@@ -13664,7 +13705,7 @@ index 26e075b..6bd1e3f 100644
        onStepFinish: (step) => {
          for (const call of step.toolCalls) {
            track('assistant_tool_used', { tool: call.toolName })
-@@ -124,8 +139,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -124,8 +151,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
      })
  
      return result.toUIMessageStream({
@@ -14974,10 +15015,10 @@ index fc621a5..028444c 100644
    // ---- Time ----
    wait: ['wait', ''],
 diff --git a/apps/terminal/src/lib/copilot/trading-tools.ts b/apps/terminal/src/lib/copilot/trading-tools.ts
-index 2f8e01a..82777ec 100644
+index 2f8e01a..19a5959 100644
 --- a/apps/terminal/src/lib/copilot/trading-tools.ts
 +++ b/apps/terminal/src/lib/copilot/trading-tools.ts
-@@ -2,9 +2,201 @@
+@@ -2,9 +2,265 @@
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
  import { tool } from 'ai'
  import { z } from 'zod'
@@ -15021,6 +15062,70 @@ index 2f8e01a..82777ec 100644
 +  .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/)
 +  .max(100)
 +  .refine((value) => /[1-9]/.test(value), 'Must be positive')
++
++const workflowRunReadSchema = z
++  .object({
++    runId: z
++      .string()
++      .min(1)
++      .max(256)
++      .optional()
++      .describe('Exact approved run ID for focused execution evidence.'),
++    offset: z.number().int().min(0).max(100000).optional(),
++    limit: z.number().int().min(1).max(20).optional(),
++  })
++  .strict()
++
++/** Keep complete per-run evidence, omitting only duplicate internal engine state. */
++export function selectWorkflowRuns(
++  body: unknown,
++  input: z.infer<typeof workflowRunReadSchema>,
++) {
++  const parsed = z
++    .array(z.object({ id: z.string().min(1) }).passthrough())
++    .safeParse(body)
++  if (
++    !parsed.success ||
++    new Set(parsed.data.map((run) => run.id)).size !== parsed.data.length
++  )
++    throw new Error('Workflow execution results could not be verified')
++  const matching = parsed.data.filter(
++    (run) => !input.runId || run.id === input.runId,
++  )
++  const offset = input.runId ? 0 : (input.offset ?? 0)
++  const limit = input.runId ? 1 : (input.limit ?? 5)
++  const runs: Array<Record<string, unknown> & { id: string }> = []
++  const oversizedRunIds: Array<string> = []
++  let chars = 0
++  let consumed = 0
++  for (const raw of matching.slice(offset, offset + limit)) {
++    const run = { ...raw }
++    delete run.graphState
++    delete run.graphOrders
++    const size = JSON.stringify(run).length
++    if (size > 23000) {
++      oversizedRunIds.push(run.id)
++      consumed++
++      continue
++    }
++    if (chars + size > 23000) break
++    runs.push(run)
++    chars += size
++    consumed++
++  }
++  const next = offset + consumed
++  return {
++    scope: input.runId ? 'exact-run' : 'newest-first-page',
++    total: parsed.data.length,
++    matched: matching.length,
++    returned: runs.length,
++    offset,
++    truncated: oversizedRunIds.length > 0 || next < matching.length,
++    nextOffset: next < matching.length ? next : null,
++    oversizedRunIds,
++    runs,
++  }
++}
 +export const venueOrderControlsSchema = z
 +  .object({
 +    exactSize: decimal
@@ -15180,7 +15285,7 @@ index 2f8e01a..82777ec 100644
  
  // ---------------------------------------------------------------------------
  // Phase 5 — gated execution.
-@@ -12,25 +204,206 @@ import type { CopilotToolDeps } from './tool-deps'
+@@ -12,25 +268,206 @@ import type { CopilotToolDeps } from './tool-deps'
  // place_order / cancel_order NEVER execute directly. They return a structured
  // proposal (status: 'awaiting_confirmation'); the panel renders a confirmation
  // card and only calls the risk-guarded MarketDataProvider.placeOrder /
@@ -15396,7 +15501,7 @@ index 2f8e01a..82777ec 100644
          side: z.enum(['buy', 'sell']),
          type: z.enum(['market', 'limit']).default('market'),
          size: z
-@@ -54,6 +427,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -54,6 +491,11 @@ export function buildTradingTools(deps: CopilotToolDeps) {
            ),
        }),
        execute: async (args) => {
@@ -15408,7 +15513,7 @@ index 2f8e01a..82777ec 100644
          const target = resolveTarget(deps, {
            market: args.market,
            pair: args.pair,
-@@ -69,42 +447,222 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -69,42 +511,232 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one, so there is no instrument to prepare an order for. Name the pair explicitly.',
            }
          }
@@ -15550,16 +15655,26 @@ index 2f8e01a..82777ec 100644
  
 +    get_workflow_runs: tool({
 +      description:
-+        'Read actual approved server workflow schedules and per-order outcomes. Read-only. Registered/scheduled is not filled. No result means no confirmed server plan.',
-+      inputSchema: z.object({}),
-+      execute: async () => {
-+        const response = await quantTradeFetch(
-+          '/_quanttrade/api/workflow-runs',
-+          { credentials: 'same-origin' },
-+        )
-+        if (!response.ok)
-+          return { status: 'unavailable', httpStatus: response.status }
-+        return { status: 'available', runs: await response.json() }
++        'Read actual approved server workflow schedules and per-order outcomes. Read-only. Prefer runId for an exact trade; default returns five newest runs. Follow nextOffset for additional pages and disclose truncated or oversized coverage. Registered/scheduled is not filled, protective acknowledgments are not active exchange proof, and historical paused runs do not describe another current trade. An available empty page is not an empty exchange book; failed reads mean unknown. Eligible managed runs have reviewed Pause/Stop in Workflows → Activity; stopping does not cancel exchange orders or close positions.',
++      inputSchema: workflowRunReadSchema,
++      execute: async (input) => {
++        try {
++          const response = await quantTradeFetch(
++            '/_quanttrade/api/workflow-runs',
++            { credentials: 'same-origin' },
++          )
++          if (!response.ok)
++            return { status: 'unavailable', httpStatus: response.status }
++          return {
++            status: 'available',
++            ...selectWorkflowRuns(await response.json(), input),
++          }
++        } catch {
++          return {
++            status: 'unavailable',
++            error: 'Workflow execution results could not be verified.',
++          }
++        }
 +      },
 +    }),
 +
@@ -15643,7 +15758,7 @@ index 2f8e01a..82777ec 100644
        inputSchema: z.object({
          orderId: z.string(),
          pair: z.string().optional(),
-@@ -122,6 +680,22 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -122,6 +754,22 @@ export function buildTradingTools(deps: CopilotToolDeps) {
                'No pair was given and nothing on screen names one. Read get_open_orders and cancel by its pair.',
            }
          }
@@ -15666,7 +15781,7 @@ index 2f8e01a..82777ec 100644
          return {
            status: 'awaiting_confirmation',
            cancel: {
-@@ -135,4 +709,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
+@@ -135,4 +783,100 @@ export function buildTradingTools(deps: CopilotToolDeps) {
        },
      }),
    }

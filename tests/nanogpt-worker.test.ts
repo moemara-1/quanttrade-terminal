@@ -108,3 +108,10 @@ test('authenticated HTTP inference resumes after the actual bridge application s
     assert.equal(await (await fetch(`${bridge.base}/${result.id}`,{headers})).text(),step);assert.equal(calls,1);
   } finally {await bridge.close();worker.close();workerServer.closeAllConnections();await new Promise<void>(resolve=>workerServer.close(()=>resolve()));store.close();}
 });
+
+
+test('worker forwards only the derived provider rejection category to its client',async()=>{
+ const jobs=new NanoGptJobs(async()=>new Response(JSON.stringify({error:{message:'tool messages must respond to preceding tool_calls; private data'}}),{status:400,headers:{'X-QuantTrade-AI-Rejection':'private malicious header'}}));
+ const worker=createNanoGptWorker('worker-fixture-token',jobs);const server=worker.app.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert(address&&typeof address==='object');
+ try{const client=new NanoGptWorkerClient(`http://127.0.0.1:${address.port}`,'worker-fixture-token');const id=await client.start(owner,input());await tick();const response=(await client.read(owner,id,0))!;assert.equal(response.status,400);assert.equal(response.headers.get('X-QuantTrade-AI-Rejection'),'tool-history');const body=await response.text();assert.equal(JSON.parse(body).providerRejection,'tool-history');assert(!body.includes('private'));}finally{worker.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});

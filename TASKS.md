@@ -362,3 +362,9 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Review current panel lifecycle and design floating desktop/mobile dialogs preserving filters and review state.
 - [completed] Replace scanner sidebar with accessible floating dialogs; preserve review state, suspend hidden polling, contain focus and guard busy submissions.
 - [completed] 4,119 frontend tests, TypeScript, focused ESLint and 11-task production build pass. Deployed frontend-only 20261021-6; hosted checks pass without service restarts. Desktop/mobile floating geometry, retained filters/tabs/review inputs, keyboard focus, scrolling and backdrop checks pass. Reproduced and fixed mobile Escape closing the underlying Discover drawer; hosted retest preserves it. No trades prepared/submitted. Commit/push authorized.
+
+## Assistant rejection and execution-claim audit
+- [completed] Deployed safe diagnostics; actual retained135-message MiniMax chat reproduced HTTP400 context-length on no-tool Reply OK. Oversized history is confirmed current cause.
+- [completed] Repaired incomplete/abandoned SDK tool history and confirmed context overflow with an 80k-character provider history budget including system instructions at every step. Added focused paginated workflow reads and safe diagnostics.
+- [completed] Audited scheduler/UI semantics and corrected protection, stop-limit execution, historical run, monitoring and weighted R:R guidance.
+- [completed] Backend 411 and frontend 4,143 tests, strict types, focused ESLint and 11-task production build pass. Deployed 20261021-9 after diagnostic release 21-8. The affected conversation recovers: plain OK, question card, and typed answer all HTTP 200 in 2–4 seconds; model history is bounded to 16–20 messages versus the prior 135-message context rejection. No trade preparation, submission, cancellation or run changes. Authorized commit/push finalized.

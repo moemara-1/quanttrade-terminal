@@ -51,4 +51,22 @@ describe('assistant trade preparation contract', () => {
       'OCO is for two protective exits, never an entry plus a stop-loss',
     )
   })
+
+  test('reports protection as verified conditional coverage, never guaranteed execution', () => {
+    expect(prompt).toContain('Stop-limit orders can trigger without filling')
+    expect(prompt).toContain('do not count the same position quantity twice')
+    expect(prompt).toContain('Never promise that cancel-then-replace has no protection gap')
+  })
+
+  test('does not promise chat monitoring or confuse old runs with current orders', () => {
+    expect(prompt).toContain('A chat response does not schedule future monitoring')
+    expect(prompt).toContain('Historical paused runs do not establish the state of a current trade')
+    expect(prompt).toContain('Workflows → Activity has reviewed Pause and Stop actions')
+    expect(prompt).toContain('Pausing or stopping a managed plan does not cancel its existing exchange orders')
+  })
+
+  test('grounds risk reward in actual weighted exits and remaining quantities', () => {
+    expect(prompt).toContain('Compute reward and risk from exact quantities and weighted exit allocations')
+    expect(prompt).toContain('funding sign: positive means longs pay shorts; negative means shorts pay longs')
+  })
 })

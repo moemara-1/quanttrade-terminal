@@ -144,3 +144,12 @@ test('deadline aborts provider and retention cleanup removes only expired comple
  let signal:AbortSignal|undefined;const jobs=new NanoGptJobs(async(_url,options)=>{signal=options.signal??undefined;return new Promise<Response>((_resolve,reject)=>signal?.addEventListener('abort',()=>reject(new Error('aborted'))));});
  try{const id=jobs.start('owner',input());context.mock.timers.tick(600_000);assert.equal(signal?.aborted,true);assert.equal(jobs.read('owner',id,0)?.status,502);context.mock.timers.tick(600_000);assert.throws(()=>jobs.read('owner',id,0),/not found/);}finally{jobs.close();context.mock.timers.reset();}
 });
+
+
+test('bridge preserves the safe provider rejection category and never forwards provider body text',async()=>{
+ const jobs=new NanoGptJobs(async()=>new Response(JSON.stringify({error:{code:'context_length_exceeded',message:'private prompt secret'}}),{status:400}));
+ const store=new DeskStore(':memory:');const markets={list:async()=>[],candles:async()=>[],book:async()=>({bids:[],asks:[],updatedAt:Date.now()})};
+ const desk=new TradingDesk(store,markets,{configured:false,place:async()=>{throw new Error('unexpected execution');},cancel:async()=>undefined},{mode:'paper',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'http://localhost:4317'});
+ const app=createApp({desk,markets,agent:{prepare:async()=>({summary:'No order',proposal:null})},operatorToken:'operator',agentToken:'agent',nanogptJobs:jobs});const server=app.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert(address&&typeof address==='object');const base=`http://127.0.0.1:${address.port}/api/ai/nanogpt/jobs`;const headers={Authorization:'Bearer operator','Content-Type':'application/json'};
+ try{const created=await fetch(base,{method:'POST',headers,body:JSON.stringify(input())});const {id}=await created.json() as {id:string};await tick();const result=await fetch(`${base}/${id}`,{headers});assert.equal(result.status,400);assert.equal(result.headers.get('X-QuantTrade-AI-Rejection'),'context-length');const body=await result.text();assert.equal(JSON.parse(body).providerRejection,'context-length');assert(!body.includes('private prompt'));}finally{app.locals.hostedAuthClose();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));store.close();}
+});

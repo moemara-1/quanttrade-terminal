@@ -5,21 +5,47 @@ import {z} from 'zod';
 const inputSchema=z.object({requestId:z.string().uuid(),atomic:z.boolean().optional().default(true),apiKey:z.string().trim().min(1).max(4096).regex(/^[^\r\n]+$/),request:z.object({model:z.string().trim().min(1).max(256),stream:z.literal(true),messages:z.array(z.unknown()).min(1)}).passthrough()}).strict();
 type Fetcher=(url:string,options:RequestInit)=>Promise<Response>;
 type Failure='upstream-connection'|'upstream-stream'|'timeout'|'canceled'|'buffer-limit'|'incomplete-step';
+export type ProviderRejection='context-length'|'tool-history'|'reasoning-history'|'model'|'parameter'|'rate-limit'|'balance'|'unknown';
+
+// Error bodies may echo credentials and conversation text. Only fixed categories escape.
+async function readProviderRejection(response:Response):Promise<ProviderRejection>{
+ const reader=response.body?.getReader();if(!reader)return 'unknown';
+ let timer:ReturnType<typeof setTimeout>|undefined;
+ const deadline=new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),1000);timer.unref();});
+ const chunks:Uint8Array[]=[];let size=0;
+ try{
+  for(;;){const next=await Promise.race([reader.read(),deadline]);if(next===null)return 'unknown';if(next.done)break;const available=16*1024-size;chunks.push(next.value.subarray(0,available));size+=Math.min(next.value.byteLength,available);if(size>=16*1024)return 'unknown';}
+  let parsed:unknown;try{parsed=JSON.parse(Buffer.concat(chunks,size).toString('utf8'));}catch{return 'unknown';}
+  if(!parsed||typeof parsed!=='object')return 'unknown';
+  const error='error' in parsed?parsed.error:parsed;
+  if(!error||(typeof error!=='object'&&typeof error!=='string'))return 'unknown';
+  const fields=typeof error==='object'?error as Record<string,unknown>:{};const text=(typeof error==='string'?error:['code','type','message'].map(key=>typeof fields[key]==='string'?fields[key]:'').join(' ')).toLowerCase();
+  if(/context[_ -](?:length|window)|maximum.{0,30}tokens|too many tokens|prompt.{0,20}too long/.test(text))return 'context-length';
+  if(/reasoning_content|reasoning.{0,30}(?:missing|required|history)/.test(text))return 'reasoning-history';
+  if(/tool_call|tool.{0,35}(?:preced|respond|missing|history|matching)|orphan.{0,20}tool/.test(text))return 'tool-history';
+  if(/model.{0,35}(?:not found|invalid|unavailable|does not exist)|model_not_found/.test(text))return 'model';
+  if(/insufficient.{0,20}(?:balance|credit|fund)|balance.{0,20}(?:low|insufficient)|insufficient_quota/.test(text))return 'balance';
+  if(/rate[_ -]limit|too many requests/.test(text))return 'rate-limit';
+  if(/(?:unsupported|invalid|unknown).{0,25}(?:parameter|argument)|parameter.{0,25}(?:unsupported|invalid)/.test(text))return 'parameter';
+  return 'unknown';
+ }catch{return 'unknown';}finally{clearTimeout(timer);void reader.cancel().catch(()=>undefined);reader.releaseLock();}
+}
+
 type FailureDetail='provider-idle'|'provider-read-failed'|'invalid-content-type'|'invalid-completion'|'invalid-sse-event'|'provider-error-event'|'incomplete-sse';
 const toolCallSchema=z.object({id:z.string().min(1).max(256),type:z.literal('function'),function:z.object({name:z.string().regex(/^[a-zA-Z0-9_.-]{1,256}$/),arguments:z.string().max(1024*1024).refine(value=>{try{const parsed:unknown=JSON.parse(value);return parsed!==null&&typeof parsed==='object'&&!Array.isArray(parsed);}catch{return false;}})})});
 const completionSchema=z.object({id:z.string().max(256).optional(),model:z.string().max(256).optional(),choices:z.array(z.object({index:z.literal(0),finish_reason:z.string().min(1),message:z.object({role:z.literal('assistant').optional(),content:z.string().nullable().optional(),reasoning_content:z.string().optional(),reasoning:z.string().optional(),tool_calls:z.array(toolCallSchema).max(64).optional()})})).length(1),usage:z.object({prompt_tokens:z.number().int().nonnegative(),completion_tokens:z.number().int().nonnegative(),total_tokens:z.number().int().nonnegative().optional()}).optional()});
-interface Job {id:string;owner:string;requestId:string;hash:string;atomic:boolean;model:string;messageCount:number;started:number;attempt:number;controller:AbortController;chunks:Uint8Array[];bytes:number;capacity:number;status?:number;contentType:string;diagnostics:Headers;failure?:Failure;detail?:FailureDetail;done:boolean;failed:boolean;ended?:number;listeners:Set<()=>void>;timer:ReturnType<typeof setTimeout>}
-export interface InferenceEvent {event:'started'|'retry'|'completed'|'failed';id:string;model:string;messageCount:number;attempt:number;durationMs:number;bytes:number;providerStatus?:number;failure?:Failure;detail?:FailureDetail}
+interface Job {id:string;owner:string;requestId:string;hash:string;atomic:boolean;model:string;messageCount:number;started:number;attempt:number;controller:AbortController;chunks:Uint8Array[];bytes:number;capacity:number;status?:number;contentType:string;diagnostics:Headers;failure?:Failure;detail?:FailureDetail;rejection?:ProviderRejection;done:boolean;failed:boolean;ended?:number;listeners:Set<()=>void>;timer:ReturnType<typeof setTimeout>}
+export interface InferenceEvent {event:'started'|'retry'|'completed'|'failed';id:string;model:string;messageCount:number;attempt:number;durationMs:number;bytes:number;providerStatus?:number;failure?:Failure;detail?:FailureDetail;rejection?:ProviderRejection}
 export class NanoGptJobError extends Error {constructor(public status:number,message:string){super(message);}}
 /** Ephemeral provider bytes only. Browser disconnects never abort provider work. */
 export class NanoGptJobs {
  private jobs=new Map<string,Job>();private bytes=0;private closed=false;private sweep:ReturnType<typeof setInterval>;
  constructor(private fetcher:Fetcher=fetch,private observer?:(event:InferenceEvent)=>void,private idleTimeoutMs=90_000){if(!Number.isInteger(idleTimeoutMs)||idleTimeoutMs<1||idleTimeoutMs>90_000)throw new Error('Invalid inference idle timeout');this.sweep=setInterval(()=>this.cleanup(),60_000);this.sweep.unref();}
- private report(job:Job,event:InferenceEvent['event']){if(!this.observer)return;try{this.observer({event,id:job.id,model:job.model,messageCount:job.messageCount,attempt:job.attempt,durationMs:Date.now()-job.started,bytes:job.bytes,...(job.status===undefined?{}:{providerStatus:job.status}),...(job.failure?{failure:job.failure}:{}),...(job.detail?{detail:job.detail}:{})});}catch{console.warn('Inference diagnostic reporter failed');}}
+ private report(job:Job,event:InferenceEvent['event']){if(!this.observer)return;try{this.observer({event,id:job.id,model:job.model,messageCount:job.messageCount,attempt:job.attempt,durationMs:Date.now()-job.started,bytes:job.bytes,...(job.status===undefined?{}:{providerStatus:job.status}),...(job.failure?{failure:job.failure}:{}),...(job.detail?{detail:job.detail}:{}),...(job.rejection?{rejection:job.rejection}:{})});}catch{console.warn('Inference diagnostic reporter failed');}}
  get activeCount(){return [...this.jobs.values()].filter(job=>!job.done).length;}
  get retainedCount(){this.cleanup();return this.jobs.size;}
  private cleanup(){const now=Date.now();for(const [id,job]of this.jobs)if(job.ended!==undefined&&now-job.ended>=600_000){this.bytes-=job.capacity;this.jobs.delete(id);}}
- private finish(job:Job,failed=false){if(job.done)return;job.done=true;job.failed=failed;job.ended=Date.now();clearTimeout(job.timer);this.report(job,failed?'failed':'completed');for(const listener of [...job.listeners])listener();}
+ private finish(job:Job,failed=false){if(job.done)return;job.done=true;job.failed=failed;job.ended=Date.now();clearTimeout(job.timer);this.report(job,failed||(job.status!==undefined&&job.status>=400)?'failed':'completed');for(const listener of [...job.listeners])listener();}
  private get(owner:string,id:string){this.cleanup();const job=this.jobs.get(id);if(!job||job.owner!==owner)throw new NanoGptJobError(404,'Inference job not found');return job;}
  start(owner:string,input:unknown,acceptNew=true):string {
   this.cleanup();const parsed=inputSchema.safeParse(input);if(!parsed.success)throw new NanoGptJobError(400,'Invalid inference request');
@@ -50,7 +76,7 @@ export class NanoGptJobs {
      job.status=response.status;job.contentType=response.headers.get('Content-Type')??'application/octet-stream';
      const requestId=response.headers.get('X-Request-ID');if(requestId&&/^[a-zA-Z0-9._:-]{1,128}$/.test(requestId))job.diagnostics.set('X-Request-ID',requestId);
      const retryAfter=response.headers.get('Retry-After');if(retryAfter&&/^\d{1,3}$/.test(retryAfter)&&Number(retryAfter)<=120)job.diagnostics.set('Retry-After',retryAfter);
-     if(!response.ok){await response.body?.cancel();job.contentType='application/json';this.append(job,new TextEncoder().encode('{"error":"NanoGPT rejected the inference request"}'));this.finish(job);return;}
+     if(!response.ok){job.rejection=await readProviderRejection(response);if(job.done)return;job.diagnostics.set('X-QuantTrade-AI-Rejection',job.rejection);job.contentType='application/json';this.append(job,new TextEncoder().encode(JSON.stringify({error:'NanoGPT rejected the inference request',providerRejection:job.rejection})));this.finish(job);return;}
      // Atomic jobs expose no bytes or tool calls until a whole model step is
      // verified. Retrying that one step cannot repeat previously completed tools.
      if(job.atomic&&job.contentType.toLowerCase().includes('application/json')){
