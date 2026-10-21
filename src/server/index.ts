@@ -27,6 +27,7 @@ import { createProtectionAdapter } from './protection-adapter.ts';
 import { ProtectionMonitor } from './protection-monitor.ts';
 import { LiquidationCollector } from './liquidations.ts';
 import { LlmArena } from './llm-arena.ts';
+import {ArenaLiveExecution} from './llm-arena-live.ts';
 import { NanoGptWorkerClient } from './nanogpt-worker.ts';
 
 if (existsSync('.env')) loadEnvFile('.env');
@@ -52,8 +53,6 @@ function token(name:string):string {
 }
 const store=new DeskStore(resolve('data','desk.sqlite'));
 const markets=new PublicMarkets();
-const arena=new LlmArena(resolve('data','llm-arena.sqlite'),markets);
-arena.startTimer();
 const liquidations=new LiquidationCollector(resolve('data','liquidations.sqlite'));
 liquidations.start();
 const execution=new HummingbotExecution({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT});
@@ -68,6 +67,8 @@ const workflows=new WorkflowRuns(resolve('data','workflow-runs.sqlite'),desk);
 workflows.startTimer();
 desk.agentConfigured=agent.configured;
 const operationClient=new HummingbotOperations({url:env.HUMMINGBOT_URL,username:env.HUMMINGBOT_USERNAME,password:env.HUMMINGBOT_PASSWORD,accountName:env.HUMMINGBOT_ACCOUNT});
+const arena=new LlmArena(resolve('data','llm-arena.sqlite'),markets,{live:new ArenaLiveExecution(desk,execution,operationClient)});
+arena.startTimer();
 const operations=new VenueOperations(desk,operationClient,markets);
 const lighterNativeOrders=new LighterNativeOrders(desk,operationClient,markets,Date.now,()=>execution.balances('lighter','perpetual'));
 const advancedProtection:AdvancedProtection=new AdvancedProtection(resolve('data','advanced-protection.sqlite'),createProtectionAdapter(desk,execution,operationClient,():ChasePlans=>chasePlans));

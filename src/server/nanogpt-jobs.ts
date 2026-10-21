@@ -45,7 +45,7 @@ export class NanoGptJobs {
     let idleTimer:ReturnType<typeof setTimeout>|undefined;
     const activity=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>{job.detail='provider-idle';attemptController.abort();},this.idleTimeoutMs);idleTimer.unref();};activity();
     try{
-     const response=await this.fetcher('https://api.nano-gpt.com/api/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:payload,signal:AbortSignal.any([job.controller.signal,attemptController.signal])});activity();
+     const response=await this.fetcher('https://nano-gpt.com/api/v1/chat/completions',{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:payload,signal:AbortSignal.any([job.controller.signal,attemptController.signal])});activity();
      if(job.done){await response.body?.cancel();return;}
      job.status=response.status;job.contentType=response.headers.get('Content-Type')??'application/octet-stream';
      const requestId=response.headers.get('X-Request-ID');if(requestId&&/^[a-zA-Z0-9._:-]{1,128}$/.test(requestId))job.diagnostics.set('X-Request-ID',requestId);

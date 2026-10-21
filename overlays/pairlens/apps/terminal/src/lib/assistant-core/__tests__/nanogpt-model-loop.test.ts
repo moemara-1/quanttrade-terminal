@@ -107,9 +107,9 @@ test('relay recovery during setup never replays the completed read or duplicates
         jobs.push({ id: body.requestId, request: body.request })
         return Response.json({ id: body.requestId }, { status: 201 })
       }
-      if (path.includes(jobs[0]!.id)) return toolResponse('read_fixture')
+      if (path.includes(jobs[0].id)) return toolResponse('read_fixture')
       expect(jobs).toHaveLength(2)
-      expect(path).toBe(`/_quanttrade/api/ai/nanogpt/jobs/${jobs[1]!.id}?offset=0`)
+      expect(path).toBe(`/_quanttrade/api/ai/nanogpt/jobs/${jobs[1].id}?offset=0`)
       secondJobReads.push(path)
       if (secondJobReads.length === 1) return new Response(null, { status: 502 })
       return toolResponse('prepare_fixture')
@@ -145,10 +145,10 @@ test('relay recovery during setup never replays the completed read or duplicates
   expect(reads).toBe(1)
   expect(preparations).toBe(1)
   expect(jobs).toHaveLength(2)
-  expect(jobs[0]!.id).not.toBe(jobs[1]!.id)
+  expect(jobs[0].id).not.toBe(jobs[1].id)
   expect(secondJobReads).toHaveLength(2)
   expect(secondJobReads[0]).toBe(secondJobReads[1])
-  expect(JSON.stringify(jobs[1]!.request.messages)).toContain('read-once')
+  expect(JSON.stringify(jobs[1].request.messages)).toContain('read-once')
 })
 
 test.each(['reasoning', 'reasoning_content'])(
@@ -161,7 +161,7 @@ test.each(['reasoning', 'reasoning_content'])(
     globalThis.fetch = Object.assign(
       async (url: string | URL | Request, init?: RequestInit) => {
         expect(String(url)).toBe(
-          'https://api.nano-gpt.com/api/v1/chat/completions',
+          'https://nano-gpt.com/api/v1/chat/completions',
         )
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
         requests.push(body)

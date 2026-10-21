@@ -1,8 +1,14 @@
 const endpoint = '/_quanttrade/api/ai/nanogpt/jobs'
-const target = 'https://api.nano-gpt.com/api/v1/chat/completions'
+const targets = new Set([
+  'https://nano-gpt.com/api/v1/chat/completions',
+  // Cached clients still use this identifier; requests go only to our job API.
+  'https://api.nano-gpt.com/api/v1/chat/completions',
+])
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const connectionError = () => new TypeError('NanoGPT server connection failed')
 const proxyStatuses = new Set([502, 503, 504])
+const recoveryAttempts = 8
+const recoveryDelay = (attempt: number) => Math.min(attempt * 250, 1000)
 const terminalReasons = new Set([
   'upstream-connection',
   'upstream-stream',
@@ -48,7 +54,7 @@ export async function fetchNanogptOnServer(
   let apiKey: string | undefined
   try {
     if (
-      address !== target ||
+      !targets.has(address) ||
       init?.method?.toUpperCase() !== 'POST' ||
       typeof init.body !== 'string'
     )
@@ -156,11 +162,12 @@ export async function fetchNanogptOnServer(
         })
       } catch {
         check()
-        if (++failures >= 3) throw connectionError()
-        await pause(failures * 250)
+        if (++failures >= recoveryAttempts) throw connectionError()
+        await pause(recoveryDelay(failures))
         continue
       }
       if (response.status === 202) {
+        failures = 0
         await response.body?.cancel()
         await pause(1000)
         continue
@@ -170,8 +177,8 @@ export async function fetchNanogptOnServer(
         response.headers.get('x-quanttrade-ai-upstream') !== '1'
       ) {
         await response.body?.cancel()
-        if (proxyFailure(response) && ++failures < 3) {
-          await pause(failures * 250)
+        if (proxyFailure(response) && ++failures < recoveryAttempts) {
+          await pause(recoveryDelay(failures))
           continue
         }
         throw new NanoGPTServerError(
@@ -183,7 +190,7 @@ export async function fetchNanogptOnServer(
     }
   }
   try {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < recoveryAttempts; attempt++) {
       try {
         const created = await rawFetch(endpoint, {
           method: 'POST',
@@ -192,8 +199,8 @@ export async function fetchNanogptOnServer(
         })
         if (!created.ok) {
           await created.body?.cancel()
-          if (proxyFailure(created) && attempt < 2) {
-            await pause((attempt + 1) * 250)
+          if (proxyFailure(created) && attempt < recoveryAttempts - 1) {
+            await pause(recoveryDelay(attempt + 1))
             continue
           }
           throw new NanoGPTServerError(created.status)
@@ -213,8 +220,8 @@ export async function fetchNanogptOnServer(
       } catch (error) {
         check()
         if (error instanceof NanoGPTServerError) throw error
-        if (attempt === 2) throw connectionError()
-        await pause((attempt + 1) * 250)
+        if (attempt === recoveryAttempts - 1) throw connectionError()
+        await pause(recoveryDelay(attempt + 1))
       }
     }
     if (!jobId) throw connectionError()
@@ -242,8 +249,8 @@ export async function fetchNanogptOnServer(
                 chunk = await reader!.read()
               } catch {
                 check()
-                if (++failures >= 3) throw connectionError()
-                await pause(failures * 250)
+                if (++failures >= recoveryAttempts) throw connectionError()
+                await pause(recoveryDelay(failures))
                 const resumed = await readResponse()
                 if (resumed.status !== response.status || !resumed.body)
                   throw connectionError()

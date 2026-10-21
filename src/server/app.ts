@@ -24,9 +24,10 @@ import type { DiscoveryScanners } from './scanners.ts';
 import type { ScannerDetails } from './scanner-detail.ts';
 import type { ArbitragePlans } from './arbitrage-plans.ts';
 import type { LlmArena } from './llm-arena.ts';
+import {arenaLiveArmSchema} from './llm-arena-live.ts';
 
 interface Services {
-  arena?:Pick<LlmArena,'list'|'models'|'create'|'get'|'update'|'start'|'pause'|'evaluate'|'closePosition'|'archive'>;
+  arena?:Pick<LlmArena,'list'|'models'|'create'|'get'|'update'|'start'|'pause'|'evaluate'|'closePosition'|'archive'> & Partial<Pick<LlmArena,'capabilities'>>;
   scanners?:Pick<DiscoveryScanners,'get'>;
   scannerDetails?:Pick<ScannerDetails,'get'>;
   arbitrage?:Pick<ArbitragePlans,'prepare'|'execute'|'get'|'list'>;
@@ -289,11 +290,11 @@ export function createApp(services: Services) {
     finally {connecting.delete(venue);}
   });
   app.use('/api/llm-arena',operator,(_req,res,next)=>{if(!services.arena){res.status(503).json({error:'The paper LLM arena is not available on this server'});return;}next();});
-  app.get('/api/llm-arena',(_req,res)=>res.json({bots:services.arena!.list(),capabilities:{paper:true,live:false}}));
+  app.get('/api/llm-arena',(_req,res)=>res.json({bots:services.arena!.list(),...(()=>{const {accounts,...capabilities}=services.arena!.capabilities?.()??{paper:true,live:false,liveClose:false,accounts:[]};return {capabilities,accounts};})()}));
   app.get('/api/llm-arena/models',async(_req,res)=>res.json(await services.arena!.models()));
   app.post('/api/llm-arena',(req,res)=>res.status(201).json(services.arena!.create(req.body)));
   app.patch('/api/llm-arena/:id',(req,res)=>res.json(services.arena!.update(z.string().uuid().parse(req.params.id),req.body)));
-  app.post('/api/llm-arena/:id/start',async(req,res)=>{const {apiKey}=z.object({apiKey:z.string().min(1).max(4096)}).strict().parse(req.body);res.json(await services.arena!.start(z.string().uuid().parse(req.params.id),apiKey));});
+  app.post('/api/llm-arena/:id/start',async(req,res)=>{const {apiKey,liveArm}=z.object({apiKey:z.string().min(1).max(4096),liveArm:arenaLiveArmSchema.optional()}).strict().parse(req.body);res.json(await services.arena!.start(z.string().uuid().parse(req.params.id),apiKey,liveArm));});
   app.post('/api/llm-arena/:id/pause',(req,res)=>res.json(services.arena!.pause(z.string().uuid().parse(req.params.id))));
   app.post('/api/llm-arena/:id/evaluate',async(req,res)=>res.json(await services.arena!.evaluate(z.string().uuid().parse(req.params.id))));
   app.post('/api/llm-arena/:id/close-position',async(req,res)=>res.json(await services.arena!.closePosition(z.string().uuid().parse(req.params.id))));

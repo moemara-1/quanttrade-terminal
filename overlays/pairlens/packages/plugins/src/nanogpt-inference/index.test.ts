@@ -24,7 +24,7 @@ test('requests use the NanoGPT API host, configured model and key', async () => 
   globalThis.fetch = Object.assign(
     async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe(
-        'https://api.nano-gpt.com/api/v1/chat/completions',
+        'https://nano-gpt.com/api/v1/chat/completions',
       )
       expect(new Headers(init?.headers).get('Authorization')).toBe(
         'Bearer test-key',

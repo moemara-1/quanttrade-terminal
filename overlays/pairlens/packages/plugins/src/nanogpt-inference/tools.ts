@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { fanOutWebSearch, readSearchRequest } from '../lib/web-search'
 import type { WebSearchResult } from '@pairlens/shared/plugin-types'
 
-const BASE = 'https://api.nano-gpt.com'
+const BASE = 'https://nano-gpt.com'
 const modelSchema = z.object({
   id: z.string(),
   name: z.string().optional(),

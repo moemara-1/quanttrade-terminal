@@ -133,3 +133,11 @@ test('Hyperliquid all-DEX coverage includes builder native orders and preserves 
  }
  }finally{s.store.close();}
 });
+
+test('arena passive account errors reveal fixed actionable scope diagnostics without raw server bodies',async()=>{
+ const config={url:'http://localhost:8000',username:'fixture',password:'fixture',accountName:'desk'};
+ const unsupported=new HummingbotOperations(config,async()=>Response.json({detail:'Live bot available margin and equity are unverified for this Hyperliquid account mode'},{status:400}));
+ await assert.rejects(unsupported.perform('arena-account-state',{}),/Live bot account mode is unsupported/);
+ const privateBody=new HummingbotOperations(config,async()=>Response.json({detail:'secret-fixture-account-key'},{status:503}));
+ await assert.rejects(privateBody.perform('arena-account-state',{}),error=>error instanceof Error&&error.message==='Live bot account snapshot is unavailable (HTTP 503); no balance or position is assumed');
+});

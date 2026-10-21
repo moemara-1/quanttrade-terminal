@@ -8655,7 +8655,7 @@ index d295e08..8afa1df 100644
                  variant="ghost"
                  size="sm"
 diff --git a/apps/terminal/src/components/bots/bots-page.tsx b/apps/terminal/src/components/bots/bots-page.tsx
-index e94e412..b09d4d3 100644
+index e94e412..20ca599 100644
 --- a/apps/terminal/src/components/bots/bots-page.tsx
 +++ b/apps/terminal/src/components/bots/bots-page.tsx
 @@ -9,6 +9,7 @@ import { BotList } from './bot-list'
@@ -8666,7 +8666,18 @@ index e94e412..b09d4d3 100644
  
  import type { BotDefinition } from '@pairlens/bot-engine/types'
  import { PAGE_COLUMN_FLUSH, PAGE_GROUND } from '@/components/chrome/page-chrome'
-@@ -28,7 +29,62 @@ import { useIndicatorScriptsStore } from '@/stores/indicator-scripts-store'
+@@ -16,6 +17,10 @@ import { useSearchSelection } from '@/hooks/use-search-selection'
+ import { useBotRunsStore } from '@/stores/bot-runs-store'
+ import { useBotsStore } from '@/stores/bots-store'
+ import { useIndicatorScriptsStore } from '@/stores/indicator-scripts-store'
++import {
++  getTradingAgentDraft,
++  subscribeTradingAgentDraft,
++} from '@/lib/trading-agent-draft'
+ 
+ /**
+  * The bots surface, as master-detail: the deployments down the left, one bot's
+@@ -28,7 +33,71 @@ import { useIndicatorScriptsStore } from '@/stores/indicator-scripts-store'
   * Which bot that is lives in the URL (`?bot=<id>`), so the address always names
   * the deployment on screen.
   */
@@ -8677,7 +8688,16 @@ index e94e412..b09d4d3 100644
 +}
 +
 +export function BotsPage(props: BotsPageProps = {}) {
-+  const [tab, setTab] = useState<'strategy' | 'arena'>('strategy')
++  const [tab, setTab] = useState<'strategy' | 'arena'>(() =>
++    getTradingAgentDraft() ? 'arena' : 'strategy',
++  )
++  useEffect(
++    () =>
++      subscribeTradingAgentDraft(() => {
++        if (getTradingAgentDraft()) setTab('arena')
++      }),
++    [],
++  )
 +  const active = props.deployScriptId ? 'strategy' : tab
 +  return (
 +    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -8706,7 +8726,7 @@ index e94e412..b09d4d3 100644
 +            onClick={() => setTab(value)}
 +            className={`rounded-md px-3 py-2 text-xs ${active === value ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground'}`}
 +          >
-+            {value === 'strategy' ? 'Strategy bots' : 'LLM Arena'}
++            {value === 'strategy' ? 'Strategy bots' : 'LM Arena'}
 +          </button>
 +        ))}
 +      </div>
@@ -13527,7 +13547,7 @@ index e51eeb9..b6fe0ff 100644
  
    test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..1d71f81 100644
+index ce0d317..2aabc27 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -46,6 +46,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
@@ -13552,7 +13572,7 @@ index ce0d317..1d71f81 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,8 +81,23 @@ const WORKING_RULES = [
+@@ -73,10 +81,25 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -13576,8 +13596,11 @@ index ce0d317..1d71f81 100644
 +  'Orders are PREPARED, never executed by you. prepare_lighter_native_order or place_order returns an exact account/mode proposal the user confirms on a card, either one order or ALL explicitly listed finite workflow steps. Resolve mode from the requested or exact connected account; never silently switch live to paper. Standing consent never approves AI proposals.',
 +  'Never claim an order was placed, filled or cancelled without evidence from the user-confirmed execution result and exchange state.',
    'Every order is enforced against the user’s risk guardrails at the infrastructure level. You cannot bypass them and must not try.',
-   'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
+-  'Bots are always created in paper mode and switched off. Only the user arms a bot, from the bots page. Never imply you armed one.',
++  'For conversational LM Arena creation or edits, use prepare_trading_agent with the user strategy description to stage an UNSAVED editable proposal. Do not require a name or one coin: propose a name, single contract, exact watchlist, or bounded liquid-market universe on one venue; ranking may use volume, gainers, losers or movement. Technical and risk defaults are proposed settings for review, never already-approved user choices. Clarify missing venue/model/mode/live account; for scalpers distinguish candle timeframe from wake cadence and daily call/budget caps, never claim continuous or high-frequency execution. One owned position per agent at a time, potentially different markets over time. Never save, start, arm or evaluate through this tool. Human reviews, saves paused, then separately starts. No strategy or model guarantees profitability.',
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
+   'You never see API keys, wallet private keys or vault contents. If a task needs a credential the user has not connected, say what is missing and point at Accounts.',
+   'Never give financial advice and never guarantee an outcome. Analysis and mechanics, not recommendations to buy or sell.',
 @@ -94,7 +117,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
@@ -13784,15 +13807,28 @@ index bf4d768..2c08c5b 100644
 +  'Scripts are real Python, run locally in a Pyodide worker, exporting `meta = indicator(...)` or `strategy(...)` plus a `compute(ctx)`. Before writing or editing one, call get_sdk_reference for the topic you need (declarations, signals, context, library, examples, bots). Do not write a script from memory of another platform: the declarations are specific to QuantTrade and a wrong one fails at import.',
    'create_script and update_script validate and re-run the preview for you, and hand back the traceback when it fails. Fix your own tracebacks rather than handing a broken draft to the user.',
  ].join('\n')
+diff --git a/apps/terminal/src/lib/assistant-core/tool-labels.ts b/apps/terminal/src/lib/assistant-core/tool-labels.ts
+index 58b3a84..5a82326 100644
+--- a/apps/terminal/src/lib/assistant-core/tool-labels.ts
++++ b/apps/terminal/src/lib/assistant-core/tool-labels.ts
+@@ -54,6 +54,7 @@ const WORKSPACE_TOOL_LABELS = {
+ } as const satisfies ToolLabelMap
+ 
+ export const ASSISTANT_ALL_TOOL_LABELS: ToolLabelMap = {
++  prepare_trading_agent: ['propose', 'an editable trading agent draft'],
+   ...COPILOT_TOOL_LABELS,
+   ...ASSISTANT_TOOL_LABELS,
+   ...AUTOMATION_TOOL_LABELS,
 diff --git a/apps/terminal/src/lib/assistant-core/tools.ts b/apps/terminal/src/lib/assistant-core/tools.ts
-index 28659bf..96e55b4 100644
+index 28659bf..82815cc 100644
 --- a/apps/terminal/src/lib/assistant-core/tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/tools.ts
-@@ -18,11 +18,13 @@ import { buildDataTools } from './data-tools'
+@@ -18,11 +18,14 @@ import { buildDataTools } from './data-tools'
  import { buildNftTools } from './nft-tools'
  import { buildPredictionTools } from './prediction-tools'
  import { buildSurfaceTools } from './surface-tools'
 +import { buildScannerTools } from './scanner-tools'
++import { buildTradingAgentTools } from './trading-agent-tools'
  import { toAutomationDeps, toCopilotDeps, toScriptDeps } from './tool-deps'
  import type { AssistantDeps } from './tool-deps'
  import type { ToolSet } from 'ai'
@@ -13802,11 +13838,12 @@ index 28659bf..96e55b4 100644
  import { buildContextTools } from '@/lib/copilot/context-tools'
  import { buildPortfolioTools } from '@/lib/copilot/portfolio-tools'
  import { buildChartTools } from '@/lib/copilot/chart-tools'
-@@ -68,7 +70,9 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
+@@ -68,7 +71,10 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
      buildNotificationTools(automationDeps)
  
    return {
 +    ...buildScannerTools(),
++    ...buildTradingAgentTools({navigate:deps.navigate}),
      ...buildMarketTools(copilotDeps),
 +    ...buildProviderTools(copilotDeps),
      ...buildContextTools(copilotDeps),
@@ -32734,30 +32771,71 @@ index 44a0539..2c157e5 100644
        if (SANCTIONED_IMPORTERS.has(rel)) continue
        const source = readFileSync(file, 'utf8')
        MOBILE_IMPORT.lastIndex = 0
+diff --git a/apps/terminal/src/mobile/mobile-focus-context.tsx b/apps/terminal/src/mobile/mobile-focus-context.tsx
+index 0aee2ee..06912c0 100644
+--- a/apps/terminal/src/mobile/mobile-focus-context.tsx
++++ b/apps/terminal/src/mobile/mobile-focus-context.tsx
+@@ -55,6 +55,10 @@ import type { ReactNode } from 'react'
+ import type { SettingsNavId } from '@/components/user-settings-dialog'
+ import { useChartActions, useChartConfig } from '@/lib/chart-terminal-context'
+ import { track } from '@/lib/analytics-events'
++import {
++  getTradingAgentDraft,
++  subscribeTradingAgentDraft,
++} from '@/lib/trading-agent-draft'
+ 
+ export type MobileTab = 'watchlist' | 'trade' | 'chart' | 'copilot' | 'discover'
+ 
+@@ -471,6 +475,14 @@ export function MobileFocusProvider({
+     [commitShell],
+   )
+ 
++  useEffect(
++    () =>
++      subscribeTradingAgentDraft(() => {
++        if (getTradingAgentDraft()) selectTab('discover')
++      }),
++    [selectTab],
++  )
++
+   // Hardware/browser back. `router.history` fires exactly one notification per
+   // popstate, so the pending count is a count of events, not of entries.
+   useEffect(() => {
 diff --git a/apps/terminal/src/mobile/panels/discover-panel.tsx b/apps/terminal/src/mobile/panels/discover-panel.tsx
-index b2a9302..d3e9010 100644
+index b2a9302..a33826e 100644
 --- a/apps/terminal/src/mobile/panels/discover-panel.tsx
 +++ b/apps/terminal/src/mobile/panels/discover-panel.tsx
-@@ -22,8 +22,8 @@
+@@ -22,8 +22,15 @@
   * `logoUrl` that is often missing and no trend line at all — rows that read as
   * unfinished next to the rest of the terminal.
   */
 -import { memo, useCallback, useMemo } from 'react'
 -import { X } from 'lucide-react'
-+import { Suspense, memo, useCallback, useMemo, useState } from 'react'
-+import { ArrowLeft, ArrowRight, Radar, X } from 'lucide-react'
++import {
++  Suspense,
++  memo,
++  useCallback,
++  useEffect,
++  useMemo,
++  useState,
++} from 'react'
++import { ArrowLeft, ArrowRight, Bot, Radar, X } from 'lucide-react'
  import { useTranslation } from 'react-i18next'
  
  import { useMobileActions, useMobileFocus } from '../mobile-focus-context'
-@@ -39,6 +39,7 @@ import { PredictionMarketsSection } from './prediction-markets-section'
+@@ -39,6 +46,11 @@ import { PredictionMarketsSection } from './prediction-markets-section'
  import type { NewsArticle } from '@pairlens/shared/instrument-types'
  import type { PairEntry } from '@/components/pair-picker/pair-picker-data'
  import { haptic } from '@/lib/haptics'
 +import { lazyChunk } from '@/lib/lazy-chunk'
++import {
++  getTradingAgentDraft,
++  subscribeTradingAgentDraft,
++} from '@/lib/trading-agent-draft'
  import { useTopCoinsSnapshot } from '@/hooks/use-top-coins-snapshot'
  import { useMarketInstruments } from '@/hooks/use-market-instruments'
  import { useBulkTickerQuotes } from '@/hooks/use-bulk-ticker-quotes'
-@@ -53,6 +54,12 @@ import {
+@@ -53,6 +65,17 @@ import {
    formatRelativeTime,
  } from '@/components/news/news-shared'
  
@@ -32766,46 +32844,62 @@ index b2a9302..d3e9010 100644
 +    default: module.ScannersPane,
 +  })),
 +)
++const ArenaPanel = lazyChunk(() =>
++  import('@/components/bots/arena-panel').then((module) => ({
++    default: module.ArenaPanel,
++  })),
++)
 +
  /** Design shows five rows; the rest lives behind "All pairs". */
  const FEATURED_COUNT = 5
  /** Enough to fill the sheet twice over without rendering a 50-row feed. */
-@@ -60,6 +67,7 @@ const NEWS_ROW_COUNT = 12
+@@ -60,6 +83,16 @@ const NEWS_ROW_COUNT = 12
  
  export default memo(function MobileDiscoverPanel() {
    const { t } = useTranslation()
-+  const [showScanners, setShowScanners] = useState(false)
++  const [destination, setDestination] = useState<'scanners' | 'arena' | null>(
++    () => (getTradingAgentDraft() ? 'arena' : null),
++  )
++  useEffect(
++    () =>
++      subscribeTradingAgentDraft(() => {
++        if (getTradingAgentDraft()) setDestination('arena')
++      }),
++    [],
++  )
    const { dismissPanel, pushOverlay } = useMobileActions()
  
    const topCoins = useTopCoinsSnapshot()
-@@ -93,6 +101,36 @@ export default memo(function MobileDiscoverPanel() {
+@@ -93,6 +126,38 @@ export default memo(function MobileDiscoverPanel() {
      [pushOverlay],
    )
  
-+  if (showScanners) {
++  if (destination) {
 +    return (
 +      <div className="flex min-h-0 flex-col pb-2">
 +        <button
 +          className="pl-hit-44 pl-press-soft flex items-center gap-2 px-4 py-2 text-sm"
-+          onClick={() => setShowScanners(false)}
++          onClick={() => setDestination(null)}
 +          type="button"
 +          {...PRESS}
 +        >
 +          <ArrowLeft className="size-4" />
 +          Back to Discover
 +        </button>
-+        <div className="h-[65dvh] min-h-[320px]">
++        <div className="flex h-[65dvh] min-h-[320px] min-w-0 flex-col overflow-hidden">
 +          <Suspense
 +            fallback={
 +              <p
 +                role="status"
 +                className="px-4 py-6 text-sm text-muted-foreground"
 +              >
-+                Loading scanners...
++                {destination === 'arena'
++                  ? 'Loading LM Arena…'
++                  : 'Loading scanners…'}
 +              </p>
 +            }
 +          >
-+            <ScannersPane />
++            {destination === 'arena' ? <ArenaPanel /> : <ScannersPane />}
 +          </Suspense>
 +        </div>
 +      </div>
@@ -32815,13 +32909,13 @@ index b2a9302..d3e9010 100644
    // `pb-2` below is air, not clearance. The tab bar is drawn over the sheet
    // (z-50 against z-40) and used to hide the last ~54px of this list — the
    // final news row showed only its timestamp. That reserve now lives in
-@@ -116,6 +154,24 @@ export default memo(function MobileDiscoverPanel() {
+@@ -116,6 +181,40 @@ export default memo(function MobileDiscoverPanel() {
          </button>
        </header>
  
 +      <button
 +        className="pl-hit-44 pl-press-soft mx-4 mb-3 flex items-center gap-3 rounded-lg border border-border px-3 py-3 text-left"
-+        onClick={() => setShowScanners(true)}
++        onClick={() => setDestination('scanners')}
 +        type="button"
 +        {...PRESS}
 +      >
@@ -32832,6 +32926,22 @@ index b2a9302..d3e9010 100644
 +          </span>
 +          <span className="block text-xs text-muted-foreground">
 +            Funding, price gaps, strength and options
++          </span>
++        </span>
++        <ArrowRight className="size-4 shrink-0" />
++      </button>
++
++      <button
++        className="pl-hit-44 pl-press-soft mx-4 mb-3 flex items-center gap-3 rounded-lg border border-border px-3 py-3 text-left"
++        onClick={() => setDestination('arena')}
++        type="button"
++        {...PRESS}
++      >
++        <Bot className="size-4 shrink-0 text-muted-foreground" />
++        <span className="min-w-0 flex-1">
++          <span className="block text-sm font-semibold">LM Arena</span>
++          <span className="block text-xs text-muted-foreground">
++            Describe an agent · review rules · Paper or Live
 +          </span>
 +        </span>
 +        <ArrowRight className="size-4 shrink-0" />

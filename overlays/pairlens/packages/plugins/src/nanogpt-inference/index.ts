@@ -15,7 +15,7 @@ import type {
 // NanoGPT BYOK provider: direct browser requests and the host-run agentic loop.
 // Model access and tool support depend on the selected NanoGPT model.
 
-const NANOGPT_BASE_URL = 'https://api.nano-gpt.com/api/v1'
+const NANOGPT_BASE_URL = 'https://nano-gpt.com/api/v1'
 const DEFAULT_MODEL = 'minimax/minimax-m2.7'
 
 export const nanogptInferenceManifest: PluginManifest = {

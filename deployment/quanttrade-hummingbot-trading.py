@@ -109,6 +109,13 @@ class BuilderCollateralRequest(BaseModel):
     trading_pair: str = Field(min_length=3, max_length=100, pattern=r'^[A-Za-z0-9_:./]+-USD$')
 
 
+class ArenaAccountRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    account_name: Literal['desk'] = 'desk'
+    connector_name: Literal['hyperliquid_perpetual', 'lighter_perpetual']
+    trading_pair: str = Field(min_length=3, max_length=100, pattern=r'^[A-Za-z0-9_:./]+-[A-Za-z0-9]+$')
+
+
 class BracketLeg(BaseModel):
     model_config = ConfigDict(extra='forbid')
     trigger_price: str = Field(max_length=80, pattern=r'^[0-9]+(?:\.[0-9]+)?$')
@@ -352,6 +359,102 @@ async def builder_available_collateral(connector, dto):
     return {'verified': True, 'account_name': dto.account_name, 'trading_pair': dto.trading_pair,
             'coin': metadata['coin'], 'dex': metadata['dex'], 'collateral_token': 0,
             'currency': 'USDC', 'available': format(available, 'f') if available else '0', 'account_mode': mode, 'scope': 'dex'}
+
+
+async def arena_account_state(connector, dto):
+    """Exact native account evidence for explicitly armed agents, never defaults."""
+    def number(value, signed=False):
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            raise ActionRejected('Live bot account numeric evidence is unverified')
+        try:
+            n = Decimal(str(value))
+            if not n.is_finite() or not signed and n < 0:
+                raise ValueError('Invalid number')
+            return format(n, 'f') if n else '0'
+        except (ValueError, InvalidOperation):
+            raise ActionRejected('Live bot account numeric evidence is unverified') from None
+    hl = dto.connector_name == 'hyperliquid_perpetual'
+    positions = []
+    if hl:
+        coin = await connector.exchange_symbol_associated_to_pair(trading_pair=dto.trading_pair)
+        dex = coin.split(':', 1)[0] if ':' in coin else ''
+        if dex:
+            await hl_builder_metadata(connector, dto.trading_pair)
+        owner = connector._auth._api_address
+        async def info(data):
+            return await connector._api_post(path_url='/info', data={**data, 'user': owner}, is_auth_required=False)
+        mode = await info({'type': 'userAbstraction'})
+        if mode != 'disabled':
+            raise ActionRejected('Live bot available margin and equity are unverified for this Hyperliquid account mode')
+        state, raw_orders = await asyncio.gather(info({'type': 'clearinghouseState', 'dex': dex}), info({'type': 'frontendOpenOrders', 'dex': dex}))
+        if not isinstance(state, dict) or not isinstance(state.get('marginSummary'), dict) or not isinstance(state.get('assetPositions'), list):
+            raise ActionRejected('Live bot account equity or position coverage is unverified')
+        equity, available = number(state['marginSummary'].get('accountValue')), number(state.get('withdrawable'))
+        for raw in state['assetPositions']:
+            p = raw.get('position') if isinstance(raw, dict) else None
+            if not isinstance(p, dict) or not isinstance(p.get('coin'), str):
+                raise ActionRejected('Live bot position identity is unverified')
+            size = Decimal(number(p.get('szi'), True))
+            if size:
+                positions.append({'symbol': p['coin'] + '-USDC', 'side': 'long' if size > 0 else 'short', 'size': str(abs(size)), 'entry_price': number(p.get('entryPx'))})
+        if await info({'type': 'userAbstraction'}) != mode:
+            raise ActionRejected('Live bot account mode changed during its read')
+    else:
+        await connector._ensure_account_ready()
+        result = await connector._api_get(path_url='/api/v1/account', params={'by': 'index', 'value': connector._account_index}, is_auth_required=True)
+        if not isinstance(result, dict) or result.get('code') != 200 or not isinstance(result.get('accounts'), list) or len(result['accounts']) != 1:
+            raise ActionRejected('Live bot account scope is unverified')
+        state = result['accounts'][0]
+        if not isinstance(state, dict) or not isinstance(state.get('assets'), list) or not isinstance(state.get('positions'), list):
+            raise ActionRejected('Live bot account equity or positions are unverified')
+        usdc = [a for a in state['assets'] if isinstance(a, dict) and a.get('symbol') == 'USDC']
+        if len(usdc) != 1:
+            raise ActionRejected('Live bot USDC collateral is unverified')
+        equity, available = number(usdc[0].get('margin_balance')), number(state.get('available_balance'))
+        for p in state['positions']:
+            size = Decimal(number(p.get('position')))
+            if size:
+                market = connector.market_info_for_market_id(p.get('market_id'))
+                if p.get('sign') not in (-1, 1) or market.market_type != 'perp':
+                    raise ActionRejected('Live bot position identity is unverified')
+                positions.append({'symbol': market.trading_pair, 'side': 'long' if p['sign'] == 1 else 'short', 'size': str(size), 'entry_price': number(p.get('avg_entry_price'))})
+        active = await connector._api_get(path_url='/api/v1/accountActiveOrders', params={'account_index': connector._account_index, 'market_type': 'perp'}, is_auth_required=True)
+        if not isinstance(active, dict) or active.get('code') != 200 or active.get('next_cursor'):
+            raise ActionRejected('Live bot active order coverage is unverified')
+        raw_orders = active.get('orders')
+    coverage = await open_orders(connector, dto.connector_name)
+    if not coverage.get('complete') or not isinstance(raw_orders, list):
+        raise ActionRejected('Live bot exchange order coverage is incomplete')
+    orders = []
+    for row in raw_orders:
+        if not isinstance(row, dict):
+            raise ActionRejected('Live bot native order identity is unverified')
+        if hl:
+            order_coin = row.get('coin')
+            if not isinstance(order_coin, str) or row.get('side') not in ('A', 'B') or not isinstance(row.get('reduceOnly'), bool):
+                raise ActionRejected('Live bot native order identity is unverified')
+            oid, client = row.get('oid'), row.get('cloid')
+            symbol, side, reduce_only = order_coin + '-USDC', 'buy' if row['side'] == 'B' else 'sell', row['reduceOnly']
+            trigger = row.get('triggerPx')
+            size = number(row['sz']) if row.get('sz') is not None else None
+            full_position = False
+        else:
+            market = connector.market_info_for_market_id(row.get('market_index', row.get('market_id')))
+            oid, client = lighter_order_id(row), row.get('client_order_index')
+            if not isinstance(row.get('is_ask'), bool) or not isinstance(row.get('reduce_only'), bool):
+                raise ActionRejected('Live bot native order side is unverified')
+            symbol, side, reduce_only = market.trading_pair, 'sell' if row['is_ask'] else 'buy', row['reduce_only']
+            trigger = row.get('trigger_price')
+            size = number(row['remaining_base_amount']) if row.get('remaining_base_amount') is not None else None
+            parent = row.get('parent_order_index', row.get('parent_order_id'))
+            full_position = (reduce_only and size is not None and Decimal(size) == 0 and row.get('initial_base_amount') is not None
+                and Decimal(number(row['initial_base_amount'])) == 0
+                and row.get('type') in ('stop-loss', 'stop-loss-limit', 'take-profit', 'take-profit-limit')
+                and not isinstance(parent, bool) and str(parent).isdigit() and int(parent) > 0)
+        if isinstance(oid, bool) or not str(oid).isdigit() or int(oid) <= 0:
+            raise ActionRejected('Live bot native order ID is unverified')
+        orders.append({'symbol': symbol, 'order_id': str(oid), 'client_order_id': str(client) if client is not None else None, 'reduce_only': reduce_only, 'side': side, 'size': size, 'full_position': full_position, 'trigger_price': number(trigger) if trigger is not None and Decimal(number(trigger)) > 0 else None})
+    return {'account_name': dto.account_name, 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair, 'complete': True, 'equity': equity, 'available_margin': available, 'positions': positions, 'orders': orders}
 
 
 async def hl_asset(connector, pair):
@@ -1160,6 +1263,17 @@ async def builder_available_collateral_route(dto: BuilderCollateralRequest, requ
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except Exception:
         raise HTTPException(status_code=503, detail='Builder available collateral is unverified; no zero balance is assumed') from None
+
+
+@router.post('/arena-account-state')
+async def arena_account_state_route(dto: ArenaAccountRequest, request: Request):
+    try:
+        connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
+        return await arena_account_state(connector, dto)
+    except ActionRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='Live bot account snapshot is unverified') from None
 
 
 def install(app, auth_user):

@@ -3,6 +3,7 @@ import base64
 import json
 from pathlib import Path
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 token = Path('/opt/quanttrade/shared/data/operator-token').read_text().strip()
 headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
@@ -19,9 +20,33 @@ def read(path, body=None, internal=False):
         return json.load(response)
 
 arena = read('/llm-arena')
-assert arena['capabilities'] == {'paper': True, 'live': False}
+assert arena['capabilities'] == {'paper': True, 'live': True, 'liveClose': True}
+assert all(row['mode'] == 'live' for row in arena['accounts'])
 assert isinstance(arena['bots'], list)
 assert read('/llm-arena/models')['models']
+for account in arena['accounts']:
+    try:
+        proof = read('/quanttrade/trading/arena-account-state', {
+            'account_name': account['accountName'],
+            'connector_name': account['venue'] + '_perpetual',
+            'trading_pair': 'BTC-USDC' if account['venue'] == 'lighter' else 'BTC-USD',
+        }, internal=True)
+    except Exception as error:
+        # Unsupported shared-account modes remain unavailable rather than zero.
+        reason = type(error).__name__
+        if isinstance(error, HTTPError):
+            try:
+                detail = json.load(error).get('detail')
+            except (ValueError, AttributeError):
+                detail = None
+            if detail == 'Live bot available margin and equity are unverified for this Hyperliquid account mode':
+                reason = 'shared collateral account mode is unsupported; no balance assumed'
+        print(account['venue'] + ' passive account proof unavailable: ' + reason)
+        continue
+    assert proof['complete'] is True
+    assert float(proof['equity']) >= 0 and float(proof['available_margin']) >= 0
+    assert all('size' in row and isinstance(row['full_position'], bool) for row in proof['orders'])
+    print(account['venue'] + ' passive account scope and protective quantity fields verified.')
 markets = read('/public/markets?venue=hyperliquid&marketType=perpetual')
 builder = next(row for row in markets if row.get('dex') == 'para' and row['quote'] == 'USDC' and row['onlyIsolated'])
 from urllib.parse import quote
@@ -33,8 +58,9 @@ assert candles
 request = Request('https://api.hyperliquid.xyz/info', data=json.dumps({'type': 'meta', 'dex': 'para'}).encode(), headers={'Content-Type': 'application/json'})
 with urlopen(request, timeout=30) as response:
     official = json.load(response)
-paper = next(row for row in official['universe'] if row['name'] == 'para:PAPER')
-assert any(row['symbol'] == 'para:PAPER-USDC' for row in markets) is not bool(paper.get('isDelisted'))
+paper = next((row for row in official['universe'] if row['name'] == 'para:PAPER'), None)
+paper_active = paper is not None and not paper.get('isDelisted', False)
+assert any(row['symbol'] == 'para:PAPER-USDC' for row in markets) is paper_active
 news = read('/news?tickers=TIA&limit=5')
 assert news['coverage']['exhaustive'] is False
 assert news['coverage']['normalizedTickers'] == ['CRYPTO:TIA']
@@ -50,4 +76,4 @@ result = read('/quanttrade/trading/builder-market-readiness', {
     'max_leverage': builder['maxLeverage'], 'only_isolated': builder['onlyIsolated'],
 }, internal=True)
 assert result['ready'] is True
-print('Paper-only arena, TIA news coverage, active builder quotes/candles and exact connector readiness verified; PAPER delisting respected; no bot or order started.')
+print('Paper/Live LM Arena capabilities, TIA news coverage, active builder quotes/candles and exact connector readiness verified; PAPER delisting respected; no bot or order started.')

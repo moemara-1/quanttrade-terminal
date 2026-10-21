@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { fetchNanogptOnServer } from './server-fetch'
 
 const originalFetch = globalThis.fetch
-const url = 'https://api.nano-gpt.com/api/v1/chat/completions'
+const url = 'https://nano-gpt.com/api/v1/chat/completions'
 const id = '5a0200dd-7758-47b8-9444-857f6ee159e1'
 const init = {
   method: 'POST',
@@ -11,6 +11,19 @@ const init = {
 }
 afterEach(() => {
   globalThis.fetch = originalFetch
+})
+
+test('cached clients can resume through the legacy URL without forwarding credentials to it', async () => {
+  const paths: Array<string> = []
+  install(async (path, options) => {
+    paths.push(path)
+    return options?.method === 'POST'
+      ? Response.json({ id }, { status: 201 })
+      : new Response('OK')
+  })
+  const response = await fetchNanogptOnServer('https://api.nano-gpt.com/api/v1/chat/completions', init)
+  expect(await response.text()).toBe('OK')
+  expect(paths.every((path) => path.startsWith('/_quanttrade/api/ai/nanogpt/jobs'))).toBe(true)
 })
 
 test('recovers proxy failures with identical creation body and same response offset', async () => {
@@ -44,6 +57,31 @@ test('recovers proxy failures with identical creation body and same response off
   expect(response.headers.get('x-quanttrade-ai-upstream')).toBe('1')
 })
 
+test('recovers a brief bridge restart beyond the original three attempts without a new request body', async () => {
+  const bodies: Array<unknown> = []
+  install(async (_path, options) => {
+    if (options?.method !== 'POST') return new Response('OK')
+    bodies.push(options.body)
+    return bodies.length <= 4 ? new Response(null, { status: 503 }) : Response.json({ id }, { status: 201 })
+  })
+  expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('OK')
+  expect(bodies).toHaveLength(5)
+  expect(new Set(bodies).size).toBe(1)
+})
+
+test('healthy pending acknowledgments reset the transient response failure budget', async () => {
+  let gets = 0
+  let posts = 0
+  install(async (_path, options) => {
+    if (options?.method === 'POST') { posts++; return Response.json({ id }, { status: 201 }) }
+    gets++
+    return gets <= 18 ? new Response(null, { status: gets % 2 ? 503 : 202 }) : new Response('OK')
+  })
+  expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('OK')
+  expect(posts).toBe(1)
+  expect(gets).toBe(19)
+}, 15000)
+
 test.each([502, 503, 504])(
   'bounds proxy response recovery for %s',
   async (status) => {
@@ -57,8 +95,9 @@ test.each([502, 503, 504])(
       name: 'NanoGPTServerError',
       statusCode: status,
     })
-    expect(reads).toBe(3)
+    expect(reads).toBe(8)
   },
+  12000,
 )
 
 test('bounds proxy creation recovery without changing its idempotency body', async () => {
@@ -70,9 +109,9 @@ test('bounds proxy creation recovery without changing its idempotency body', asy
   await expect(fetchNanogptOnServer(url, init)).rejects.toMatchObject({
     statusCode: 502,
   })
-  expect(bodies).toHaveLength(3)
+  expect(bodies).toHaveLength(8)
   expect(new Set(bodies).size).toBe(1)
-})
+}, 12000)
 
 test('aborting proxy backoff prevents any retry', async () => {
   const controller = new AbortController()
@@ -219,8 +258,8 @@ test('bounds startup network failures and sanitizes error', async () => {
   await expect(fetchNanogptOnServer(url, init)).rejects.toThrow(
     'NanoGPT server connection failed',
   )
-  expect(posts).toBe(3)
-})
+  expect(posts).toBe(8)
+}, 12000)
 
 test('rejects other targets and nonstream payload before fetch', async () => {
   install(async () => {
@@ -332,8 +371,8 @@ test('repeated stream failures are bounded without leaking provider errors', asy
     'NanoGPT server connection failed',
   )
   expect(posts).toBe(1)
-  expect(gets).toBe(3)
-})
+  expect(gets).toBe(8)
+}, 12000)
 
 test('aborting pending job polling deletes job and prevents another read', async () => {
   const controller = new AbortController()

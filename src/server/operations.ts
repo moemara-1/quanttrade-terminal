@@ -28,8 +28,15 @@ export class HummingbotOperations implements OperationClient {
     if (!['127.0.0.1','localhost','[::1]'].includes(url.hostname)||url.username||url.password||!['http:','https:'].includes(url.protocol)) throw new Error('Hummingbot must be a local HTTP(S) service');
   }
   async perform(action:string,payload:Record<string,unknown>):Promise<unknown> {
-    if (!['leverage','margin','cancel-order','amend-order','snapshot','open-orders','native-orders','hyperliquid-twap','hyperliquid-twap-cancel','hyperliquid-twap-evidence'].includes(action)) throw new Error('Unsupported exchange operation');
+    if (!['leverage','margin','cancel-order','amend-order','snapshot','open-orders','native-orders','hyperliquid-twap','hyperliquid-twap-cancel','hyperliquid-twap-evidence','arena-account-state'].includes(action)) throw new Error('Unsupported exchange operation');
     const response=await this.request(new URL('/quanttrade/trading/'+(action==='native-orders'?'lighter-native-orders':action),this.config.url),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Basic '+Buffer.from(this.config.username+':'+this.config.password).toString('base64')},body:JSON.stringify(payload),signal:AbortSignal.timeout(30_000),redirect:'error'});
+    if (!response.ok&&action==='arena-account-state') {
+      const body=await response.json().catch(()=>null);
+      const detail=z.object({detail:z.string().max(300)}).safeParse(body);
+      if(detail.success&&detail.data.detail==='Live bot available margin and equity are unverified for this Hyperliquid account mode')throw Error('Live bot account mode is unsupported; shared collateral margin and equity remain unverified');
+      if(detail.success&&detail.data.detail==='Live bot exchange order coverage is incomplete')throw Error('Live bot exchange order coverage is incomplete; restore complete reads before arming');
+      throw Error(`Live bot account snapshot is unavailable (HTTP ${response.status}); no balance or position is assumed`);
+    }
     if (!response.ok) throw new Error(action==='open-orders'?`Exchange open-order read failed (HTTP ${response.status}); current orders are unavailable, not empty`:'Exchange operation failed; inspect account state before retrying');
     return response.json();
   }

@@ -53,7 +53,7 @@ test('web research reuses same key and returns URL/title/excerpt contract', asyn
     },
     200,
     (url, init) => {
-      expect(url).toBe('https://api.nano-gpt.com/api/v1/data/web/search')
+      expect(url).toBe('https://nano-gpt.com/api/v1/data/web/search')
       expect(new Headers(init?.headers).get('Authorization')).toBe(
         'Bearer shared-key',
       )
@@ -91,7 +91,7 @@ test('balance uses documented POST and excludes deposit address and unknown fiel
     },
     200,
     (url, init) => {
-      expect(url).toBe('https://api.nano-gpt.com/api/check-balance')
+      expect(url).toBe('https://nano-gpt.com/api/check-balance')
       expect(init?.method).toBe('POST')
     },
   )

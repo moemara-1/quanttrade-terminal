@@ -11,6 +11,12 @@ const input=()=>({requestId:randomUUID(),atomic:false,apiKey:'test-secret',reque
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const completeStep='data: {"choices":[{"index":0,"delta":{"content":"Ready"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
 
+test('inference uses the documented NanoGPT chat hostname without following redirects',async()=>{
+ let address='',redirect:RequestRedirect|undefined;
+ const jobs=new NanoGptJobs(async(url,options)=>{address=url;redirect=options.redirect;return new Response(completeStep,{headers:{'Content-Type':'text/event-stream'}});});
+ try{jobs.start('owner',input());await tick();assert.equal(address,'https://nano-gpt.com/api/v1/chat/completions');assert.equal(redirect,'error');}finally{jobs.close();}
+});
+
 test('atomic inference withholds incomplete tool output and recovers one interrupted step',async()=>{
  let calls=0;let first!:ReadableStreamDefaultController<Uint8Array>;let second!:ReadableStreamDefaultController<Uint8Array>;
  const jobs=new NanoGptJobs(async()=>{calls++;return new Response(new ReadableStream({start(controller){if(calls===1)first=controller;else second=controller;}}),{headers:{'Content-Type':'text/event-stream'}});});
@@ -83,7 +89,7 @@ test('a waiting live reader receives every provider byte exactly once',async()=>
 });
 test('retains exact bytes across disconnected readers and never repeats an upstream request',async()=>{
  let calls=0;let source!:ReadableStreamDefaultController<Uint8Array>;
- const jobs=new NanoGptJobs(async(url,options)=>{calls++;assert.equal(String(url),'https://api.nano-gpt.com/api/v1/chat/completions');assert.equal(new Headers(options?.headers).get('Authorization'),'Bearer test-secret');return new Response(new ReadableStream({start(controller){source=controller;}}),{headers:{'Content-Type':'text/event-stream','X-Secret':'hidden'}});});
+ const jobs=new NanoGptJobs(async(url,options)=>{calls++;assert.equal(String(url),'https://nano-gpt.com/api/v1/chat/completions');assert.equal(new Headers(options?.headers).get('Authorization'),'Bearer test-secret');return new Response(new ReadableStream({start(controller){source=controller;}}),{headers:{'Content-Type':'text/event-stream','X-Secret':'hidden'}});});
  try{const body=input();const id=jobs.start('owner',body);assert.equal(jobs.start('owner',body),id);await tick();source.enqueue(new Uint8Array([1,2,3]));await tick();const first=jobs.read('owner',id,0)!;assert.equal(first.headers.get('X-Secret'),null);const reader=first.body!.getReader();assert.deepEqual((await reader.read()).value,new Uint8Array([1,2,3]));await reader.cancel();source.enqueue(new Uint8Array([4,5]));source.close();await tick();assert.deepEqual(new Uint8Array(await jobs.read('owner',id,3)!.arrayBuffer()),new Uint8Array([4,5]));assert.equal(calls,1);assert.throws(()=>jobs.read('other',id,0));assert.throws(()=>jobs.start('owner',{...body,apiKey:'changed'}));}finally{jobs.close();}
 });
 test('pending, cancellation, invalid offsets, upstream failure and limits are safe',async()=>{

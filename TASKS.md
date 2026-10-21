@@ -328,7 +328,7 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Exact builder catalogs/quotes/research, collateral-aware symbols, isolated-only controls and passive native execution readiness implemented. Non-USDC execution and unverified shared-mode builder TWAP collateral remain explicitly blocked.
 - [completed] User chose paper first, configurable credit/loss rules, then future autonomous live on separate user-selected wallets. Current runtime is paper-only, scheduled with free risk checks and memory-only24h key lease.
 - [completed] Paper runtime, budgets, independent portfolios, management/arena UI and21 lifecycle/accounting regressions implemented; no live execution dependency.
-- [in_progress] Hosted paper hold evaluation passed with one call/about$0.0014 actual AI usage; paused/archived test bot, key cleared. Corrected real candle seconds-vs-milliseconds discrepancy with red/green realistic fixtures. Desktop UI verified; final mobile Discover entry build/deploy/QA and authorized commit/push remain.
+- [completed] Hosted paper hold evaluation passed with one call/about$0.0014 actual AI usage; paused/archived test bot, key cleared. Corrected real candle seconds-vs-milliseconds discrepancy with red/green realistic fixtures. Original paper release verified; subsequently expanded under LM Arena strategy work below.
 
 ## Celestia news coverage
 - [completed] Fixed bare TIA/full-name/native-pair normalization and Celestia aliases; boundary checks avoid TIAA false matches. Feed source availability and publication window are explicit; zero configured RSS matches never establish no catalyst. Actual assistant returns coverage/unknown catalyst correctly. No invented cause for the historical price spike.
@@ -336,6 +336,19 @@ Hosted release verification passed: all eight private Hummingbot extension route
 ## Trading Agents live modes and critical relay follow-up
 - [completed] Isolated inference20-5 and validated complete JSON transport20-6 deployed.32 focused/367 backend tests, staged TypeScript,123 Python tests and real SDK compatibility pass. MiMo SSE breaks72–80s and JSON stalls90s; authorized alternate MiniMax M2.7 activated through Intelligence settings, existing key/server-backed mode retained. Four real scanner/detail tools plus report complete without retry; model steps19.5/16.4/39.6s. Bridge/exchange services unchanged; no financial actions. Provider uptime/latency remain external constraints.
 - [pending] Plugins-store configuration uses App Server defaults rather than the local ledger. Intelligence provider wizard reads the real saved configuration correctly. Verify stopped/read-only tool queue behavior before claiming all assistant lifecycle issues resolved.
-- [pending] Add genuine Paper/Live agent mode, explicit account/revision binding and deterministic execution limits; paper QA only.
-- [pending] Add conversational paused-agent drafts, compact Trading Agents UI and meaningful error states.
-- [pending] Verify suites/types/build, hosted/browser behavior, final commit/push; no live financial QA actions.
+- [completed] Add genuine Paper/Live agent mode, explicit account/revision binding and deterministic execution limits; passive account proof and mock Live execution QA only.
+- [completed] Add conversational paused-agent drafts, compact LM Arena UI and meaningful error states. Actual assistant draft and mobile paused save/edit verified; no Live arming.
+- [completed] Verify suites/types/build and hosted/browser behavior; no live financial QA actions. Final mobile Manage fix and authorized Git delivery tracked below.
+
+## LM Arena strategy descriptions and market universes
+- [completed] Define backward-compatible strategy/universe schema and regressions: single, watchlist or liquid venue catalog; bounded shortlist; exact selected instrument and one owned position per agent.
+- [completed] Implement multi-market candidate reads, timeframe/cadence, deterministic eligibility and selected-position bookkeeping without widening execution authority.
+- [completed] Native protected entry, owned close, fresh receipt resume/flat cleanup, account-start serialization, midnight loss baseline and full-size native protection checks implemented; mock execution only.
+- [completed] Description-first LM Arena UI, editable conversational drafts, Paper/Live and native universe controls implemented. Actual assistant draft, paused save/edit, Live review without arming, desktop and390px mobile form/management controls verified.
+- [completed] 388 backend,127 Python and4,116 frontend tests, strict types/focused lint and11-task production build pass. Hosted releases20261021-1/2 pass public/session/account/background-AI checks. QA agent archived; no Live bot or order started. Verified changes ready for authorized commit/push.
+
+## Critical NanoGPT hostname routing
+- [completed] Reproduced both MiniMax variants returning 503 after ~38s. Unauthenticated Hetzner POST to api.nano-gpt.com timed out after15s; documented nano-gpt.com endpoint returned401 in119ms. No credentials or paid requests used in the routing probe.
+- [completed] Move worker, Arena, browser inference, catalog and research requests to the documented apex host; preserve exact legacy URL compatibility for cached server-backed clients. Host regressions reproduced before changes.
+- [completed] 388 backend and 4,116 frontend tests, strict types, focused lint and 11-task production build pass. Deployed 20261021-1 after checking no retained assistant jobs. Actual MiniMax M2.7 scanner call and follow-up analysis succeed: first model step 4.2s, HTTP200; no orders prepared or sent. Original model restored from temporary Turbo test.
+- [completed] Final LM Arena mobile QA found clipped inline Manage actions; replaced with existing portal menu and a reachable scrollable detail region. Final4,116 frontend tests/types/lint/build pass. Deployed frontend-only20261021-2 without service restarts; actual390px menu shows all actions, archived QA remains paused. Source finalized for authorized commit/push.
