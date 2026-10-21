@@ -67,7 +67,9 @@ export function ScannerOpportunityDetail({
   active?: boolean
   busy?: boolean
 }) {
-  const [tab, setTab] = useState<'overview' | 'history' | 'trade'>('overview')
+  const [tab, setTab] = useState<'overview' | 'history' | 'trade'>(
+    selection.kind === 'arbitrage' ? 'trade' : 'overview',
+  )
   const headingRef = useRef<HTMLHeadingElement>(null)
   const panelId = useId()
   useEffect(() => {
@@ -145,13 +147,13 @@ export function ScannerOpportunityDetail({
           ),
   }))
   const tabs = [
+    ...(comparison ? ['trade'] : []),
     'overview',
     'history',
-    ...(comparison ? ['trade'] : []),
   ] as Array<'overview' | 'history' | 'trade'>
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-background text-foreground"
+      className="mx-auto flex h-full min-h-0 w-full max-w-[780px] flex-col bg-background text-foreground"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
@@ -169,13 +171,13 @@ export function ScannerOpportunityDetail({
               className="flex items-center gap-2 text-base font-semibold outline-none"
             >
               <Radar className="size-4 shrink-0 text-primary" />
-              {base}
+              {comparison ? 'Review arbitrage' : base}
               <span className="truncate text-[11px] font-normal text-muted-foreground">
                 {comparison
                   ? selection.kind === 'arbitrage' &&
                     selection.strategy === 'mark'
-                    ? 'Mark gap'
-                    : 'Funding pair'
+                    ? `${base} / Mark gap`
+                    : `${base} / Funding pair`
                   : 'Strength'}
               </span>
             </h2>
@@ -234,7 +236,11 @@ export function ScannerOpportunityDetail({
                   }
                 }}
               >
-                {item}
+                {item === 'trade'
+                  ? 'Review'
+                  : item === 'overview'
+                    ? 'Details'
+                    : 'History'}
               </button>
             ))}
           </div>
@@ -581,6 +587,36 @@ export function ScannerOpportunityDetail({
           aria-labelledby={`${panelId}-trade-tab`}
           hidden={tab !== 'trade'}
         >
+          {comparison && (
+            <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-border pb-3">
+              <div>
+                <p className="text-[10px] text-muted-foreground">
+                  Net funding / hour
+                </p>
+                <p
+                  className={`mt-1 text-sm font-semibold tabular-nums ${(comparison.fundingGapHourly ?? 0) < 0 ? 'text-destructive' : 'text-primary'}`}
+                >
+                  {scannerPercent(comparison.fundingGapHourly, true)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground">
+                  Observed 24h / $1,000 per leg
+                </p>
+                <p className="mt-1 text-sm font-medium tabular-nums">
+                  {signedUsd(historicalCarry)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground">
+                  Mark gap before costs
+                </p>
+                <p className="mt-1 text-sm font-medium tabular-nums">
+                  {scannerPercent(comparison.markGapPct)}
+                </p>
+              </div>
+            </div>
+          )}
           {actionArea}
         </section>
         <details className="mt-3 border-t border-border pt-2 text-[10px] text-muted-foreground">

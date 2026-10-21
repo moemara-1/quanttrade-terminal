@@ -1,16 +1,26 @@
 import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Radar, RefreshCw } from 'lucide-react'
+import {
+  Activity,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
+  CandlestickChart,
+  ChartNoAxesCombined,
+  Radar,
+  RefreshCw,
+} from 'lucide-react'
 import { ScannerOpportunityDetail } from './scanner-opportunity-detail'
 import { ArbitrageReviewForm } from './arbitrage-review-form'
-import type { FundingRateUnit } from '@/lib/scanner-opportunity'
-import type { ReactNode } from 'react'
-import type { ScannerMarket, ScannerSnapshot } from '@/lib/scanners'
-import type { ScannerSelection } from './scanner-opportunity-detail'
 import {
-  comparisonForStrategy,
-  projectedFundingRate,
-} from '@/lib/scanner-opportunity'
+  ArbitrageResults,
+  CompactArbitrageRow,
+  MarketResults,
+} from './scanner-report-ui'
+import type { ReactNode } from 'react'
+import type { ScannerMarket } from '@/lib/scanners'
+import type { ScannerSelection } from './scanner-opportunity-detail'
+import { comparisonForStrategy } from '@/lib/scanner-opportunity'
 import {
   SCANNER_QUERY_KEY,
   fetchScannerSnapshot,
@@ -29,6 +39,10 @@ const money = (value: number | null) =>
         maximumFractionDigits: value < 1 ? 6 : 2,
         notation: value >= 1e6 ? 'compact' : 'standard',
       }).format(value)
+const marketPrice = (market: ScannerMarket) =>
+  (market.quote ?? 'USDC') === 'USDC'
+    ? money(market.price)
+    : `${new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(market.price)} ${market.quote}`
 const number = (value: number | null) =>
   value === null
     ? '—'
@@ -78,7 +92,17 @@ function Card({
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <Radar className="size-3.5 text-muted-foreground" />
+        <span className="text-muted-foreground">
+          {title === 'Arbitrage scanner' ? (
+            <ArrowLeftRight className="size-3.5" />
+          ) : title === 'Strength scanner' ? (
+            <ChartNoAxesCombined className="size-3.5" />
+          ) : title === 'Funding & crowding' ? (
+            <Activity className="size-3.5" />
+          ) : (
+            <CandlestickChart className="size-3.5" />
+          )}
+        </span>
         <h2 className="text-sm font-semibold">{title}</h2>
       </header>
       <div className="px-3 pt-2 pb-1">
@@ -137,262 +161,6 @@ function Sparkline({ market }: { market: ScannerMarket }) {
       />
     </svg>
   ) : null
-}
-function ReportSummary({ rows }: { rows: Array<ScannerMarket> }) {
-  const gainers = rows.filter((row) => row.change24h > 0).length
-  const losers = rows.filter((row) => row.change24h < 0).length
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-y border-border py-2 text-[11px]">
-      <span>
-        <strong>{rows.length}</strong> markets
-      </span>
-      <span className="text-green-500">{gainers} up</span>
-      <span className="text-red-400">{losers} down</span>
-      <span className="text-muted-foreground">
-        24h volume{' '}
-        {money(rows.reduce((total, row) => total + row.volume24h, 0))}
-      </span>
-    </div>
-  )
-}
-function MarketResults({
-  rows,
-  onReview,
-}: {
-  rows: Array<ScannerMarket>
-  onReview?: (market: ScannerMarket) => void
-}) {
-  return (
-    <>
-      <ReportSummary rows={rows} />
-      <div className="max-h-[65vh] overflow-auto rounded-md border border-border">
-        <table className="w-full min-w-[900px] text-left text-xs tabular-nums">
-          <thead className="sticky top-0 z-10 bg-card text-[10px] text-muted-foreground">
-            <tr>
-              {[
-                '#',
-                'Market',
-                'Mark price',
-                '24h move',
-                'vs BTC (pp)',
-                'Funding / h',
-                'OI USD',
-                'OI / volume',
-                '24h volume',
-                'Observed',
-                ...(onReview ? ['Details'] : []),
-              ].map((title) => (
-                <th
-                  className="whitespace-nowrap px-3 py-2 font-medium"
-                  key={title}
-                >
-                  {title}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr
-                className="border-t border-border hover:bg-accent/40"
-                key={`${row.venue}:${row.symbol}`}
-              >
-                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                <td className="px-3 py-2">
-                  <a
-                    className="font-semibold hover:underline"
-                    href={scannerMarketPath(row)}
-                  >
-                    {row.base}
-                  </a>
-                  <div>
-                    <VenueLink market={row} />
-                  </div>
-                </td>
-                <td className="px-3 py-2 font-mono">{money(row.price)}</td>
-                <td
-                  className={`px-3 py-2 font-mono ${row.change24h >= 0 ? 'text-green-500' : 'text-red-400'}`}
-                >
-                  {scannerPercent(row.change24h)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {number(row.relativeStrength24h)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {scannerPercent(row.fundingHourly, true)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {money(row.openInterestUsd)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {number(row.oiToVolume)}
-                  {row.oiToVolume === null ? '' : 'x'}
-                </td>
-                <td className="px-3 py-2 font-mono">{money(row.volume24h)}</td>
-                <td
-                  className="whitespace-nowrap px-3 py-2 text-muted-foreground"
-                  title={new Date(row.observedAt).toLocaleString()}
-                >
-                  {time(row.observedAt)}
-                </td>
-                {onReview && (
-                  <td className="px-3 py-2">
-                    <button className={control} onClick={() => onReview(row)}>
-                      Review
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && <Empty>No markets match these filters.</Empty>}
-      </div>
-    </>
-  )
-}
-function ArbitrageResults({
-  rows,
-  mode,
-  onReview,
-}: {
-  rows: ScannerSnapshot['comparisons']
-  mode: 'funding' | 'mark'
-  onReview: (comparison: ScannerSnapshot['comparisons'][number]) => void
-}) {
-  const [rateUnit, setRateUnit] = useState<FundingRateUnit>('hourly')
-  const rateLabel =
-    rateUnit === 'hourly'
-      ? 'Hourly'
-      : rateUnit === '8h'
-        ? '8h equivalent'
-        : 'Simple APR scenario'
-  return (
-    <>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[10px] text-muted-foreground">
-          Funding display
-        </span>
-        {(['hourly', '8h', 'apr'] as const).map((unit) => (
-          <button
-            key={unit}
-            className={`${control} ${rateUnit === unit ? 'bg-accent' : ''}`}
-            aria-pressed={rateUnit === unit}
-            onClick={() => setRateUnit(unit)}
-          >
-            {unit === 'hourly' ? 'Hourly' : unit === '8h' ? '8h' : 'APR'}
-          </button>
-        ))}
-      </div>
-      {rateUnit !== 'hourly' && (
-        <p className="mb-2 text-[10px] text-muted-foreground">
-          {rateUnit === '8h'
-            ? '8h equivalent = current hourly rate x 8.'
-            : 'Simple APR = current hourly rate x 24 x 365; no compounding.'}{' '}
-          Constant-rate scenario, not actual historical returns.
-        </p>
-      )}
-      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1 border-y border-border py-2 text-[11px]">
-        <span>
-          <strong>{rows.length}</strong> matched markets
-        </span>
-        <span className="text-muted-foreground">
-          {mode === 'funding'
-            ? 'Ranked by hourly funding difference'
-            : 'Ranked by mark gap (% of midpoint)'}
-        </span>
-        <span className="text-muted-foreground">
-          Both legs meet volume filter
-        </span>
-      </div>
-      <div className="max-h-[65vh] overflow-auto rounded-md border border-border">
-        <table className="w-full min-w-[1100px] text-left text-xs tabular-nums">
-          <thead className="sticky top-0 z-10 bg-card text-[10px] text-muted-foreground">
-            <tr>
-              {[
-                '#',
-                'Market',
-                `${mode === 'mark' ? 'Funding carry' : 'Funding gap'} | ${rateLabel}`,
-                'Mark gap',
-                'Hyperliquid mark',
-                'Lighter mark',
-                `HL funding | ${rateLabel}`,
-                `Lighter funding | ${rateLabel}`,
-                'HL 24h volume',
-                'Lighter 24h volume',
-                'Compare legs',
-              ].map((title) => (
-                <th
-                  key={title}
-                  className="whitespace-nowrap px-3 py-2 font-medium"
-                >
-                  {title}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr
-                className="border-t border-border hover:bg-accent/40"
-                key={row.base}
-              >
-                <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                <td className="px-3 py-2 font-semibold">{row.base}</td>
-                <td className="px-3 py-2 font-mono">
-                  {scannerPercent(
-                    projectedFundingRate(
-                      comparisonForStrategy(row, mode).fundingGapHourly,
-                      rateUnit,
-                    ),
-                    true,
-                  )}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {scannerPercent(row.markGapPct)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {money(row.hyperliquid.price)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {money(row.lighter.price)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {scannerPercent(
-                    projectedFundingRate(
-                      row.hyperliquid.fundingHourly,
-                      rateUnit,
-                    ),
-                    true,
-                  )}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {scannerPercent(
-                    projectedFundingRate(row.lighter.fundingHourly, rateUnit),
-                    true,
-                  )}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {money(row.hyperliquid.volume24h)}
-                </td>
-                <td className="px-3 py-2 font-mono">
-                  {money(row.lighter.volume24h)}
-                </td>
-                <td className="px-3 py-2">
-                  <button className={control} onClick={() => onReview(row)}>
-                    Review arbitrage
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && (
-          <Empty>No matching comparison in this snapshot.</Empty>
-        )}
-      </div>
-    </>
-  )
 }
 export function ScannersPane() {
   const [selection, setSelection] = useState<ScannerSelection | null>(null)
@@ -582,14 +350,14 @@ export function ScannersPane() {
                 <option value="hyperliquid">Hyperliquid</option>
               </select>
               <select
-                aria-label="Minimum 24 hour quote volume"
+                aria-label="24h volume - quote units"
                 className={control}
                 value={minVolume}
                 onChange={(e) => setMinVolume(Number(e.target.value))}
               >
                 <option value={0}>Any volume</option>
-                <option value={1000000}>24h ≥ $1m</option>
-                <option value={10000000}>24h ≥ $10m</option>
+                <option value={1000000}>24h minimum 1m quote units</option>
+                <option value={10000000}>24h minimum 10m quote units</option>
               </select>
             </div>
             {query.isPending && (
@@ -681,37 +449,18 @@ export function ScannersPane() {
                             arb === 'mark' || row.fundingGapHourly !== null,
                         ),
                       ).map((row) => (
-                        <div
-                          className="border-t border-border py-2 first:border-0"
-                          key={row.base}
-                        >
-                          <div className="flex justify-between gap-2 text-xs">
-                            <strong>{row.base}</strong>
-                            <span className="font-mono tabular-nums">
-                              {arb === 'funding'
-                                ? scannerPercent(row.fundingGapHourly, true)
-                                : scannerPercent(row.markGapPct)}
-                              {arb === 'funding' ? ' / h' : ''}
-                            </span>
-                          </div>
-                          <button
-                            className="mt-2 inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-accent"
-                            onClick={() =>
-                              openSelection({
-                                kind: 'arbitrage',
-                                comparison: row,
-                                strategy: arb,
-                              })
-                            }
-                          >
-                            Review arbitrage
-                            <ArrowRight className="size-3" />
-                          </button>
-                          <p className="mt-1 text-[10px] text-muted-foreground">
-                            HL {money(row.hyperliquid.price)} · Lighter{' '}
-                            {money(row.lighter.price)}
-                          </p>
-                        </div>
+                        <CompactArbitrageRow
+                          key={`${row.hyperliquid.symbol}:${row.lighter.symbol}`}
+                          comparison={row}
+                          mode={arb}
+                          onReview={() =>
+                            openSelection({
+                              kind: 'arbitrage',
+                              comparison: row,
+                              strategy: arb,
+                            })
+                          }
+                        />
                       ))
                     )}
                     {comparisons.length === 0 && (
@@ -728,6 +477,7 @@ export function ScannersPane() {
                   >
                     {expanded ? (
                       <MarketResults
+                        kind="crowding"
                         rows={crowds.filter(
                           (row) => row.fundingHourly !== null,
                         )}
@@ -751,12 +501,15 @@ export function ScannersPane() {
                               <VenueLink market={row} />
                             </div>
                           </div>
+                          <Sparkline market={row} />
                           <div className="text-right text-xs">
+                            <div className="font-mono">{marketPrice(row)}</div>
                             <div className="font-mono">
                               {scannerPercent(row.fundingHourly, true)} / h
                             </div>
                             <div className="text-[10px] text-muted-foreground">
-                              OI / vol {number(row.oiToVolume)}
+                              {scannerPercent(row.change24h)} 24h - OI / vol{' '}
+                              {number(row.oiToVolume)}
                               {row.oiToVolume === null ? '' : '×'}
                             </div>
                           </div>
@@ -823,7 +576,7 @@ export function ScannersPane() {
                           </div>
                           <Sparkline market={row} />
                           <div className="text-right text-xs">
-                            <div className="font-mono">{money(row.price)}</div>
+                            <div className="font-mono">{marketPrice(row)}</div>
                             <div
                               className={
                                 row.change24h >= 0
@@ -980,7 +733,7 @@ export function ScannersPane() {
           <aside
             aria-label="Scanner opportunity details"
             hidden={!detailOpen}
-            className={`${detailOpen ? 'flex' : 'hidden'} h-full min-h-0 w-full shrink-0 flex-col border-l border-border @[960px]/scanners:w-[620px] @[960px]/scanners:max-w-[60%]`}
+            className={`${detailOpen ? 'flex' : 'hidden'} h-full min-h-0 w-full shrink-0 flex-col border-l border-border @[960px]/scanners:w-[780px] @[960px]/scanners:max-w-[60%]`}
           >
             <ScannerOpportunityDetail
               key={

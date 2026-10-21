@@ -22,6 +22,7 @@ import {NanoGptJobs,NanoGptJobError} from './nanogpt-jobs.ts';
 import type {NanoGptJobService} from './nanogpt-worker.ts';
 import type { DiscoveryScanners } from './scanners.ts';
 import type { ScannerDetails } from './scanner-detail.ts';
+import type { ScannerStrengthHistory } from './scanner-strength-history.ts';
 import type { ArbitragePlans } from './arbitrage-plans.ts';
 import type { LlmArena } from './llm-arena.ts';
 import {arenaLiveArmSchema} from './llm-arena-live.ts';
@@ -30,6 +31,7 @@ interface Services {
   arena?:Pick<LlmArena,'list'|'models'|'create'|'get'|'update'|'start'|'pause'|'evaluate'|'closePosition'|'archive'> & Partial<Pick<LlmArena,'capabilities'>>;
   scanners?:Pick<DiscoveryScanners,'get'>;
   scannerDetails?:Pick<ScannerDetails,'get'>;
+  scannerStrengthHistory?:Pick<ScannerStrengthHistory,'get'>;
   arbitrage?:Pick<ArbitragePlans,'prepare'|'execute'|'get'|'list'>;
   nanogptJobs?:NanoGptJobService;
   advancedProtection?:Pick<AdvancedProtection,'get'>;
@@ -116,6 +118,12 @@ export function createApp(services: Services) {
     if(researchBudget>=60||researchInFlight>=4){res.set('Retry-After','60').status(429).json({error:'Venue research rate limit reached; retry later'});return;}
     researchBudget++;researchInFlight++;
     try {res.json(await services.research.execute(req.query));} finally {researchInFlight--;}
+  });
+  app.get('/api/public/scanners/strength-history',publicData,async(req,res)=>{
+    const input=z.object({venue:z.enum(['hyperliquid','lighter']),window:z.enum(['1d','7d','30d']),symbols:z.string().min(1).max(1031).transform(value=>value.split(',')).pipe(z.array(z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*-[A-Za-z0-9_.]+$/)).min(1).max(8).refine(values=>new Set(values).size===values.length))}).strict().parse(req.query);
+    if(!services.scannerStrengthHistory){res.status(503).json({error:'Scanner strength history unavailable'});return;}
+    try{res.json(await services.scannerStrengthHistory.get(input));}
+    catch{res.status(503).json({error:'Scanner strength history unavailable; retry shortly'});}
   });
   app.get('/api/public/scanners/detail',publicData,async(req,res)=>{
     const input=z.object({base:z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:]+$/),venue:z.enum(['all','hyperliquid','lighter']).default('all')}).strict().parse(req.query);

@@ -7,6 +7,7 @@ import { DeskStore } from './store.ts';
 import { PublicMarkets } from './markets.ts';
 import { DiscoveryScanners } from './scanners.ts';
 import { ScannerDetails } from './scanner-detail.ts';
+import { ScannerStrengthHistory } from './scanner-strength-history.ts';
 import { ArbitragePlans } from './arbitrage-plans.ts';
 import { readArbitrageAccount } from './arbitrage-accounts.ts';
 import { OptionsScanner } from './options-scanner.ts';
@@ -77,7 +78,7 @@ const chasePlans:ChasePlans=new ChasePlans(resolve('data','chase-runs.sqlite'),d
 const protectionMonitor=new ProtectionMonitor(advancedProtection,hyperliquidNativeTwap,chasePlans);
 chasePlans.startTimer();
 protectionMonitor.startTimer();
-const app=createApp({nanogptJobs:new NanoGptWorkerClient('http://127.0.0.1:4319',token('operator-token')),arena,arbitrage,scannerDetails:new ScannerDetails(markets,new VenueResearch()),scanners:new DiscoveryScanners(markets,new OptionsScanner()),advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
+const app=createApp({nanogptJobs:new NanoGptWorkerClient('http://127.0.0.1:4319',token('operator-token')),arena,arbitrage,scannerDetails:new ScannerDetails(markets,new VenueResearch()),scannerStrengthHistory:new ScannerStrengthHistory(markets),scanners:new DiscoveryScanners(markets,new OptionsScanner()),advancedProtection,workflows,chasePlans,hyperliquidNativeTwap,liquidations,news:new NewsService(),calendars:new MarketCalendars(),research:new VenueResearch(),desk,markets,execution,agent,operations,lighterNativeOrders,operatorToken:token('operator-token'),agentToken:token('agent-token'),allowedOrigins:env.ALLOWED_ORIGINS.split(',').map(value=>value.trim()).filter(Boolean),...(env.WEB_SESSION_ORIGIN?{webSession:{origin:env.WEB_SESSION_ORIGIN,proxySecret:env.WEB_SESSION_PROXY_SECRET,sessionFile:resolve(env.WEB_SESSION_FILE),...(env.WEB_LOGIN_FILE?{loginFile:resolve(env.WEB_LOGIN_FILE)}:{})}}:{})});
 const server=app.listen(4318,'127.0.0.1',()=>console.log(`QuantTrade Hummingbot bridge: http://127.0.0.1:4318 (${env.DESK_MODE}). Terminal: ${env.PAIRLENS_URL}. Operator token: ${resolve('data','operator-token')}`));
 server.on('error',(error)=>{console.error(`Server could not start: ${error.message}`);void closeServices().then(()=>{process.exitCode=1;});});
 async function closeServices(){arena.close();liquidations.close();workflows.close();await protectionMonitor.close();await chasePlans.close();advancedProtection.close();arbitrage.close();store.close();app.locals.hostedAuthClose();}

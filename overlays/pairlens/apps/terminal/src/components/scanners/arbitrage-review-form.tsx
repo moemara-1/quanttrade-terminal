@@ -27,16 +27,13 @@ export function ArbitrageReviewForm({
     }
   }
   return (
-    <section className="rounded-md border border-border bg-card p-3">
-      <h3 className="text-xs font-semibold">Prepare paired entry</h3>
+    <section className="space-y-3">
+      <h3 className="text-xs font-semibold">Paired entry</h3>
       <p className="mt-1 text-[10px] text-muted-foreground">
         Two venue orders. Review exact accounts and quantities before
         confirming.
       </p>
-      <p className="mt-2 text-[11px] text-amber-500">
-        Existing positions may be offset or reversed. Stop-loss and take-profit
-        exits are not attached automatically.
-      </p>
+
       {!plan && (
         <>
           <div
@@ -57,8 +54,25 @@ export function ArbitrageReviewForm({
                 disabled={active}
               />
               <span className="mt-1 block text-[10px]">
-                Split equally across both legs
+                Half per venue - not per-leg notional
               </span>
+              <div
+                className="mt-2 flex gap-1"
+                role="group"
+                aria-label="Total margin presets"
+              >
+                {[100, 250, 500, 1000].map((amount) => (
+                  <button
+                    key={amount}
+                    type="button"
+                    disabled={active}
+                    onClick={() => review.setMargin(String(amount))}
+                    className="rounded border border-border px-2 py-1 text-[10px] tabular-nums hover:bg-accent disabled:opacity-50"
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
             </label>
             <label className="text-[11px] text-muted-foreground">
               Leverage
@@ -91,17 +105,65 @@ export function ArbitrageReviewForm({
               </select>
             </label>
           </div>
-          <p className="mt-2 text-[10px] text-muted-foreground">
-            Each leg uses half the total margin x leverage, rounded down to a
-            common supported base size. Live account balances, precision and
-            risk limits are checked before review.
-          </p>
+          <div className="mt-3 divide-y divide-border rounded-md border border-border">
+            {[comparison.hyperliquid, comparison.lighter].map((market) => (
+              <div
+                key={market.venue}
+                className="flex items-center justify-between gap-3 px-3 py-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 font-medium">
+                    <img
+                      alt=""
+                      className="size-4 object-contain"
+                      src={`/posters/${market.venue === 'lighter' ? 'lighter-market-connector.svg' : 'hyperliquid-market-connector.png'}`}
+                    />
+                    {market.venue === 'lighter' ? 'Lighter' : 'Hyperliquid'}
+                    <span
+                      className={
+                        comparison.longVenue === market.venue
+                          ? 'text-primary'
+                          : 'text-destructive'
+                      }
+                    >
+                      {comparison.longVenue === market.venue
+                        ? 'Long'
+                        : comparison.shortVenue === market.venue
+                          ? 'Short'
+                          : 'Unresolved'}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                    {market.symbol}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="tabular-nums">
+                    {review.leverage}x / {review.marginMode}
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Equal base quantity after rounding
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 space-y-1 text-[10px] leading-relaxed text-muted-foreground">
+            <p>
+              Prepare checks account balances, market precision and risk limits.
+              Each leg targets half your total margin x leverage.
+            </p>
+            <p className="text-amber-500">
+              Existing positions can be offset or reversed. No automatic TP/SL.
+              Legs execute separately, so a failed leg can leave exposure.
+            </p>
+          </div>
           <button
-            className="mt-3 rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="mt-3 w-full rounded-md bg-primary px-4 py-2.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
             disabled={active}
             onClick={() => void perform(review.prepare)}
           >
-            {active ? 'Preparing both legs...' : 'Prepare paired entry'}
+            {active ? 'Preparing both legs...' : 'Review both legs'}
           </button>
         </>
       )}
@@ -128,7 +190,7 @@ export function ArbitrageReviewForm({
             {plan.legs.map((leg) => (
               <div
                 key={leg.proposal.id}
-                className="rounded-md border border-border p-3 text-xs"
+                className="min-w-0 border-b border-border py-3 text-xs last:border-b-0"
               >
                 <div className="flex justify-between gap-2 font-semibold">
                   <span className="capitalize">{leg.proposal.order.venue}</span>
@@ -171,7 +233,7 @@ export function ArbitrageReviewForm({
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   disabled={active}
-                  className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                  className="flex-1 rounded-md bg-primary px-4 py-2.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
                   onClick={() => void perform(review.confirm)}
                 >
                   {active ? 'Submitting paired entry...' : 'Confirm both legs'}
