@@ -78,6 +78,7 @@
   "apps/terminal/src/lib/assistant-core/scanner-tools.ts",
   "apps/terminal/src/lib/assistant-core/tool-input-repair.ts",
   "apps/terminal/src/lib/assistant-core/trade-preparation-stop.ts",
+  "apps/terminal/src/lib/assistant-core/trade-research-guide.ts",
   "apps/terminal/src/lib/assistant-core/trading-agent-tools.test.ts",
   "apps/terminal/src/lib/assistant-core/trading-agent-tools.ts",
   "apps/terminal/src/lib/attended-trading.ts",

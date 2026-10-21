@@ -112,11 +112,111 @@ export function scanSnapshot(snapshot: ScannerSnapshot, input: Query) {
   }
 }
 
+const briefQuerySchema = z.object({
+  venue: z.enum(['all', 'lighter', 'hyperliquid']).default('all'),
+  search: z.string().max(64).default(''),
+  minVolume: z.number().finite().nonnegative().default(0),
+}).strict()
+type BriefQuery = z.input<typeof briefQuerySchema>
+type ResearchView = {
+  total: number | null
+  truncated: boolean
+  omittedForSize: number
+  sourceIds: Array<string>
+  coverageComplete: boolean
+  unavailable: string | null
+  rows: Array<Record<string, unknown>>
+}
+const briefViews = ['gainers', 'losers', 'relativeStrength', 'crowding', 'fundingArbitrage', 'markGaps'] as const
+type BriefViewName = typeof briefViews[number]
+const compactMarket = (row: Record<string, unknown>) => ({
+  ...Object.fromEntries(
+    ['venue', 'symbol', 'pair', 'base', 'quote', 'dex', 'price', 'change24h', 'volume24h', 'fundingHourly', 'openInterestUsd', 'relativeStrength24h', 'oiToVolume', 'observedAt']
+      .filter(key => row[key] !== undefined).map(key => [key, row[key]]),
+  ),
+  fundingPayer: typeof row.fundingHourly !== 'number' || !Number.isFinite(row.fundingHourly)
+    ? 'unknown' : row.fundingHourly > 0 ? 'longs' : row.fundingHourly < 0 ? 'shorts' : 'none',
+})
+const compactComparison = (row: Record<string, unknown>) => ({
+  ...Object.fromEntries(['base', 'fundingGapHourly', 'longVenue', 'shortVenue', 'markGapPct', 'lowerMarkVenue', 'higherMarkVenue'].map(key => [key, row[key]])),
+  hyperliquid: compactMarket(row.hyperliquid as Record<string, unknown>),
+  lighter: compactMarket(row.lighter as Record<string, unknown>),
+})
+
+/** Six scanner perspectives from one public read; no account or order actions. */
+export function tradeResearchBrief(snapshot: ScannerSnapshot | null, input: BriefQuery) {
+  const query = briefQuerySchema.parse(input)
+  const now = Date.now()
+  const stale = snapshot !== null && (now - snapshot.asOf > 90000 || snapshot.asOf > now + 5000)
+  const unavailable = snapshot === null ? 'scanner_unavailable' : stale ? 'stale_snapshot' : null
+  const sourceRows = snapshot?.sources ?? []
+  const sources = sourceRows.slice(0, 8).map(source => ({
+    id: source.id.length <= 256 ? source.id : null,
+    identityOmitted: source.id.length > 256,
+    status: source.status,
+    observedAt: source.observedAt,
+    count: source.count,
+    complete: source.complete !== false,
+    failedDexCount: source.failedDexs?.length ?? 0,
+  }))
+  const definitions: Record<BriefViewName, Query> = {
+    gainers: {scanner:'strength', direction:'gainers'},
+    losers: {scanner:'strength', direction:'losers'},
+    relativeStrength: {scanner:'strength', strengthMetric:'relativeStrength24h'},
+    crowding: {scanner:'crowding'},
+    fundingArbitrage: {scanner:'funding'},
+    markGaps: {scanner:'price-gap'},
+  }
+  const views = Object.fromEntries(briefViews.map(name => {
+    const definition = definitions[name]
+    if (!snapshot || unavailable) return [name, {total:null,truncated:false,omittedForSize:0,sourceIds:[],coverageComplete:false,unavailable,rows:[]} satisfies ResearchView]
+    const result = scanSnapshot(snapshot, {...definition,...query,limit:3})
+    const comparison = definition.scanner === 'funding' || definition.scanner === 'price-gap'
+    const rows = result.rows.map<Record<string, unknown>>(comparison ? compactComparison : compactMarket)
+    const view: ResearchView = {
+      total:result.total,truncated:result.truncated,omittedForSize:0,
+      sourceIds:result.sources.filter(source=>source.id==='lighter'||source.id==='hyperliquid').map(source=>source.id).slice(0,2),
+      coverageComplete:result.coverageComplete && result.sources.every(source=>(source.id==='lighter'||source.id==='hyperliquid') && source.observedAt !== null && now-source.observedAt<=90000 && source.observedAt<=now+5000),
+      unavailable:result.unavailable, rows,
+    }
+    return [name,view]
+  })) as Record<BriefViewName,ResearchView>
+  const result = {
+    asOf:snapshot?.asOf ?? null, unavailable, scope:query,
+    sources,sourceTotal:sourceRows.length,sourceCoverageTruncated:sourceRows.length>sources.length || sources.some(source=>source.identityOmitted),
+    positioningEvidence:'not-measured; crowding is an absolute-funding proxy only',
+    comparisonScope:'Hyperliquid and Lighter cross-venue context; selected venue limits directional rankings, not the comparison legs.',
+    methodology,
+    nextChecks:'This is scanner context only, not a trade decision. Check relevant news and catalysts, fresh target-venue charts/book/funding, account exposure, contract constraints, fees and weighted risk/reward before preparing an entry. Missing sources are unknown. No orders were prepared or submitted.',
+    views,
+  }
+  // Drop whole rows rather than clipping native identities or pretending partial
+  // order-like data is complete. Counts preserve the observed eligible universe.
+  while (JSON.stringify(result).length > 12000) {
+    const candidates = briefViews.filter(name=>views[name].rows.length>0)
+    const largest = candidates.sort((a,b)=>JSON.stringify(views[b].rows).length-JSON.stringify(views[a].rows).length)[0]
+    if (!largest) break
+    views[largest].rows.pop()
+    views[largest].omittedForSize++
+    views[largest].truncated=true
+  }
+  return result
+}
+
 export function buildScannerTools(
   read: () => Promise<ScannerSnapshot> = () =>
     fetchScannerSnapshot(AbortSignal.timeout(25000)),
 ) {
   return {
+    get_trade_research_brief: tool({
+      description:
+        'Start broad Lighter/Hyperliquid trade research with one compact public scanner read: top three raw gainers, losers, BTC-relative leaders, funding/crowding, funding differences and mark gaps. Preserves exact venue-native identities, timestamps, failures and truncated coverage. Not news, account checks, executable quotes, guaranteed opportunities or order preparation. Use focused reads for the selected candidate next.',
+      inputSchema: briefQuerySchema,
+      execute: async (input) => {
+        try { return tradeResearchBrief(await read(), input) }
+        catch { return tradeResearchBrief(null, input) }
+      },
+    }),
     get_scanner_detail: tool({
       description:
         'Read selected native Lighter/Hyperliquid market funding and strength history. Includes verified settled 24-hour funding sums only when all 24 hourly observations are present, separate constant-current-rate projections, actual closed hourly prices and same-venue BTC-relative performance. Use this to check scanner candidates before suggesting a paired review. Historical results and annualized scenarios do not predict future funding or establish net profitability; fees and slippage remain unknown. This tool never prepares or executes orders.',

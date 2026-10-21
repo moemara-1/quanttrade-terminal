@@ -70,3 +70,24 @@ describe('assistant trade preparation contract', () => {
     expect(prompt).toContain('funding sign: positive means longs pay shorts; negative means shorts pay longs')
   })
 })
+
+test('default trade decisions include bounded scanner, news, execution and risk research', () => {
+  const prompt = buildAssistantSystemPrompt({})
+  expect(prompt).toContain('Default entry research')
+  expect(prompt).toContain('get_trade_research_brief')
+  expect(prompt).toContain('shortlist at most three')
+  expect(prompt).toContain('get_news')
+  expect(prompt).toContain('economic-calendar')
+  expect(prompt).toContain('spread, depth and expected slippage')
+  expect(prompt).toContain('fees, funding and weighted reward/risk')
+  expect(prompt).toContain('Unknown data is not a positive signal')
+})
+
+test('default research stays focused and never delays urgent risk reduction', () => {
+  const prompt = buildAssistantSystemPrompt({})
+  expect(prompt).toContain('Reuse successful fresh current-turn reads')
+  expect(prompt).toContain('Do not run every scanner or deep_research by default')
+  expect(prompt).toContain('Status, cancellation, closing and urgent risk-reduction requests')
+  expect(prompt).toContain('A research result never grants trade approval')
+  expect(prompt).toContain('data quality and factors against the trade')
+})

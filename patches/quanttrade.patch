@@ -13547,10 +13547,19 @@ index e51eeb9..b6fe0ff 100644
  
    test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..78e8fe3 100644
+index ce0d317..e330250 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-@@ -46,6 +46,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
+@@ -12,6 +12,8 @@
+ // prompt describes the terminal as it stands at the moment of the turn
+ // rather than a snapshot taken when the chat was opened.
+ 
++import { DEFAULT_TRADE_RESEARCH_GUIDE } from './trade-research-guide'
++
+ export type AssistantPersona = 'mentor' | 'balanced' | 'technical'
+ 
+ export type AssistantPromptContext = {
+@@ -46,6 +48,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
  }
  
  const CAPABILITIES = [
@@ -13559,20 +13568,20 @@ index ce0d317..78e8fe3 100644
    'Markets: pull candles, tickers, order books, the live trade tape, signals, multi-timeframe reads and comparisons for ANY instrument on ANY connected venue. You are never limited to what is on screen. Search instruments you do not know the id of, and open any of them with open_instrument.',
    'Prediction markets: read a whole event with get_prediction_event (every outcome, its probability, bid, ask and 24h move, plus what the whole field costs) and find one with search_prediction_events. A prediction price lives on the event, so these are the only tools that can see one: candles and order books address a single outcome. Never say you cannot see the prices on a prediction board without calling get_prediction_event first.',
    'Perps and equities: funding, open interest and liquidation clusters for perpetuals; the trading session, calendars, fundamentals and insider filings for stocks.',
-@@ -60,6 +62,12 @@ const CAPABILITIES = [
+@@ -60,6 +64,12 @@ const CAPABILITIES = [
  ]
  
  const WORKING_RULES = [
 +  'News and catalysts: get_news covers only the returned configured feed headlines and known ticker/project aliases; it is not an exhaustive search. Zero headline matches do not prove there is no news or catalyst. Never infer that a price move is purely technical, newsless or caused by missing news from an empty result. For requested catalyst research, use web_search at most once with the exact full project name plus ticker (TIA is Celestia), verify source and publication time, and distinguish dated reports from a verified cause. Fetch time is not publication time. If broader research is unavailable or inconclusive, say the catalyst is unknown. Do not delay an already-specified trade for repeated news searches.',
 +  'Use get_scanner_detail for selected opportunity funding and strength histories. Actual 24-hour funding is the signed sum of verified hourly settlement samples in the returned completed UTC window; partial history is not a full total. Current hourly ×24 or ×24×365 is a constant-rate scenario, never a prediction or a historical measurement. A large annualized percentage is not an hourly yield. Do not claim net profit without verified fees, bid/ask execution and slippage. Cross-exchange paired entry is sequential, not atomic: one reviewed plan may stop after an exposed partial/uncertain first leg. Never substitute two unrelated order cards or auto-unwind an unhedged leg without review.',
-+  'For broad Lighter/Hyperliquid opportunity discovery use scan_markets before selecting candidates. Set strengthMetric change24h for raw gainers/losers or relativeStrength24h for BTC-relative rankings; report which ranking, venue coverage, asOf, filters, total and truncated scope you actually read. A top row is a candidate, not evidence of a best trade or executable arbitrage. Reuse its exact venue and native pair; verify fresh quote, book liquidity, account margin, contract constraints and risk before preparing the requested trade. Respect an explicitly chosen venue rather than switching because another account read appears empty. Do not repeat market-wide scans once the user has chosen an exact trade.',
-+  'Explicit execution requests take priority over further research. Once the user specifies the instrument, direction and entry intent, use the exact connected account and prepare the requested single confirmation card after only the necessary account, fresh quote, instrument precision and risk checks. Do not restart market discovery, re-read the same charts or open unrelated instruments. Do not ask whether to prepare after the user already asked to open, set up or send the trade. Opening a chart is navigation, not preparation or execution. If a material field is missing, ask one concise question containing all missing choices and then prepare. A request for a good entry or stop zone permits a focused fresh chart read, not another market-wide search.',
++  'For broad Lighter/Hyperliquid opportunity discovery use get_trade_research_brief before selecting candidates; scan_markets is available for a focused follow-up ranking. For scan_markets, set strengthMetric change24h for raw gainers/losers or relativeStrength24h for BTC-relative rankings; report which ranking, venue coverage, asOf, filters, total and truncated scope you actually read. A top row is a candidate, not evidence of a best trade or executable arbitrage. Reuse its exact venue and native pair; verify fresh quote, book liquidity, account margin, contract constraints and risk before preparing the requested trade. Respect an explicitly chosen venue rather than switching because another account read appears empty. Do not repeat market-wide scans once the user has chosen an exact trade.',
++  'Explicit execution requests take priority over further research. Once the user specifies the instrument, direction and entry intent, use the exact connected account and prepare the requested single confirmation card after the compact focused entry-research pass and necessary account, fresh quote, instrument precision and risk checks. Reuse adequate fresh current-turn research instead of repeating it. Do not restart market discovery, re-read the same charts or open unrelated instruments. Do not ask whether to prepare after the user already asked to open, set up or send the trade. Opening a chart is navigation, not preparation or execution. If a material field is missing, ask one concise question containing all missing choices and then prepare. A request for a good entry or stop zone permits a focused fresh chart read, not another market-wide search.',
 +  'For explicit research requests, scope the scan to the requested venue and exact assets. Reuse successful current-turn reads rather than repeating them. Stop when enough evidence answers the request; do not keep expanding the search or retrying the same failed tool. Never replace W with WIF or S with SOL: resolve exact listings or ask about an ambiguous ticker. Keep venue-native instrument identifiers and market type intact, including perpetual settlement suffixes; a spot pair on Binance does not establish the same instrument on Lighter.',
 +  'Position sizing: half my cash means half the verified available collateral as margin when discussing a leveraged position, not half the wallet balance in base units and not an arbitrary one contract. Resolve the account and leverage before computing quote exposure = margin × leverage, then base quantity = quote exposure / entry reference price, rounded down to venue size precision and checked against fees and risk limits. Never infer leverage from maximum leverage or initial margin requirements. Ask for a missing material leverage choice rather than silently using 1×. Cash allocation is different from maximum stop-loss risk; if the user means loss at the stop, size from that explicit loss budget. Carry verified existing exchange leverage/margin settings only when the user explicitly requests keeping them or they are already established for this trade.',
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,10 +81,29 @@ const WORKING_RULES = [
+@@ -73,10 +83,29 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -13605,7 +13614,7 @@ index ce0d317..78e8fe3 100644
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
    'You never see API keys, wallet private keys or vault contents. If a task needs a credential the user has not connected, say what is missing and point at Accounts.',
    'Never give financial advice and never guarantee an outcome. Analysis and mechanics, not recommendations to buy or sell.',
-@@ -94,7 +121,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +123,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13614,6 +13623,15 @@ index ce0d317..78e8fe3 100644
      'You are not a sidebar chatbot. You sit above the whole terminal, you can see what the user is doing on any screen, and you can drive every part of it on their behalf.',
      `Today's date: ${today} (UTC).`,
      '',
+@@ -116,6 +145,8 @@ export function buildAssistantSystemPrompt(
+     'How to work:',
+     ...WORKING_RULES.map((line) => `- ${line}`),
+     '',
++    DEFAULT_TRADE_RESEARCH_GUIDE,
++    '',
+     'How to respond:',
+     '- Lead with the answer, then the evidence. Do not narrate which tools you called.',
+     '- Anchor to concrete numbers from tool data (price, % change, key levels, ATR), not vague characterizations.',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 index 26e075b..4035fb3 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
@@ -13849,10 +13867,18 @@ index bf4d768..2c08c5b 100644
    'create_script and update_script validate and re-run the preview for you, and hand back the traceback when it fails. Fix your own tracebacks rather than handing a broken draft to the user.',
  ].join('\n')
 diff --git a/apps/terminal/src/lib/assistant-core/tool-labels.ts b/apps/terminal/src/lib/assistant-core/tool-labels.ts
-index 58b3a84..5a82326 100644
+index 58b3a84..c07f256 100644
 --- a/apps/terminal/src/lib/assistant-core/tool-labels.ts
 +++ b/apps/terminal/src/lib/assistant-core/tool-labels.ts
-@@ -54,6 +54,7 @@ const WORKSPACE_TOOL_LABELS = {
+@@ -26,6 +26,7 @@ const TERMINAL_TOOL_LABELS = {
+   get_screen: ['read', 'the screen'],
+   highlight_ui: ['highlight', 'it on screen'],
+   deep_research: ['run', 'deep research'],
++  get_trade_research_brief: ['read', 'the trade research brief'],
+   get_alert_step_reference: ['read', 'the alert step reference'],
+ } as const satisfies ToolLabelMap
+ 
+@@ -54,6 +55,7 @@ const WORKSPACE_TOOL_LABELS = {
  } as const satisfies ToolLabelMap
  
  export const ASSISTANT_ALL_TOOL_LABELS: ToolLabelMap = {
@@ -14064,7 +14090,7 @@ index 5a3bae1..a37411c 100644
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
 diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
-index b543053..c0b809e 100644
+index b543053..a4ddf69 100644
 --- a/apps/terminal/src/lib/copilot/context-tools.ts
 +++ b/apps/terminal/src/lib/copilot/context-tools.ts
 @@ -2,7 +2,12 @@
@@ -14174,7 +14200,14 @@ index b543053..c0b809e 100644
        inputSchema: z.object({
          symbol: z
            .string()
-@@ -98,9 +158,40 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -92,15 +152,45 @@ export function buildContextTools(deps: CopilotToolDeps) {
+       }),
+       execute: async ({ symbol, limit }) => {
+         try {
+-          const sym =
+-            (symbol ?? baseAsset(deps.getContextInfo().pair ?? '')) || undefined
++          const sym = symbol?.trim() || undefined
+           const res = await api.getNews({
              tickers: sym,
              limit: limit ?? 15,
            })
@@ -14216,7 +14249,7 @@ index b543053..c0b809e 100644
                title: a.title,
                url: a.url,
                source: a.source,
-@@ -116,10 +207,13 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -116,10 +206,13 @@ export function buildContextTools(deps: CopilotToolDeps) {
            // plainly, or the model reports "no news" for an outage.
            const providerDown = /API error: 5\d\d/.test(message)
            return {
@@ -14231,7 +14264,7 @@ index b543053..c0b809e 100644
            }
          }
        },
-@@ -131,17 +225,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -131,17 +224,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
        inputSchema: z.object({}),
        execute: async () => {
          try {
@@ -14259,7 +14292,7 @@ index b543053..c0b809e 100644
            }
          }
        },
-@@ -176,7 +275,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -176,7 +274,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
  
      get_trade_journal: tool({
        description:
@@ -14268,7 +14301,7 @@ index b543053..c0b809e 100644
        inputSchema: z.object({
          pair: z
            .string()
-@@ -192,17 +291,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -192,17 +290,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
            })
            const buys = entries.filter((e) => e.side === 'buy').length
            return {

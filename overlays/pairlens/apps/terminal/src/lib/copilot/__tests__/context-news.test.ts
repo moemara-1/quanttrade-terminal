@@ -74,3 +74,14 @@ test('assistant guidance never treats zero news hits as proof of no catalyst', (
   )
   expect(prompt).toContain('publication time')
 })
+
+test('omitting a news symbol reads broad headlines rather than the on-screen coin', async () => {
+  let requested: unknown
+  api.getNews = async (input) => { requested=input; return {articles:[]} }
+  const tool=buildContextTools({getContextInfo:()=>({pair:'BTC-USDT'})} as CopilotToolDeps).get_news
+  const execute=tool.execute as unknown as (input:unknown,options:unknown)=>Promise<Record<string,unknown>>
+  const result=await execute({limit:5},{toolCallId:'fixture',messages:[]})
+  expect(requested).toMatchObject({tickers:undefined,limit:5})
+  expect(result.symbol).toBe(null)
+  expect(result.status).toBe('no-matches')
+})

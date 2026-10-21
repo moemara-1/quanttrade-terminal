@@ -351,3 +351,22 @@ test('real SDK prepareStep caps accumulated tool results together with the syste
     globalThis.fetch = originalFetch
   }
 })
+
+test('default research instructions and a bounded brief fit the existing history limit', async () => {
+  const { buildAssistantSystemPrompt } = await import('../assistant-brain')
+  const { WORKFLOW_GUIDE, NOTIFICATION_GUIDE } = await import('../guides')
+  const { boundAssistantModelHistory, ASSISTANT_HISTORY_LIMIT } = await import('../model-history')
+  const system = buildAssistantSystemPrompt({guides:[WORKFLOW_GUIDE,NOTIFICATION_GUIDE],screen:'screen context '.repeat(100)})
+  const messages = [
+    {role:'system' as const,content:system},
+    ...Array.from({length:120},()=>({role:'user' as const,content:'Earlier research '.repeat(100)})),
+    {role:'user' as const,content:'Research one Lighter candidate without placing trades.'},
+    {role:'assistant' as const,content:[{type:'tool-call' as const,toolCallId:'brief',toolName:'get_trade_research_brief',input:{venue:'lighter'}}]},
+    {role:'tool' as const,content:[{type:'tool-result' as const,toolCallId:'brief',toolName:'get_trade_research_brief',output:{type:'text' as const,value:'verified compact metrics '.repeat(450)}}]},
+  ]
+  const bounded = boundAssistantModelHistory(messages)
+  expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(ASSISTANT_HISTORY_LIMIT)
+  expect(JSON.stringify(bounded)).toContain('verified compact metrics')
+  expect(JSON.stringify(bounded)).toContain('Default entry research')
+  expect(JSON.stringify(bounded)).toContain('Research one Lighter candidate')
+})
