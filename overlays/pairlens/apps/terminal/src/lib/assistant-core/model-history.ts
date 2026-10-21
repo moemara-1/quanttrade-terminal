@@ -7,7 +7,10 @@ const OMISSION_NOTICE =
   'Some earlier conversation or tool data was omitted to fit the model context. Older user constraints and trade parameters may be absent. Omitted data is unknown, not an empty account, no orders, execution success, or approval. Re-read current account/order/run state and clarify missing required parameters. Never reconstruct or execute an omitted plan, or retry an uncertain submission.'
 const size = (value: unknown) => JSON.stringify(value).length
 
-export function boundAssistantModelHistory(messages: Array<ModelMessage>) {
+export function boundAssistantModelHistory(
+  messages: Array<ModelMessage>,
+  resultLimit = RESULT_LIMIT,
+): Array<ModelMessage> {
   let omitted = messages.some(
     (message) =>
       message.role === 'system' && message.content === OMISSION_NOTICE,
@@ -24,7 +27,7 @@ export function boundAssistantModelHistory(messages: Array<ModelMessage>) {
           content: message.content.map((part) => {
             if (
               part.type !== 'tool-result' ||
-              size(part.output) <= RESULT_LIMIT
+              size(part.output) <= resultLimit
             )
               return part
             omitted = true
@@ -40,7 +43,7 @@ export function boundAssistantModelHistory(messages: Array<ModelMessage>) {
         }
       if (message.role !== 'assistant') return message
       if (typeof message.content === 'string') {
-        if (size(message.content) <= RESULT_LIMIT) return message
+        if (size(message.content) <= resultLimit) return message
         omitted = true
         return {
           ...message,
@@ -53,7 +56,7 @@ export function boundAssistantModelHistory(messages: Array<ModelMessage>) {
         content: message.content.map((part) => {
           if (
             (part.type !== 'text' && part.type !== 'reasoning') ||
-            size(part.text) <= RESULT_LIMIT
+            size(part.text) <= resultLimit
           )
             return part
           omitted = true
@@ -85,6 +88,13 @@ export function boundAssistantModelHistory(messages: Array<ModelMessage>) {
   const collect = (selected: Set<number>) =>
     groups.flatMap((group, index) => (selected.has(index) ? group : []))
   if (size([notice, ...collect(required)]) > ASSISTANT_HISTORY_LIMIT) {
+    // Parallel reads share the remaining budget; a per-result cap alone is insufficient.
+    // Reprocess the original immutable history so tool calls and results stay paired.
+    if (resultLimit > 512)
+      return boundAssistantModelHistory(
+        messages,
+        Math.max(512, Math.floor(resultLimit / 2)),
+      )
     throw new Error(
       'Latest assistant context exceeds the safe request budget. [QT_AI:request-context:none]',
     )

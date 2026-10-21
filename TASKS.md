@@ -367,9 +367,16 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [completed] Deployed safe diagnostics; actual retained135-message MiniMax chat reproduced HTTP400 context-length on no-tool Reply OK. Oversized history is confirmed current cause.
 - [completed] Repaired incomplete/abandoned SDK tool history and confirmed context overflow with an 80k-character provider history budget including system instructions at every step. Added focused paginated workflow reads and safe diagnostics.
 - [completed] Audited scheduler/UI semantics and corrected protection, stop-limit execution, historical run, monitoring and weighted R:R guidance.
-- [completed] Backend 411 and frontend 4,143 tests, strict types, focused ESLint and 11-task production build pass. Deployed 20261021-9 after diagnostic release 21-8. The affected conversation recovers: plain OK, question card, and typed answer all HTTP 200 in 2–4 seconds; model history is bounded to 16–20 messages versus the prior 135-message context rejection. No trade preparation, submission, cancellation or run changes. Authorized commit/push finalized.
+- [completed] Backend 411 and frontend 4,143 tests, strict types, focused ESLint and 11-task production build pass. Deployed 20261021-9 after diagnostic release 21-8. The affected conversation recovers: plain OK, question card, and typed answer all HTTP 200 in 2ï¿½4 seconds; model history is bounded to 16ï¿½20 messages versus the prior 135-message context rejection. No trade preparation, submission, cancellation or run changes. Authorized commit/push finalized.
 
 ## Default trade research policy
 - [completed] Audited scanner/news/market/account tools; defined bounded entry research with focused follow-up and direct urgent risk reduction.
 - [completed] Added a single-read six-view scanner brief, default research checklist, and correct broad-news scope. Public research is separate from approval/execution; no context limits or trade safeguards changed.
 - [completed] Full 4,150-test frontend suite and subsequent context/funding regressions pass. Strict TypeScript, focused ESLint and 11-task build pass; the final type-only annotation preserves identical runtime output. Deployed frontend-only 20261022-2 without service restarts. Hosted default research used the brief, news/web, histories, charts and book/tape; final one-brief check returned correct fundingPayer labels and explicitly unmeasured positioning. No trade preparation or execution in QA. Authorized commit/push finalized.
+
+## Assistant context recovery
+- [x] Inspect history budget and identify mandatory tool-batch overflow.
+- [x] Add regression reproducing overflow with real-sized system context.
+- [x] Adapt tool-result compaction to the mandatory context budget without mutating UI history.
+- [x] Verify tests/types; use automatic compaction without a new global memory store.
+

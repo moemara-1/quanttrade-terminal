@@ -370,3 +370,18 @@ test('default research instructions and a bounded brief fit the existing history
   expect(JSON.stringify(bounded)).toContain('Default entry research')
   expect(JSON.stringify(bounded)).toContain('Research one Lighter candidate')
 })
+
+test('compacts a mandatory parallel tool batch against the remaining system budget', () => {
+  const history: Array<ModelMessage> = [
+    { role: 'system', content: 's'.repeat(48_000) },
+    { role: 'user', content: 'Check the candidates before preparing anything' },
+    { role: 'assistant', content: [0, 1, 2].map((id) => ({ type: 'tool-call' as const, toolCallId: `read-${id}`, toolName: 'read_market', input: {} })) },
+    { role: 'tool', content: [0, 1, 2].map((id) => ({ type: 'tool-result' as const, toolCallId: `read-${id}`, toolName: 'read_market', output: { type: 'text' as const, value: 'x'.repeat(25_000) } })) },
+  ]
+  const original = JSON.stringify(history)
+  const result = boundAssistantModelHistory(history)
+  expect(JSON.stringify(result).length).toBeLessThanOrEqual(ASSISTANT_HISTORY_LIMIT)
+  expect(JSON.stringify(result)).toContain('unknown')
+  expect(JSON.stringify(result)).toContain('read-2')
+  expect(JSON.stringify(history)).toBe(original)
+})
