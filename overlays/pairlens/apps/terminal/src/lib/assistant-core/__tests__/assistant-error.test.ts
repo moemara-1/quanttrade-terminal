@@ -5,11 +5,29 @@ import {
   encodeAssistantError,
 } from '../assistant-error'
 
+test('server capacity does not assert active work when only recovery history or request rate is full', () => {
+  const described = describeAssistantError(
+    { name: 'NanoGPTServerError', statusCode: 429 },
+    'nanogpt-inference',
+  )
+  expect(described.message).toContain('request-rate')
+  expect(described.message).not.toContain('Wait for an active response')
+  expect(described.message).toContain('check order and run status')
+})
+
 test('an incomplete atomic step is not mislabeled as a broken connection', () => {
-  const error = { name: 'NanoGPTServerError', statusCode: 502, failureReason: 'incomplete-step' }
-  expect(encodeAssistantError(error, 'nanogpt-inference')).toBe('[QT_AI:response-incomplete:502]')
+  const error = {
+    name: 'NanoGPTServerError',
+    statusCode: 502,
+    failureReason: 'incomplete-step',
+  }
+  expect(encodeAssistantError(error, 'nanogpt-inference')).toBe(
+    '[QT_AI:response-incomplete:502]',
+  )
   const described = describeAssistantError(error, 'nanogpt-inference')
-  expect(described.message).toContain('No tools from that incomplete step were run')
+  expect(described.message).toContain(
+    'No tools from that incomplete step were run',
+  )
   expect(described.message).toContain('Earlier steps may have completed')
 })
 
@@ -214,18 +232,36 @@ test.each([
   ['tool-history', 'request-history'],
   ['reasoning-history', 'request-history'],
   ['parameter', 'request-parameter'],
-])('safe rejection %s survives SDK wrappers and stream encoding', (category, code) => {
-  const error = {statusCode: 400, responseBody: JSON.stringify({providerRejection: category, error: 'secret-payload'})}
-  const encoded = encodeAssistantError(error, 'nanogpt-inference')
-  expect(encoded).toBe(`[QT_AI:${code}:400]`)
-  const decoded = describeAssistantError(new Error(encoded), 'nanogpt-inference')
-  expect(decoded.code).toBe(code)
-  expect(decoded.message).not.toContain('secret-payload')
-  expect(decoded.message).not.toContain('Check the selected model')
-})
+])(
+  'safe rejection %s survives SDK wrappers and stream encoding',
+  (category, code) => {
+    const error = {
+      statusCode: 400,
+      responseBody: JSON.stringify({
+        providerRejection: category,
+        error: 'secret-payload',
+      }),
+    }
+    const encoded = encodeAssistantError(error, 'nanogpt-inference')
+    expect(encoded).toBe(`[QT_AI:${code}:400]`)
+    const decoded = describeAssistantError(
+      new Error(encoded),
+      'nanogpt-inference',
+    )
+    expect(decoded.code).toBe(code)
+    expect(decoded.message).not.toContain('secret-payload')
+    expect(decoded.message).not.toContain('Check the selected model')
+  },
+)
 
 test('untrusted rejection categories never become user-facing text', () => {
-  const safe = describeAssistantError({statusCode:400,responseBody:JSON.stringify({providerRejection:'secret-key'})}, 'nanogpt-inference')
+  const safe = describeAssistantError(
+    {
+      statusCode: 400,
+      responseBody: JSON.stringify({ providerRejection: 'secret-key' }),
+    },
+    'nanogpt-inference',
+  )
   expect(safe.code).toBe('request')
   expect(safe.message).not.toContain('secret-key')
 })

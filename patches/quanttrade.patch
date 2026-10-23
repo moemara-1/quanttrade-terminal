@@ -13348,17 +13348,18 @@ index 5484a85..4f17ead 100644
 +  ).toBe('unavailable')
 +})
 diff --git a/apps/terminal/src/lib/api.ts b/apps/terminal/src/lib/api.ts
-index 39aaa14..c1aeed0 100644
+index 39aaa14..3f0d7f5 100644
 --- a/apps/terminal/src/lib/api.ts
 +++ b/apps/terminal/src/lib/api.ts
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  // Copyright (c) 2026 Juan Ignacio Molina Estrada
  // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 +import { deviceTradeJournal } from './device-trade-journal'
++import { readAssetOverview } from './asset-overview-data'
  import type {
    TerminalLayout,
    WorkspaceVariableDefinition,
-@@ -395,14 +396,19 @@ export class EquityFundamentalsUnavailableError extends Error {
+@@ -395,14 +397,19 @@ export class EquityFundamentalsUnavailableError extends Error {
    }
  }
  
@@ -13383,7 +13384,25 @@ index 39aaa14..c1aeed0 100644
  
    if (!response.ok) {
      // An App Server built before these routes existed answers 404. Same seam:
-@@ -628,20 +634,22 @@ export const api = {
+@@ -599,8 +606,15 @@ export const api = {
+   getTickerOverview: (ticker: string, assetClass?: 'crypto' | 'stocks') => {
+     const qs = new URLSearchParams({ ticker })
+     if (assetClass) qs.set('assetClass', assetClass)
+-    return fetchApi<TickerOverviewResponse>(
+-      `/api/ticker-overview?${qs.toString()}`,
++    return readAssetOverview(
++      ticker,
++      assetClass,
++      hasAppServer
++        ? () =>
++            fetchApi<TickerOverviewResponse>(
++              `/api/ticker-overview?${qs.toString()}`,
++            )
++        : undefined,
+     )
+   },
+ 
+@@ -628,20 +642,22 @@ export const api = {
      const suffix = qs.toString() ? `?${qs.toString()}` : ''
      return fetchFundamentals<EarningsCalendarResponse>(
        `/api/earnings-calendar${suffix}`,
@@ -13408,7 +13427,7 @@ index 39aaa14..c1aeed0 100644
      ),
  
    /**
-@@ -652,6 +660,7 @@ export const api = {
+@@ -652,6 +668,7 @@ export const api = {
    getIpoCalendar: (params?: { days?: number }) =>
      fetchFundamentals<IpoCalendarResponse>(
        `/api/ipo-calendar${params?.days ? `?days=${params.days}` : ''}`,
@@ -13416,7 +13435,7 @@ index 39aaa14..c1aeed0 100644
      ),
  
    /**
-@@ -681,8 +690,14 @@ export const api = {
+@@ -681,8 +698,14 @@ export const api = {
      pairKey?: string
      limit?: number
    }) => {
@@ -13432,7 +13451,7 @@ index 39aaa14..c1aeed0 100644
      }
      const qs = new URLSearchParams()
      if (params?.market) qs.set('market', params.market)
-@@ -692,10 +707,9 @@ export const api = {
+@@ -692,10 +715,9 @@ export const api = {
      return fetchApi<Array<TradeJournalEntry>>(`/api/trade-journal${suffix}`)
    },
  
@@ -13446,7 +13465,7 @@ index 39aaa14..c1aeed0 100644
    addTradeJournalEntry: (entry: {
      market: string
      pairKey: string
-@@ -705,6 +719,8 @@ export const api = {
+@@ -705,6 +727,8 @@ export const api = {
      notes?: string
      tags?: Array<string>
    }) => {
@@ -13633,10 +13652,10 @@ index ce0d317..e330250 100644
      '- Lead with the answer, then the evidence. Do not narrate which tools you called.',
      '- Anchor to concrete numbers from tool data (price, % change, key levels, ATR), not vague characterizations.',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..4035fb3 100644
+index 26e075b..9c3ed54 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -11,9 +11,19 @@
+@@ -11,9 +11,25 @@
  // gating is re-read at every step: the user can navigate mid-run, and
  // the assistant should notice.
  
@@ -13645,6 +13664,12 @@ index 26e075b..4035fb3 100644
  
  import { buildAssistantSystemPrompt } from './assistant-brain'
 +import { encodeAssistantError } from './assistant-error'
++import {
++  ANSWER_BOUNDARY_GUIDE,
++  assistantAnswerBoundary,
++  ensureAssistantBoundaryAnswer,
++  guardAssistantTools,
++} from './answer-boundary'
 +import {
 +  assistantModelHistory,
 +  boundAssistantModelHistory,
@@ -13657,17 +13682,28 @@ index 26e075b..4035fb3 100644
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -36,6 +46,7 @@ import type {
+@@ -34,8 +50,8 @@ import type {
+   ChatTransport,
+   LanguageModel,
    UIMessage,
-   UIMessageChunk,
+-  UIMessageChunk,
  } from 'ai'
 +import { getTradeSubmissions } from '@/lib/copilot/trade-submissions'
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -92,29 +103,45 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
-     const tools = buildAssistantToolSet(deps)
+@@ -89,32 +105,62 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+           : String(model),
+     })
+ 
+-    const tools = buildAssistantToolSet(deps)
++    let finalizing = false
++    const tools = guardAssistantTools(
++      buildAssistantToolSet(deps),
++      () => finalizing,
++    )
      const toolNames = Object.keys(tools)
++    const toolStepBudget = deps.getWorkbench() ? MAX_STEPS - 1 : 10
  
 +    const systemPrompt = buildAssistantSystemPrompt({
 +      persona,
@@ -13700,39 +13736,62 @@ index 26e075b..4035fb3 100644
        // Re-read per step: a navigation in step 2 should put the chart
        // tools back on the table for step 3.
 -      prepareStep: () => ({
-+      prepareStep: ({ messages: stepMessages }) => ({
-+        // The SDK supplies system separately, outside prepareStep.messages.
-+        // Include it in the same budget, then prevent duplicate injection.
-+        system: [],
-+        messages: boundAssistantModelHistory([
-+          { role: 'system', content: systemPrompt },
-+          ...stepMessages,
-+        ]),
-         activeTools: activeToolsFor(
-           this.opts.getDeps(),
-           toolNames,
-           CHART_TOOLS,
-         ),
-       }),
+-        activeTools: activeToolsFor(
+-          this.opts.getDeps(),
+-          toolNames,
+-          CHART_TOOLS,
+-        ),
+-      }),
 -      stopWhen: stepCountIs(MAX_STEPS),
++      prepareStep: ({ messages: stepMessages, steps }) => {
++        const boundary = assistantAnswerBoundary(steps, toolStepBudget)
++        finalizing ||= boundary !== undefined
++        return {
++          // The SDK supplies system separately, outside prepareStep.messages.
++          // Include it in the same budget, then prevent duplicate injection.
++          system: [],
++          messages: boundAssistantModelHistory([
++            {
++              role: 'system',
++              content: boundary
++                ? `${systemPrompt}\n\n${ANSWER_BOUNDARY_GUIDE}`
++                : systemPrompt,
++            },
++            ...stepMessages,
++          ]),
++          ...(boundary ? { toolChoice: 'none' as const } : {}),
++          activeTools: boundary
++            ? []
++            : activeToolsFor(this.opts.getDeps(), toolNames, CHART_TOOLS),
++        }
++      },
 +      stopWhen: [
-+        stepCountIs(MAX_STEPS),
++        () => finalizing,
++        stepCountIs(toolStepBudget + 1),
 +        tradePreparationReady,
 +        repeatedPreparationFailure,
 +      ],
        onStepFinish: (step) => {
          for (const call of step.toolCalls) {
            track('assistant_tool_used', { tool: call.toolName })
-@@ -124,8 +151,7 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -123,10 +169,13 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+       abortSignal: options.abortSignal,
      })
  
-     return result.toUIMessageStream({
+-    return result.toUIMessageStream({
 -      onError: (error) =>
 -        error instanceof Error ? error.message : String(error),
-+      onError: (error) => encodeAssistantError(error, provider.manifest.id),
-     }) as ReadableStream<UIMessageChunk>
+-    }) as ReadableStream<UIMessageChunk>
++    return result
++      .toUIMessageStream({
++        onError: (error) => encodeAssistantError(error, provider.manifest.id),
++      })
++      .pipeThrough(
++        ensureAssistantBoundaryAnswer(() => finalizing),
++      )
    }
  
+   reconnectToStream: ChatTransport<UIMessage>['reconnectToStream'] = async () =>
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
 index 74cf26a..3624411 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
@@ -14090,7 +14149,7 @@ index 5a3bae1..a37411c 100644
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
 diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
-index b543053..a4ddf69 100644
+index b543053..7c5d975 100644
 --- a/apps/terminal/src/lib/copilot/context-tools.ts
 +++ b/apps/terminal/src/lib/copilot/context-tools.ts
 @@ -2,7 +2,12 @@
@@ -14157,7 +14216,7 @@ index b543053..a4ddf69 100644
 +          )
 +          if (!Array.isArray(snapshot.coins) || snapshot.coins.length === 0)
 +            throw new Error('No market-cap ranking returned')
-+          return {
+           return {
 +            status: 'available',
 +            source: snapshot.source,
 +            retrievedAt: new Date().toISOString(),
@@ -14180,7 +14239,7 @@ index b543053..a4ddf69 100644
 +            })),
 +          }
 +        } catch {
-           return {
++          return {
 +            status: 'unavailable',
              coins: [],
              error:
@@ -14292,7 +14351,44 @@ index b543053..a4ddf69 100644
            }
          }
        },
-@@ -176,7 +274,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -161,14 +259,31 @@ export function buildContextTools(deps: CopilotToolDeps) {
+             sym,
+             assetClassFor(info.market),
+           )
+-          return { symbol: sym, overview: res.overview }
+-        } catch (err) {
+           return {
++            status: res.overview ? 'available' : 'no-coverage',
+             symbol: sym,
++            overview: res.overview,
++            source: res.source,
++            fetchedAt: res.fetchedAt,
++            providerUpdatedAt: res.providerUpdatedAt,
++            freshness: res.freshness,
++            supply: res.supply,
++            note: 'Supply values are provider observations, not independently verified. Missing, stale or conflicting fields remain unknown. Profile coverage does not prove exchange listing or account readiness.',
++          }
++        } catch {
++          return {
++            status: 'unavailable',
++            symbol: sym,
++            supply: null,
+             error:
+-              err instanceof Error
+-                ? err.message
+-                : 'Asset overview requires being signed in.',
++              'Asset fundamentals could not be verified. Supply, profile coverage and current valuation remain unknown; this does not identify an account or sign-in problem.',
++            nextResearch: {
++              tool: 'web_search',
++              query: `${newsProjectNames[sym] ?? sym} official circulating total maximum supply tokenomics`,
++              maxFollowups: 1,
++              instruction:
++                'Use at most one focused fallback search when these facts matter. Verify exact project, source and observation date; report discrepancies or missing current figures as unknown. Do not loop or substitute remembered supply figures.',
++            },
+           }
+         }
+       },
+@@ -176,7 +291,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
  
      get_trade_journal: tool({
        description:
@@ -14301,7 +14397,7 @@ index b543053..a4ddf69 100644
        inputSchema: z.object({
          pair: z
            .string()
-@@ -192,17 +290,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -192,17 +307,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
            })
            const buys = entries.filter((e) => e.side === 'buy').length
            return {

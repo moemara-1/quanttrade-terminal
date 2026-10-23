@@ -380,3 +380,13 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [x] Adapt tool-result compaction to the mandatory context budget without mutating UI history.
 - [x] Verify tests/types; use automatic compaction without a new global memory store.
 
+
+## Bounded assistant answers and server capacity
+- [x] Reproduce repeated-read loop and audit retained versus active request limits.
+- [x] Add answer-finalization guard with tests; preserve trade confirmation stops.
+- [x] Fix verified retained-job capacity mismatch with retention-safe tests.
+- [x] Run verification and deploy safely; commit/push prepared.
+
+- [x] Repair standalone asset fundamentals overview and verify source/freshness behavior.
+
+Verification: 415 backend tests; 83 focused frontend tests; frontend/backend types, lint and production build pass. Hosted release 20261023-1 passes session, transport and exact Zcash profile checks. Combined frontend runner has pre-existing global browser-stub/module-loading issues; focused suites pass. No orders or bots started.

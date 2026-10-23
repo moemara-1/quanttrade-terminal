@@ -2,6 +2,11 @@ import {createHash,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {z} from 'zod';
 
+// Retained responses are recovery history, not active provider requests. Keep the
+// ten-minute replay window without letting a few normal multi-step turns fill it.
+// The separate active and 64 MiB allocation limits still bound execution and memory.
+const MAX_RETAINED_JOBS=512;
+
 const inputSchema=z.object({requestId:z.string().uuid(),atomic:z.boolean().optional().default(true),apiKey:z.string().trim().min(1).max(4096).regex(/^[^\r\n]+$/),request:z.object({model:z.string().trim().min(1).max(256),stream:z.literal(true),messages:z.array(z.unknown()).min(1)}).passthrough()}).strict();
 type Fetcher=(url:string,options:RequestInit)=>Promise<Response>;
 type Failure='upstream-connection'|'upstream-stream'|'timeout'|'canceled'|'buffer-limit'|'incomplete-step';
@@ -59,7 +64,7 @@ export class NanoGptJobs {
   const hash=createHash('sha256').update(data.apiKey).update('\0').update(payload).update(data.atomic?'atomic':'stream').digest('hex');
   for(const job of this.jobs.values())if(job.owner===owner&&job.requestId===data.requestId){if(job.hash!==hash)throw new NanoGptJobError(409,'Inference request ID was already used');return job.id;}
   if(!acceptNew)throw new NanoGptJobError(503,'Inference service is draining existing work');
-  const active=[...this.jobs.values()].filter(job=>!job.done);if(this.closed||this.jobs.size>=64||active.length>=16||active.filter(job=>job.owner===owner).length>=4||this.bytes>=64*1024*1024)throw new NanoGptJobError(429,'Inference job limit reached');
+  const active=[...this.jobs.values()].filter(job=>!job.done);if(this.closed||this.jobs.size>=MAX_RETAINED_JOBS||active.length>=16||active.filter(job=>job.owner===owner).length>=4||this.bytes>=64*1024*1024)throw new NanoGptJobError(429,'Inference job limit reached');
  const controller=new AbortController();const id=randomUUID();const timer=setTimeout(()=>{job.failure='timeout';this.finish(job,true);controller.abort();},600_000);timer.unref();
  const job:Job={id,owner,requestId:data.requestId,hash,atomic:data.atomic,model:/^[a-zA-Z0-9/_.:+-]{1,256}$/.test(data.request.model)?data.request.model:'redacted-model',messageCount:data.request.messages.length,started:Date.now(),attempt:0,controller,chunks:[],bytes:0,capacity:0,contentType:'application/octet-stream',diagnostics:new Headers(),done:false,failed:false,listeners:new Set(),timer};this.jobs.set(id,job);this.report(job,'started');
   void this.run(job,data.apiKey,payload);return id;

@@ -132,7 +132,7 @@ export function describeAssistantError(
   if (encoded === 'server-capacity' || (serverRelay && status === 429)) {
     return result(
       'server-capacity',
-      'The QuantTrade server has reached its assistant request limit. Wait for an active response to finish before sending another request.',
+      'The QuantTrade server has reached an assistant capacity or request-rate limit. Wait briefly before continuing. Earlier tool actions may have completed; check order and run status before repeating a trade request.',
     )
   }
   if (

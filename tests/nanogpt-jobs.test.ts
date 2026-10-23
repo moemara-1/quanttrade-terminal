@@ -128,7 +128,7 @@ test('global active limit, retained job count and disposal cannot relaunch uncer
  const pending=new NanoGptJobs(async(_url,options)=>new Promise<Response>((_resolve,reject)=>options.signal?.addEventListener('abort',()=>reject(new Error('aborted')))));
  try{for(let owner=0;owner<4;owner++)for(let n=0;n<4;n++)pending.start(String(owner),input());assert.throws(()=>pending.start('new-owner',input()),/limit/);}finally{pending.close();}
  assert.throws(()=>pending.start('new-owner',input()),/limit/);
- const retained=new NanoGptJobs(async()=>new Response('OK'));try{for(let n=0;n<64;n++){retained.start('owner',input());await tick();}assert.throws(()=>retained.start('owner',input()),/limit/);}finally{retained.close();}
+ const retained=new NanoGptJobs(async()=>new Response('OK'));try{for(let n=0;n<512;n++){retained.start('owner',input());await tick();}assert.throws(()=>retained.start('owner',input()),/limit/);}finally{retained.close();}
 });
 test('reader cancellation leaves upstream active, but explicit job cancellation stops it',async()=>{
  let controller!:ReadableStreamDefaultController<Uint8Array>;let upstreamSignal:AbortSignal|undefined;
@@ -152,4 +152,17 @@ test('bridge preserves the safe provider rejection category and never forwards p
  const desk=new TradingDesk(store,markets,{configured:false,place:async()=>{throw new Error('unexpected execution');},cancel:async()=>undefined},{mode:'paper',accountName:'desk',maxOrderNotional:'1000',dailyNotionalLimit:'2000',maxPriceDeviationBps:100,proposalTtlSeconds:120,pairlensUrl:'http://localhost:4317'});
  const app=createApp({desk,markets,agent:{prepare:async()=>({summary:'No order',proposal:null})},operatorToken:'operator',agentToken:'agent',nanogptJobs:jobs});const server=app.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert(address&&typeof address==='object');const base=`http://127.0.0.1:${address.port}/api/ai/nanogpt/jobs`;const headers={Authorization:'Bearer operator','Content-Type':'application/json'};
  try{const created=await fetch(base,{method:'POST',headers,body:JSON.stringify(input())});const {id}=await created.json() as {id:string};await tick();const result=await fetch(`${base}/${id}`,{headers});assert.equal(result.status,400);assert.equal(result.headers.get('X-QuantTrade-AI-Rejection'),'context-length');const body=await result.text();assert.equal(JSON.parse(body).providerRejection,'context-length');assert(!body.includes('private prompt'));}finally{app.locals.hostedAuthClose();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));store.close();}
+});
+
+test('completed inference steps do not exhaust the active request budget and remain resumable',async()=>{
+ let calls=0;const jobs=new NanoGptJobs(async()=>{calls++;return new Response(completeStep,{headers:{'Content-Type':'text/event-stream'}});});
+ try{
+  const first=input();const firstId=jobs.start('owner',first);await tick();
+  for(let n=1;n<100;n++){jobs.start('owner',input());await tick();}
+  assert.equal(jobs.activeCount,0);assert.equal(jobs.retainedCount,100);
+  assert.equal(await jobs.read('owner',firstId,0)!.text(),completeStep,'Older response bytes must remain available after subsequent turns');
+  assert.equal(jobs.start('owner',first),firstId,'An identical reconnect must resolve to its original job');
+  assert.equal(calls,100,'Capacity recovery must not replay any earlier inference');
+  assert.throws(()=>jobs.read('other-owner',firstId,0),/not found/);
+ }finally{jobs.close();}
 });

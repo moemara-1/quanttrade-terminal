@@ -26,8 +26,10 @@ import type { ScannerStrengthHistory } from './scanner-strength-history.ts';
 import type { ArbitragePlans } from './arbitrage-plans.ts';
 import type { LlmArena } from './llm-arena.ts';
 import {arenaLiveArmSchema} from './llm-arena-live.ts';
+import {AssetProfiles} from './asset-profiles.ts';
 
 interface Services {
+  assetProfiles?:Pick<AssetProfiles,'get'>;
   arena?:Pick<LlmArena,'list'|'models'|'create'|'get'|'update'|'start'|'pause'|'evaluate'|'closePosition'|'archive'> & Partial<Pick<LlmArena,'capabilities'>>;
   scanners?:Pick<DiscoveryScanners,'get'>;
   scannerDetails?:Pick<ScannerDetails,'get'>;
@@ -69,6 +71,7 @@ export function createApp(services: Services) {
   const settings=services.webSession;
   const hostedAuth=settings?new HostedAuth({sessionFile:settings.sessionFile??':memory:',...(settings.credentials?{credentials:settings.credentials}:settings.loginFile?{credentials:()=>readWebCredentials(settings.loginFile!)}:{})}):undefined;
   const nanogptJobs=services.nanogptJobs??new NanoGptJobs();
+  const assetProfiles=services.assetProfiles??new AssetProfiles();
   app.locals.hostedAuthClose=()=>{hostedAuth?.close();nanogptJobs.close();};
   const cookieName='qt_operator';
   if (services.webSession && (!allowedOrigins.has(services.webSession.origin) || !services.webSession.origin.startsWith('https://') || services.webSession.proxySecret.length<32)) throw new Error('Hosted sessions require an allowed HTTPS origin and a strong proxy secret');
@@ -238,6 +241,10 @@ export function createApp(services: Services) {
     res.json(await services.execution.balances(venueSchema.parse(req.params.venue),marketTypeSchema.parse(req.query.marketType)));
   });
   const connecting=new Set<string>();
+  app.get('/api/asset-profile',operator,publicData,async(req,res)=>{
+    try{res.json(await assetProfiles.get(req.query));}
+    catch(error){res.status(error instanceof z.ZodError?400:503).json({error:'Asset fundamentals are unavailable; current supply and valuation remain unknown',fetchedAt:new Date().toISOString()});}
+  });
   app.post('/api/connections/lighter/recover',operator,async(req,res)=>{
     const input=z.object({accountName:z.string().min(1).max(128)}).strict().parse(req.body);
     const account=desk.status().accountName;
