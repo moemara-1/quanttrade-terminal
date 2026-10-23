@@ -77,11 +77,99 @@ test('assistant guidance never treats zero news hits as proof of no catalyst', (
 
 test('omitting a news symbol reads broad headlines rather than the on-screen coin', async () => {
   let requested: unknown
-  api.getNews = async (input) => { requested=input; return {articles:[]} }
-  const tool=buildContextTools({getContextInfo:()=>({pair:'BTC-USDT'})} as CopilotToolDeps).get_news
-  const execute=tool.execute as unknown as (input:unknown,options:unknown)=>Promise<Record<string,unknown>>
-  const result=await execute({limit:5},{toolCallId:'fixture',messages:[]})
-  expect(requested).toMatchObject({tickers:undefined,limit:5})
+  api.getNews = async (input) => {
+    requested = input
+    return { articles: [] }
+  }
+  const tool = buildContextTools({
+    getContextInfo: () => ({ pair: 'BTC-USDT' }),
+  } as CopilotToolDeps).get_news
+  const execute = tool.execute as unknown as (
+    input: unknown,
+    options: unknown,
+  ) => Promise<Record<string, unknown>>
+  const result = await execute(
+    { limit: 5 },
+    { toolCallId: 'fixture', messages: [] },
+  )
+  expect(requested).toMatchObject({ tickers: undefined, limit: 5 })
   expect(result.symbol).toBe(null)
   expect(result.status).toBe('no-matches')
+})
+
+test('DASH no-match fallback is an unambiguous bounded official project search with dated coverage', async () => {
+  api.getNews = async () => ({
+    articles: [],
+    coverage: {
+      scope: 'configured-rss-headlines',
+      matchingStatus: 'supported',
+      unsupportedTickers: [],
+      archiveSearched: false,
+      articleBodiesSearched: false,
+      cachedArticleCount: 65,
+      oldestPublishedAt: '2026-10-21T00:00:00Z',
+      newestPublishedAt: '2026-10-23T12:00:00Z',
+    },
+  })
+  const tool = buildContextTools({} as CopilotToolDeps).get_news
+  const result = await (
+    tool.execute as unknown as (
+      input: unknown,
+      options: unknown,
+    ) => Promise<Record<string, unknown>>
+  )({ symbol: 'DASH', limit: 5 }, { toolCallId: 'fixture', messages: [] })
+  expect(result.status).toBe('no-matches')
+  expect(result.coverage).toMatchObject({
+    exhaustive: false,
+    matchingStatus: 'supported',
+    cachedArticleCount: 65,
+    archiveSearched: false,
+    articleBodiesSearched: false,
+    requestedLookback: 'recent-feed-headlines-only',
+    oldestPublishedAt: '2026-10-21T00:00:00Z',
+  })
+  expect(result.nextResearch).toMatchObject({
+    tool: 'web_search',
+    maxFollowups: 1,
+  })
+  expect(JSON.stringify(result.nextResearch)).toContain(
+    'Dash cryptocurrency (DASH)',
+  )
+  expect(JSON.stringify(result.nextResearch)).toContain('site:dash.org')
+  expect(JSON.stringify(result.nextResearch)).toContain('testnet')
+  expect(JSON.stringify(result.nextResearch)).toContain('mainnet')
+})
+
+test('explicit stock DASH fallback identifies DoorDash instead of a cryptocurrency project', async () => {
+  api.getNews = async () => ({ articles: [] })
+  const tool = buildContextTools({} as CopilotToolDeps).get_news
+  const result = await (
+    tool.execute as unknown as (
+      input: unknown,
+      options: unknown,
+    ) => Promise<Record<string, unknown>>
+  )({ symbol: 'STOCK:DASH', limit: 5 }, { toolCallId: 'fixture', messages: [] })
+  expect(JSON.stringify(result.nextResearch)).toContain('DoorDash')
+  expect(JSON.stringify(result.nextResearch)).not.toContain(
+    'Dash cryptocurrency',
+  )
+  expect(JSON.stringify(result.nextResearch)).not.toContain('site:dash.org')
+})
+
+test('unsupported ticker matching remains visible rather than proving no catalyst', async () => {
+  api.getNews = async () => ({
+    articles: [],
+    coverage: {
+      matchingStatus: 'unsupported',
+      unsupportedTickers: ['CRYPTO:UNKNOWN'],
+      archiveSearched: false,
+    },
+  })
+  const result = await readNews()
+  expect(result.coverage).toMatchObject({
+    matchingStatus: 'unsupported',
+    unsupportedTickers: ['CRYPTO:UNKNOWN'],
+    exhaustive: false,
+  })
+  expect(result.catalystAssessment).toBe('unknown')
 })

@@ -9,21 +9,31 @@ const sources:NewsSource[]=[
  {url:'https://www.cnbc.com/id/20409666/device/rss/rss.html',name:'CNBC Market Insider',domain:'cnbc.com',kind:'markets'}
 ];
 const object=z.record(z.unknown());
-const cryptoAliases:Record<string,string[]>={BTC:['bitcoin','btc'],ETH:['ethereum','ether','eth'],SOL:['solana','sol'],HYPE:['hyperliquid','hype'],DOGE:['dogecoin','doge'],XRP:['ripple','xrp'],BNB:['binance','bnb'],TIA:['celestia','tia'],XMR:['monero','xmr'],ZEC:['zcash','zec']};
+const cryptoAliases:Record<string,string[]>={BTC:['bitcoin','btc'],ETH:['ethereum','ether','eth'],SOL:['solana','sol'],HYPE:['hyperliquid','hype'],DOGE:['dogecoin','doge'],XRP:['ripple','xrp'],BNB:['binance','bnb'],TIA:['celestia','tia'],XMR:['monero','xmr'],ZEC:['zcash','zec'],DASH:['dash','dash cryptocurrency','dash platform','dash core','dash evolution','dash network','dashpay','dash-to-anything']};
 // Company names from the terminal's equity catalog. Ambiguous ticker words
 // require explicit $/exchange notation; they must not tag generic prose.
-const stockAliases:Record<string,string[]>={AAPL:['Apple'],NVDA:['Nvidia'],MSFT:['Microsoft'],TSLA:['Tesla'],AMZN:['Amazon'],GOOGL:['Alphabet','Google'],META:['Meta Platforms'],AVGO:['Broadcom'],AMD:['Advanced Micro Devices'],NFLX:['Netflix'],ORCL:['Oracle'],CRM:['Salesforce'],ADBE:['Adobe'],INTC:['Intel'],PLTR:['Palantir'],'BRK.B':['Berkshire Hathaway'],JPM:['JPMorgan','JPMorgan Chase'],V:['Visa'],MA:['Mastercard'],BAC:['Bank of America'],GS:['Goldman Sachs'],COIN:['Coinbase'],HOOD:['Robinhood'],MSTR:['MicroStrategy'],PYPL:['PayPal'],SOFI:['SoFi Technologies'],LLY:['Eli Lilly'],ABBV:['AbbVie'],UNH:['UnitedHealth'],JNJ:['Johnson & Johnson'],XOM:['Exxon Mobil','ExxonMobil'],CVX:['Chevron'],WMT:['Walmart'],COST:['Costco'],PG:['Procter & Gamble','Procter and Gamble'],KO:['Coca-Cola','Coca Cola'],PEP:['PepsiCo','Pepsi'],HD:['Home Depot'],DIS:['Disney'],UBER:['Uber'],ABNB:['Airbnb'],SHOP:['Shopify'],BA:['Boeing'],CAT:['Caterpillar'],GE:['GE Aerospace','General Electric'],SPY:['SPDR S&P 500 ETF'],QQQ:['Invesco QQQ'],VOO:['Vanguard S&P 500 ETF'],VTI:['Vanguard Total Market ETF'],IWM:['iShares Russell 2000'],DIA:['SPDR Dow Jones'],GLD:['SPDR Gold Shares'],TLT:['iShares 20+ Year Treasury'],ARKK:['ARK Innovation']};
+const stockAliases:Record<string,string[]>={DASH:['DoorDash'],AAPL:['Apple'],NVDA:['Nvidia'],MSFT:['Microsoft'],TSLA:['Tesla'],AMZN:['Amazon'],GOOGL:['Alphabet','Google'],META:['Meta Platforms'],AVGO:['Broadcom'],AMD:['Advanced Micro Devices'],NFLX:['Netflix'],ORCL:['Oracle'],CRM:['Salesforce'],ADBE:['Adobe'],INTC:['Intel'],PLTR:['Palantir'],'BRK.B':['Berkshire Hathaway'],JPM:['JPMorgan','JPMorgan Chase'],V:['Visa'],MA:['Mastercard'],BAC:['Bank of America'],GS:['Goldman Sachs'],COIN:['Coinbase'],HOOD:['Robinhood'],MSTR:['MicroStrategy'],PYPL:['PayPal'],SOFI:['SoFi Technologies'],LLY:['Eli Lilly'],ABBV:['AbbVie'],UNH:['UnitedHealth'],JNJ:['Johnson & Johnson'],XOM:['Exxon Mobil','ExxonMobil'],CVX:['Chevron'],WMT:['Walmart'],COST:['Costco'],PG:['Procter & Gamble','Procter and Gamble'],KO:['Coca-Cola','Coca Cola'],PEP:['PepsiCo','Pepsi'],HD:['Home Depot'],DIS:['Disney'],UBER:['Uber'],ABNB:['Airbnb'],SHOP:['Shopify'],BA:['Boeing'],CAT:['Caterpillar'],GE:['GE Aerospace','General Electric'],SPY:['SPDR S&P 500 ETF'],QQQ:['Invesco QQQ'],VOO:['Vanguard S&P 500 ETF'],VTI:['Vanguard Total Market ETF'],IWM:['iShares Russell 2000'],DIA:['SPDR Dow Jones'],GLD:['SPDR Gold Shares'],TLT:['iShares 20+ Year Treasury'],ARKK:['ARK Innovation']};
 const escaped=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 function matches(title:string,words:string[]){return words.some(word=>new RegExp('\\b'+escaped(word)+'\\b','i').test(title));}
 function normalizedTicker(value:string){
- const trimmed=value.trim(),isCrypto=/^CRYPTO:/i.test(trimmed),name=trimmed.replace(/^CRYPTO:/i,'').replace(/[-/](?:USDC|USDT|USD)(?:[-/](?:USDC|USDT|USD))?$/i,'').toLowerCase();
+ const trimmed=value.trim(),isCrypto=/^CRYPTO:/i.test(trimmed),isStock=/^STOCKS?:/i.test(trimmed),name=trimmed.replace(/^(?:CRYPTO|STOCKS?):/i,'').replace(/[-/](?:USDC|USDT|USD)(?:[-/](?:USDC|USDT|USD))?$/i,'').toLowerCase();
+ if(isStock){const stock=Object.entries(stockAliases).find(([symbol,names])=>symbol.toLowerCase()===name||names.some(alias=>alias.toLowerCase()===name));return stock?.[0]??name.toUpperCase();}
  const crypto=Object.entries(cryptoAliases).find(([symbol,names])=>symbol.toLowerCase()===name||names.some(alias=>alias.toLowerCase()===name));
  if(crypto)return 'CRYPTO:'+crypto[0];
  if(isCrypto)return 'CRYPTO:'+name.toUpperCase();
  const stock=Object.entries(stockAliases).find(([symbol,names])=>symbol.toLowerCase()===name||names.some(alias=>alias.toLowerCase()===name));
  return stock?.[0]??trimmed.toUpperCase();
 }
+// DASH is also DoorDash's stock ticker and an ordinary English word.
+// Require project/product identity, or explicit crypto-market context.
+function cryptoMention(title:string,symbol:string,names:string[],source:NewsSource){
+ if(symbol!=='DASH')return matches(title,names);
+ if(/\b(?:DoorDash|NASDAQ\s*:\s*DASH|NYSE\s*:\s*DASH)\b/i.test(title))return false;
+ if(matches(title,names.filter(name=>name!=='dash')))return true;
+ return source.kind==='crypto'&&/\bDASH\b/.test(title)&&/\b(?:price|coin|token|wallet|blockchain|cryptocurrency|masternodes?|mainnet|testnet)\b/i.test(title);
+}
 function stockMention(title:string,symbol:string,names:string[]){
+ if(symbol==='DASH')return /\bDoorDash\b|\b(?:NASDAQ|NYSE)\s*:\s*DASH\b|\bDASH\s+(?:stock|shares)\b/i.test(title);
  if(symbol==='V'?/\b(?:Visa|VISA)\b/.test(title):matches(title,names))return true;
  const token=escaped(symbol);
  if(new RegExp('(?:\\$|\\b(?:NASDAQ|NYSE)\\s*:\\s*)'+token+'\\b','i').test(title))return true;
@@ -53,7 +63,7 @@ export function parseNewsRss(xml:string,source:NewsSource){
   let url:URL;try{url=new URL(row.link);}catch{return [];}
   if(!['https:','http:'].includes(url.protocol)||url.username||url.password||!(url.hostname===source.domain||url.hostname.endsWith('.'+source.domain)))return [];
   const date=Date.parse(row.pubDate);if(!Number.isFinite(date)||date>Date.now()+300_000)return [];
-  const mentions=[...Object.entries(cryptoAliases).filter(([,words])=>matches(title,words)).map(([symbol])=>'CRYPTO:'+symbol),...Object.entries(stockAliases).filter(([symbol,names])=>stockMention(title,symbol,names)).map(([symbol])=>symbol)];
+  const mentions=[...Object.entries(cryptoAliases).filter(([symbol,words])=>cryptoMention(title,symbol,words,source)).map(([symbol])=>'CRYPTO:'+symbol),...Object.entries(stockAliases).filter(([symbol,names])=>stockMention(title,symbol,names)).map(([symbol])=>symbol)];
   const topics=[{topic:source.kind==='crypto'?'blockchain':'financial_markets',relevanceScore:1}];
   if(/inflation|federal reserve|interest rate|employment|payroll|gdp|central bank|economy|recession/i.test(title))topics.push({topic:'economy_macro',relevanceScore:1});
   if(source.earnings||/earnings|quarterly results|profit|revenue|ipo/i.test(title))topics.push({topic:'earnings',relevanceScore:1});
@@ -96,12 +106,14 @@ export class NewsService {
   if(p.topics?.split(',').some(topic=>topic.trim()==='financial_markets')&&!this.cache.availableKinds.has('markets'))throw new Error('Equities news feeds unavailable');
   const tokens=[...new Set((p.tickers?.split(',')??[]).map(normalizedTicker).filter(Boolean))];
   if(tokens.includes('CRYPTO:BTC')&&tokens.includes('CRYPTO:ETH')&&!this.cache.availableKinds.has('crypto'))throw new Error('Crypto news feeds unavailable');
+  const unsupportedTickers=tokens.filter(token=>token.startsWith('CRYPTO:')?!Object.hasOwn(cryptoAliases,token.slice(7)):!Object.hasOwn(stockAliases,token));
+  const matchingStatus=!tokens.length?'not-requested' as const:!unsupportedTickers.length?'supported' as const:unsupportedTickers.length===tokens.length?'unsupported' as const:'partial' as const;
   let articles=this.cache.articles;
   if(tokens.length){const cryptoWire=tokens.includes('CRYPTO:BTC')&&tokens.includes('CRYPTO:ETH');articles=articles.filter(a=>cryptoWire?a.topics.some(t=>t.topic==='blockchain'):a.tickerSentiment.some(t=>tokens.includes(t.ticker)));}
   if(p.topics){const topics=p.topics.split(',').map(t=>t.trim()).filter(Boolean);articles=articles.filter(a=>topics.every(topic=>a.topics.some(t=>t.topic===topic)));}
   if(p.time_from){const min=time(p.time_from);articles=articles.filter(a=>Date.parse(a.timePublished)>=min);}
   if(p.time_to){const max=time(p.time_to)+59_999;articles=articles.filter(a=>Date.parse(a.timePublished)<=max);}
   if(p.sort==='EARLIEST')articles=[...articles].reverse();
-  return {articles:articles.slice(0,p.limit),fetchedAt:this.cache.fetchedAt,coverage:{scope:'configured-rss-headlines' as const,exhaustive:false as const,matching:'headline-mentions-and-known-aliases' as const,normalizedTickers:tokens,sources:this.cache.sources,cachedArticleCount:this.cache.articles.length,totalMatchedArticles:articles.length,truncated:articles.length>p.limit,newestPublishedAt:this.cache.articles[0]?.timePublished??null,oldestPublishedAt:this.cache.articles.at(-1)?.timePublished??null,warning:'These are only recent headlines retained by the configured RSS feeds, not an exhaustive news search. Zero matches do not establish the absence of news or a catalyst; article bodies and sources outside these feeds were not searched.'}};
+  return {articles:articles.slice(0,p.limit),fetchedAt:this.cache.fetchedAt,coverage:{scope:'configured-rss-headlines' as const,exhaustive:false as const,matching:'headline-mentions-and-known-aliases' as const,matchingStatus,unsupportedTickers,archiveSearched:false as const,articleBodiesSearched:false as const,requestedFrom:p.time_from?new Date(time(p.time_from)).toISOString():null,requestedTo:p.time_to?new Date(time(p.time_to)+59_999).toISOString():null,normalizedTickers:tokens,sources:this.cache.sources,cachedArticleCount:this.cache.articles.length,totalMatchedArticles:articles.length,truncated:articles.length>p.limit,newestPublishedAt:this.cache.articles[0]?.timePublished??null,oldestPublishedAt:this.cache.articles.at(-1)?.timePublished??null,warning:'These are only recent headlines retained by the configured RSS feeds, not an exhaustive news search. Zero matches do not establish the absence of news or a catalyst; article bodies and sources outside these feeds were not searched.'}};
  }
 }

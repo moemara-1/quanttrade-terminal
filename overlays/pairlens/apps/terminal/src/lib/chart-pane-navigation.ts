@@ -32,6 +32,21 @@ export function paneStreamMarket(pair: { market: string }): string {
   return pair.market
 }
 
+/** Stable across quote ticks; changes only when this pane's chart target changes. */
+export function paneRecoveryKey(target: {
+  paneId: string
+  paneType: string
+  pair: { pairKey: string; market: string } | null
+  timeframe?: string
+}): string {
+  return JSON.stringify([
+    target.paneId,
+    target.paneType,
+    target.pair ? paneInstrumentRef(target.pair) : null,
+    target.timeframe ?? null,
+  ])
+}
+
 export function writePaneTimeframe(
   value: string,
   owner: {
@@ -43,4 +58,38 @@ export function writePaneTimeframe(
 ): void {
   if (owner.override) owner.setOverride(value)
   else if (owner.variable) owner.setVariable(owner.variable, value)
+}
+
+/** An assistant's explicit switch targets the pane being driven, not a hidden board pin. */
+export function writePaneInstrument(
+  ref: MarketRef,
+  owner: {
+    pairSource: 'override' | 'variable' | 'global' | null
+    setPaneOverride: (slot: string, value: unknown) => void
+    setVariableValue: (value: unknown) => void
+  } | null,
+): boolean {
+  const value = { pairKey: ref.id, market: ref.market }
+  if (owner?.pairSource === 'override')
+    owner.setPaneOverride('active-pair', value)
+  else if (owner?.pairSource === 'variable') owner.setVariableValue(value)
+  else return false // The route owns a following chart; leave navigation to the caller.
+  return true
+}
+
+/** A new binding must never relabel the previous engine's candles. */
+export function chartSnapshotReady(input: {
+  hasSnapshot: boolean
+  noData: boolean
+  pair: string
+  timeframe: string
+  enginePair: string | undefined
+  engineTimeframe: string | undefined
+}): boolean {
+  return (
+    input.hasSnapshot &&
+    !input.noData &&
+    input.enginePair === input.pair &&
+    input.engineTimeframe === input.timeframe
+  )
 }

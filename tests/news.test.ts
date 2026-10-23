@@ -79,3 +79,36 @@ test('deduplicated publisher stories retain earnings classification from either 
  const result=await service.get({topics:'financial_markets,earnings'});
  assert.equal(result.articles.length,1);
 });
+
+test('DASH project products resolve as crypto without tagging DoorDash or ordinary dash phrases',async()=>{
+ for(const title of ['Dash Platform 5.0 release schedule announced','DashPay wallet adds payment feature','Dash-to-Anything product update','DASH price rallies on crypto wallet adoption']){
+  const service=new NewsService(async()=>new Response(headline(title,'coindesk.com')),[source]);
+  for(const tickers of ['DASH','CRYPTO:DASH','DASH-USDC-USDC','Dash cryptocurrency','DashPay']){
+   const result=await service.get({tickers});assert.equal(result.articles.length,1,`${title} / ${tickers}`);
+   assert(result.articles[0].tickerSentiment.some(t=>t.ticker==='CRYPTO:DASH'));
+   assert(!result.articles[0].tickerSentiment.some(t=>t.ticker==='DASH'));
+  }
+ }
+ for(const title of ['DoorDash shares rise after earnings','NASDAQ:DASH stock upgrade','A dash of optimism returns to crypto markets','A DASH for cash lifts markets']){
+  const item=parseNewsRss(headline(title),markets)[0];assert(!item.tickerSentiment.some(t=>t.ticker==='CRYPTO:DASH'),title);
+ }
+});
+
+test('explicit stock:DASH and DoorDash requests remain equity news rather than Dash cryptocurrency',async()=>{
+ const service=new NewsService(async()=>new Response(headline('DoorDash shares rise after earnings')),[markets]);
+ for(const tickers of ['STOCK:DASH','STOCKS:DASH','DoorDash']){
+  const result=await service.get({tickers});assert.equal(result.articles.length,1,tickers);assert.deepEqual(result.coverage.normalizedTickers,['DASH']);
+ }
+ assert.equal((await service.get({tickers:'CRYPTO:DASH'})).articles.length,0);
+});
+
+test('unsupported ticker matching and retained headline lookback remain explicit for zero matches',async()=>{
+ const service=new NewsService(async()=>new Response(xml),[source]);
+ const missing=await service.get({tickers:'CRYPTO:UNSUPPORTED',time_from:'20261001T0000',time_to:'20261008T0000'});
+ assert.deepEqual(missing.coverage.unsupportedTickers,['CRYPTO:UNSUPPORTED']);
+ assert.equal(missing.coverage.matchingStatus,'unsupported');
+ assert.equal(missing.coverage.archiveSearched,false);assert.equal(missing.coverage.articleBodiesSearched,false);
+ assert.equal(missing.coverage.requestedFrom,'2026-10-01T00:00:00.000Z');assert.equal(missing.coverage.requestedTo,'2026-10-08T00:00:59.999Z');
+ assert.equal(missing.coverage.oldestPublishedAt,'2026-10-07T12:00:00.000Z');
+ const dash=await service.get({tickers:'DASH'});assert.equal(dash.coverage.matchingStatus,'supported');assert.equal(dash.articles.length,0);assert.equal(dash.coverage.exhaustive,false);
+});

@@ -8562,7 +8562,7 @@ index 553652d..ed08af2 100644
  
              {error && <p className="text-destructive text-xs">{error}</p>}
 diff --git a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
-index d295e08..8afa1df 100644
+index d295e08..c59d7ec 100644
 --- a/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 +++ b/apps/terminal/src/components/assistant-dock/assistant-conversation.tsx
 @@ -66,6 +66,7 @@ import { track } from '@/lib/analytics-events'
@@ -8573,15 +8573,31 @@ index d295e08..8afa1df 100644
  import { useMarketRefWithPreferred } from '@/lib/market-ref/use-market-ref'
  import { credentialMarketFor } from '@/lib/venues/credential-alias'
  import { useCredentialsStore } from '@/stores/credentials-store'
-@@ -90,6 +91,7 @@ import {
+@@ -90,8 +91,10 @@ import {
  } from '@/components/assistant/assistant-question-card'
  
  import { AssistantTransport } from '@/lib/assistant-core/assistant-transport'
 +import { describeAssistantError } from '@/lib/assistant-core/assistant-error'
  import { useAssistantDeps } from '@/lib/assistant-core/assistant-provider'
  import { executeClientTool } from '@/lib/assistant-core/client-tools'
++import { CHART_ACTION_TOOL_NAMES } from '@/lib/copilot/chart-tools'
  import { ASSISTANT_ALL_TOOL_LABELS } from '@/lib/assistant-core/tool-labels'
-@@ -590,37 +592,20 @@ function AssistantConversationInner({
+ import { humanizeToolName } from '@/lib/copilot/tool-labels'
+ import { runSurfaceAction } from '@/lib/assistant-core/surface-tools'
+@@ -332,6 +335,12 @@ function AssistantConversationInner({
+             }
+             stats.tools += 1
+             runStatsRef.current.set(id, stats)
++            // Chart tools execute through their transport or surface approval
++            // handlers. Generic forwarding would duplicate or bypass those effects.
++            if (
++              CHART_ACTION_TOOL_NAMES.some((name) => name === toolCall.toolName)
++            )
++              return
+             const host = hostRef.current
+             executeClientTool(
+               toolCall.toolName,
+@@ -590,37 +599,20 @@ function AssistantConversationInner({
              error: i18n.t('security.vault.orderBlocked'),
            }
          }
@@ -8632,7 +8648,7 @@ index d295e08..8afa1df 100644
          } catch (err) {
            return {
              success: false,
-@@ -771,6 +756,10 @@ function AssistantConversationInner({
+@@ -771,6 +763,10 @@ function AssistantConversationInner({
    }, [chart, t])
  
    const billingErrorCode = parseBillingErrorCode(error?.message)
@@ -8643,17 +8659,16 @@ index d295e08..8afa1df 100644
    const trackedErrorRef = useRef<unknown>(null)
    useEffect(() => {
      if (!error || trackedErrorRef.current === error) return
-@@ -807,9 +796,7 @@ function AssistantConversationInner({
-             // A failed run used to be a dead end: the prompt was gone and
+@@ -808,7 +804,8 @@ function AssistantConversationInner({
              // the only way forward was to type it again.
              <div className="text-destructive bg-destructive/10 flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs">
--              <span className="min-w-0 flex-1">
+               <span className="min-w-0 flex-1">
 -                {t('assistantDock.genericError')}
--              </span>
-+              <span className="min-w-0 flex-1">{assistantError.message} Diagnostic: QT-AI/{assistantError.code}{assistantError.status ? `/${assistantError.status}` : ''}.</span>
++                {assistantError.message} Diagnostic: QT-AI/{assistantError.code}
++                {assistantError.status ? `/${assistantError.status}` : ''}.
+               </span>
                <Button
                  variant="ghost"
-                 size="sm"
 diff --git a/apps/terminal/src/components/bots/bots-page.tsx b/apps/terminal/src/components/bots/bots-page.tsx
 index e94e412..20ca599 100644
 --- a/apps/terminal/src/components/bots/bots-page.tsx
@@ -9738,6 +9753,102 @@ index 57af918..b739acf 100644
      description:
        input.description?.trim() ||
        `Custom Python chart indicator: ${descriptor.meta.title}`,
+diff --git a/apps/terminal/src/components/layout/layout-pane-renderer.tsx b/apps/terminal/src/components/layout/layout-pane-renderer.tsx
+index 17d44e0..2947bc4 100644
+--- a/apps/terminal/src/components/layout/layout-pane-renderer.tsx
++++ b/apps/terminal/src/components/layout/layout-pane-renderer.tsx
+@@ -8,8 +8,15 @@ import { useNavigate } from '@tanstack/react-router'
+ import { Button } from '@pairlens/ui/components/ui/button'
+ 
+ import { PaneErrorBoundary } from './pane-error-boundary'
++import type { ReactNode } from 'react'
+ import { usePaneRegistry } from '@/lib/layout/pane-registry'
+-import { PaneContextProvider } from '@/lib/layout/pane-context'
++import {
++  PaneContextProvider,
++  usePaneContext,
++  usePanePair,
++} from '@/lib/layout/pane-context'
++import { useOptionalChartConfig } from '@/lib/chart-terminal-context'
++import { paneRecoveryKey } from '@/lib/chart-pane-navigation'
+ import { PluginHostProvider } from '@/lib/plugin-host-provider'
+ 
+ function PaneLoading() {
+@@ -20,6 +27,29 @@ function PaneLoading() {
+   )
+ }
+ 
++function BoundPaneErrorBoundary({
++  paneType,
++  children,
++}: {
++  paneType: string
++  children: ReactNode
++}) {
++  const { paneId } = usePaneContext()
++  const pair = usePanePair()
++  const config = useOptionalChartConfig()
++  const resetKey = paneRecoveryKey({
++    paneId,
++    paneType,
++    pair,
++    timeframe: config?.timeframe,
++  })
++  return (
++    <PaneErrorBoundary paneType={paneType} resetKey={resetKey}>
++      {children}
++    </PaneErrorBoundary>
++  )
++}
++
+ function MissingPaneUI({ type }: { type: string }) {
+   const { t } = useTranslation()
+   const navigate = useNavigate()
+@@ -71,11 +101,11 @@ export function LayoutPaneRenderer({
+   }
+ 
+   const content = (
+-    <PaneErrorBoundary paneType={type}>
++    <BoundPaneErrorBoundary paneType={type}>
+       <Suspense fallback={<PaneLoading />}>
+         <Component />
+       </Suspense>
+-    </PaneErrorBoundary>
++    </BoundPaneErrorBoundary>
+   )
+ 
+   return (
+diff --git a/apps/terminal/src/components/layout/pane-error-boundary.tsx b/apps/terminal/src/components/layout/pane-error-boundary.tsx
+index ccf87b5..6cf329b 100644
+--- a/apps/terminal/src/components/layout/pane-error-boundary.tsx
++++ b/apps/terminal/src/components/layout/pane-error-boundary.tsx
+@@ -9,16 +9,26 @@ import type { ErrorInfo, ReactNode } from 'react'
+ 
+ type Props = {
+   paneType: string
++  resetKey?: string
+   children: ReactNode
+ }
+ 
+ type State = {
+   hasError: boolean
++  resetKey?: string
+ }
+ 
+ export class PaneErrorBoundary extends Component<Props, State> {
+   state: State = { hasError: false }
+ 
++  // Recover when the pane actually changes instrument, venue or timeframe.
++  // Keeping the failed key latched avoids an infinite retry of the same crash.
++  static getDerivedStateFromProps(props: Props, state: State): State | null {
++    return props.resetKey !== state.resetKey
++      ? { hasError: false, resetKey: props.resetKey }
++      : null
++  }
++
+   static getDerivedStateFromError(): State {
+     return { hasError: true }
+   }
 diff --git a/apps/terminal/src/components/layout/pane-pair-picker.tsx b/apps/terminal/src/components/layout/pane-pair-picker.tsx
 index 367bea8..f713eec 100644
 --- a/apps/terminal/src/components/layout/pane-pair-picker.tsx
@@ -10215,7 +10326,7 @@ index a390999..0654755 100644
          <Star className="ml-auto size-3 fill-amber-400 text-amber-400" />
        )}
 diff --git a/apps/terminal/src/components/pair-picker/pair-switcher.tsx b/apps/terminal/src/components/pair-picker/pair-switcher.tsx
-index a84e9a6..84e8c4b 100644
+index a84e9a6..4e55aa2 100644
 --- a/apps/terminal/src/components/pair-picker/pair-switcher.tsx
 +++ b/apps/terminal/src/components/pair-picker/pair-switcher.tsx
 @@ -16,7 +16,7 @@
@@ -10227,7 +10338,7 @@ index a84e9a6..84e8c4b 100644
  import { Check, ChevronDown, Search } from 'lucide-react'
  import { useTranslation } from 'react-i18next'
  
-@@ -29,7 +29,14 @@ import {
+@@ -29,10 +29,18 @@ import {
  } from '@pairlens/ui/components/ui/popover'
  import { Skeleton } from '@pairlens/ui/components/ui/skeleton'
  
@@ -10243,7 +10354,11 @@ index a84e9a6..84e8c4b 100644
  import type { InstrumentClass } from '@pairlens/shared/market-ref'
  
  import type { PairEntry } from '@/components/pair-picker/pair-picker-data'
-@@ -40,6 +47,7 @@ import {
++import type { ChartServiceHandle } from '@/lib/assistant-core/chart-service'
+ import { HEADER_CHIP } from '@/components/chrome/header-chrome'
+ import { PairLogo, PairSymbol } from '@/components/pair-picker/pair-avatar'
+ import {
+@@ -40,6 +48,7 @@ import {
    catalogClassOf,
    crossClassPairFor,
    instrumentToPairEntry,
@@ -10251,15 +10366,18 @@ index a84e9a6..84e8c4b 100644
    pinSelectedEntry,
  } from '@/components/pair-picker/pair-picker-data'
  import { usePairSearchData } from '@/components/pair-picker/pair-search-results'
-@@ -56,6 +64,7 @@ import { assetClassVisual } from '@/lib/asset-class/visuals'
+@@ -55,7 +64,10 @@ import { classFromSymbolShape, entryToMarketRef } from '@/lib/market-ref/entry'
+ import { assetClassVisual } from '@/lib/asset-class/visuals'
  import { track } from '@/lib/analytics-events'
  import { chartLinkProps } from '@/lib/market-ref/link'
++import { CHART_SERVICE_NAME } from '@/lib/assistant-core/chart-service'
++import { useServiceRegistry } from '@/lib/service-registry-context'
  import { usePairlens } from '@/lib/pairlens-provider'
 +import { splitPairAssets } from '@/lib/pairs'
  import { useWatchlistsStore } from '@/stores/watchlists-store'
  import {
    lookupPredictionEvent,
-@@ -64,7 +73,6 @@ import {
+@@ -64,7 +76,6 @@ import {
  
  const MAX_RECENT = 6
  const MAX_POPULAR = 8
@@ -10267,7 +10385,7 @@ index a84e9a6..84e8c4b 100644
  
  type PairSwitcherProps = {
    pairKey: string
-@@ -148,9 +156,7 @@ function synthesizeEntry(symbol: string, cls?: InstrumentClass): PairEntry {
+@@ -148,9 +159,7 @@ function synthesizeEntry(symbol: string, cls?: InstrumentClass): PairEntry {
        ...(typeof pinned.endMs === 'number' ? { endMs: pinned.endMs } : {}),
      }
    }
@@ -10278,10 +10396,11 @@ index a84e9a6..84e8c4b 100644
    return {
      id: symbol,
      symbol,
-@@ -173,8 +179,13 @@ export function PairSwitcher({
+@@ -173,8 +182,14 @@ export function PairSwitcher({
  }: PairSwitcherProps) {
    const { t } = useTranslation()
    const navigate = useNavigate()
++  const services = useServiceRegistry()
 +  const pathname = useRouterState({
 +    select: (state) => state.location.pathname,
 +  })
@@ -10292,7 +10411,7 @@ index a84e9a6..84e8c4b 100644
    const [activeIndex, setActiveIndex] = useState(0)
    const listRef = useRef<HTMLDivElement>(null)
  
-@@ -241,7 +252,8 @@ export function PairSwitcher({
+@@ -241,7 +256,8 @@ export function PairSwitcher({
          .slice(0, MAX_RECENT)
          .map(
            (ref) =>
@@ -10302,7 +10421,7 @@ index a84e9a6..84e8c4b 100644
          ),
      [recentSymbols, pairKey, pairsBySymbol],
    )
-@@ -259,21 +271,38 @@ export function PairSwitcher({
+@@ -259,21 +275,38 @@ export function PairSwitcher({
    // opened on AAPL and MSFT. It also collapses `memecoin` onto `dex`, which is
    // how the catalog files one.
    const popularEntries = useMemo(() => {
@@ -10345,7 +10464,7 @@ index a84e9a6..84e8c4b 100644
  
    // The same pair under its other class, when it has one. `classOf` cannot
    // answer this: its shape fallback calls anything with a dash 'crypto', so a
-@@ -285,9 +314,18 @@ export function PairSwitcher({
+@@ -285,9 +318,18 @@ export function PairSwitcher({
      return crossClassPairFor({ cls, id: pairKey }, pairsBySymbol)
    }, [assetClass, pairKey, pairsBySymbol])
  
@@ -10365,7 +10484,7 @@ index a84e9a6..84e8c4b 100644
        return items.length > 0
          ? [{ id: 'results', label: t('search.results'), items }]
          : []
-@@ -297,7 +335,7 @@ export function PairSwitcher({
+@@ -297,7 +339,7 @@ export function PairSwitcher({
        out.push({
          id: 'recent',
          label: t('search.recent'),
@@ -10374,7 +10493,7 @@ index a84e9a6..84e8c4b 100644
        })
      }
      // After the recents, so Enter on an untouched box still takes the pair you
-@@ -314,18 +352,27 @@ export function PairSwitcher({
+@@ -314,18 +356,27 @@ export function PairSwitcher({
          label: t('pairPicker.otherClass', {
            cls: t(assetClassVisual(crossClass.cls).labelKey),
          }),
@@ -10405,18 +10524,27 @@ index a84e9a6..84e8c4b 100644
  
    const flatItems = useMemo(() => sections.flatMap((s) => s.items), [sections])
  
-@@ -391,7 +438,9 @@ export function PairSwitcher({
+@@ -390,11 +441,16 @@ export function PairSwitcher({
+       setSearchValue('')
        // The route records the visit itself (every entry point must feed the
        // recents history, not just this one), so no tracking call here.
-       void navigate(
+-      void navigate(
 -        chartLinkProps(entryToMarketRef(pair, resolveMarket(pair.assetClass))),
-+        chartLinkProps(
-+          entryToMarketRef(pair, pair.market ?? resolveMarket(pair.assetClass)),
-+        ),
++      const ref = entryToMarketRef(
++        pair,
++        pair.market ?? resolveMarket(pair.assetClass),
        )
++      // This explicit selection drives the active chart too. Merely changing
++      // the route leaves an independently pinned pane on its previous coin.
++      services.get<ChartServiceHandle>(CHART_SERVICE_NAME)?.setInstrument?.(ref)
++      void navigate(chartLinkProps(ref))
      },
-     [navigate, setAssetClassMap, crossClass, resolveMarket],
-@@ -481,6 +530,8 @@ export function PairSwitcher({
+-    [navigate, setAssetClassMap, crossClass, resolveMarket],
++    [navigate, setAssetClassMap, crossClass, resolveMarket, services],
+   )
+ 
+   const handleKeyDown = useCallback(
+@@ -481,6 +537,8 @@ export function PairSwitcher({
            </div>
          </div>
  
@@ -10425,7 +10553,7 @@ index a84e9a6..84e8c4b 100644
          <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
            {sections.map((section, si) => (
              <div key={section.id}>
-@@ -495,7 +546,10 @@ export function PairSwitcher({
+@@ -495,7 +553,10 @@ export function PairSwitcher({
                      pair={pair}
                      index={index}
                      isActive={index === activeIndex}
@@ -10437,7 +10565,7 @@ index a84e9a6..84e8c4b 100644
                      onActivate={setActiveIndex}
                      onSelect={handleSelect}
                    />
-@@ -522,6 +576,10 @@ export function PairSwitcher({
+@@ -522,6 +583,10 @@ export function PairSwitcher({
                </div>
              ))}
  
@@ -10448,7 +10576,7 @@ index a84e9a6..84e8c4b 100644
            <SnapshotAgeFooter visible={hasQuery} />
          </div>
        </PopoverContent>
-@@ -575,7 +633,14 @@ const PairSwitcherRow = memo(function PairSwitcherRow({
+@@ -575,7 +640,14 @@ const PairSwitcherRow = memo(function PairSwitcherRow({
        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
          {pair.name}
        </span>
@@ -10830,10 +10958,25 @@ index cca89cf..fee9b05 100644
          <span
            key={phase}
 diff --git a/apps/terminal/src/components/terminal/chart-pane.tsx b/apps/terminal/src/components/terminal/chart-pane.tsx
-index d9d3262..470c83a 100644
+index d9d3262..32ce3bb 100644
 --- a/apps/terminal/src/components/terminal/chart-pane.tsx
 +++ b/apps/terminal/src/components/terminal/chart-pane.tsx
-@@ -33,6 +33,7 @@ import {
+@@ -1,6 +1,13 @@
+ // Copyright (c) 2026 Juan Ignacio Molina Estrada
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+-import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
++import {
++  memo,
++  useCallback,
++  useContext,
++  useEffect,
++  useMemo,
++  useRef,
++} from 'react'
+ import { useTranslation } from 'react-i18next'
+ import { toast } from 'sonner'
+ 
+@@ -33,6 +40,7 @@ import {
    useOptionalChartActions,
    useOptionalChartConfig,
  } from '@/lib/chart-terminal-context'
@@ -10841,8 +10984,15 @@ index d9d3262..470c83a 100644
  import { CHART_SERVICE_NAME } from '@/lib/assistant-core/chart-service'
  import { buildChartSnapshot } from '@/lib/assistant-core/client-tools'
  import { useChartPaneShortcuts } from '@/lib/chart-shortcuts'
-@@ -48,6 +49,8 @@ import { useIsPredictionPair } from '@/hooks/use-prediction-pair'
+@@ -46,8 +54,15 @@ import { useAvailableMarkets } from '@/hooks/use-available-markets'
+ import { useMarketCredentialGate } from '@/hooks/use-market-credential-gate'
+ import { useIsPredictionPair } from '@/hooks/use-prediction-pair'
  import { useNotificationStore } from '@/stores/notification-store'
++import { PaneContext } from '@/lib/layout/pane-context'
++import {
++  chartSnapshotReady,
++  writePaneInstrument,
++} from '@/lib/chart-pane-navigation'
  
  /** Command-id prefixes the chart dispatches generically. */
 +const focusedChartServices = new FocusedChartServices<ChartServiceHandle>()
@@ -10850,7 +11000,58 @@ index d9d3262..470c83a 100644
  const TOOL_COMMAND_PREFIX = 'chart.tool.'
  const TIMEFRAME_COMMAND_PREFIX = 'chart.timeframe.'
  
-@@ -261,10 +264,22 @@ const ChartPaneInner = memo(function ChartPaneInner({
+@@ -106,6 +121,7 @@ const ChartPaneInner = memo(function ChartPaneInner({
+ }) {
+   const containerRef = useRef<HTMLDivElement>(null)
+   const serviceRegistry = useServiceRegistry()
++  const pane = useContext(PaneContext)
+   const { markets } = useAvailableMarkets()
+   // A probability series reads in cents on both axes; the venue's asset class
+   // is the signal, with the directory pin covering a shared link.
+@@ -219,6 +235,9 @@ const ChartPaneInner = memo(function ChartPaneInner({
+     pair: pairKey,
+     timeframe: chartConfig.timeframe,
+     marketContextRef,
++    hasSnapshot,
++    noData,
++    pane,
+   }
+   const liveRef = useRef(live)
+   liveRef.current = live
+@@ -240,13 +259,30 @@ const ChartPaneInner = memo(function ChartPaneInner({
+       get timeframe() {
+         return liveRef.current.timeframe
+       },
++      setInstrument: (ref) => writePaneInstrument(ref, liveRef.current.pane),
+       addIndicator: (indicator) =>
+         liveRef.current.chartActions.addIndicator(indicator),
+       removeIndicator: (id) => liveRef.current.chartActions.removeIndicator(id),
+       removeAllIndicators: () =>
+         liveRef.current.chartActions.removeAllIndicators(),
+-      getSnapshot: () =>
+-        buildChartSnapshot(liveRef.current.chartRef.current ?? null),
++      getSnapshot: () => {
++        const current = liveRef.current
++        const chart = current.chartRef.current
++        if (!chart || !current.hasSnapshot || current.noData) return null
++        const snapshot = buildChartSnapshot(chart)
++        if (
++          !chartSnapshotReady({
++            hasSnapshot: current.hasSnapshot,
++            noData: current.noData,
++            pair: current.pair,
++            timeframe: current.timeframe,
++            enginePair: chart.seriesOrder()[0],
++            engineTimeframe: snapshot?.timeframe,
++          })
++        )
++          return null
++        return snapshot ? { ...snapshot, market: current.market } : null
++      },
+       // Candles and the latest signal only. The ticker is deliberately absent:
+       // subscribing to it here would make the chart pane re-render on every
+       // ticker message, which is exactly the invariant the pane exists to keep.
+@@ -261,10 +297,22 @@ const ChartPaneInner = memo(function ChartPaneInner({
    const serviceRegistryRef = useRef(serviceRegistry)
    serviceRegistryRef.current = serviceRegistry
  
@@ -10877,7 +11078,7 @@ index d9d3262..470c83a 100644
  
    // Keyboard shortcuts delivered by the window-level router — they work no
    // matter where DOM focus sits, targeting the active (last-used) chart pane.
-@@ -340,7 +355,11 @@ const ChartPaneInner = memo(function ChartPaneInner({
+@@ -340,7 +388,11 @@ const ChartPaneInner = memo(function ChartPaneInner({
        ref={containerRef}
        className="flex h-full flex-col outline-none"
        tabIndex={-1}
@@ -11074,6 +11275,168 @@ index d76fb61..4698406 100644
          {/* This venue serves no CORS headers and streams no candle
              history, so a browser build cannot read it at all. Say
              so before the click rather than after. Desktop reaches
+diff --git a/apps/terminal/src/components/terminal/recent-tickers-marquee.tsx b/apps/terminal/src/components/terminal/recent-tickers-marquee.tsx
+index 02b8a09..f3b07ff 100644
+--- a/apps/terminal/src/components/terminal/recent-tickers-marquee.tsx
++++ b/apps/terminal/src/components/terminal/recent-tickers-marquee.tsx
+@@ -15,11 +15,14 @@ import {
+ import type { InstrumentRef, MarketRef } from '@pairlens/shared/market-ref'
+ 
+ import type { TickDirection } from '@/hooks/use-live-pair-price'
++import type { ChartServiceHandle } from '@/lib/assistant-core/chart-service'
+ import { PairSymbol } from '@/components/pair-picker/pair-avatar'
+ import { useLivePairPrice } from '@/hooks/use-live-pair-price'
+ import { useMarketRefOrNull } from '@/lib/market-ref/use-market-ref'
+ import { useRecentPairs } from '@/lib/recent-tickers'
+ import { formatPredictionPrice, formatPrice } from '@/lib/format-price'
++import { CHART_SERVICE_NAME } from '@/lib/assistant-core/chart-service'
++import { useServiceRegistry } from '@/lib/service-registry-context'
+ 
+ // Horizontal scroll speed of the marquee track, px/s.
+ const SCROLL_SPEED = 30
+@@ -42,6 +45,7 @@ export function RecentTickersMarquee({ current }: { current: MarketRef }) {
+   const [recentPairs, , removeRecent] = useRecentPairs()
+   const resolveRef = useMarketRefOrNull()
+   const navigate = useNavigate()
++  const services = useServiceRegistry()
+ 
+   const currentKey = formatMarketRef(current)
+ 
+@@ -57,9 +61,10 @@ export function RecentTickersMarquee({ current }: { current: MarketRef }) {
+ 
+   const handleSelect = useCallback(
+     (ref: MarketRef) => {
++      services.get<ChartServiceHandle>(CHART_SERVICE_NAME)?.setInstrument?.(ref)
+       void navigate({ to: marketRefToPath(ref) })
+     },
+-    [navigate],
++    [navigate, services],
+   )
+ 
+   // Auto-scroll only when the chips overflow the container.
+diff --git a/apps/terminal/src/components/terminal/terminal-chart.tsx b/apps/terminal/src/components/terminal/terminal-chart.tsx
+index 477ef85..15ba698 100644
+--- a/apps/terminal/src/components/terminal/terminal-chart.tsx
++++ b/apps/terminal/src/components/terminal/terminal-chart.tsx
+@@ -1,7 +1,11 @@
+ // Copyright (c) 2026 Juan Ignacio Molina Estrada
+ // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+-import { memo, useCallback, useMemo } from 'react'
++import { memo, useCallback, useMemo, useState } from 'react'
+ import { FastFinancialChart } from '@pairlens/fast-financial-charts/react'
++import {
++  ChartGraphicsBoundary,
++  CompatibilityChart,
++} from './compatibility-chart'
+ import { ChartHud } from './chart-hud'
+ import { ChartIndicatorsBar } from './chart-indicators-bar'
+ import type { RefObject } from 'react'
+@@ -102,6 +106,7 @@ export const TerminalChart = memo(function TerminalChart({
+     [crosshairMode],
+   )
+ 
++  const [graphicsAttempt, setGraphicsAttempt] = useState(0)
+   const priceScale = useMemo(
+     () => ({ inverted: invertedScale }),
+     [invertedScale],
+@@ -164,40 +169,63 @@ export const TerminalChart = memo(function TerminalChart({
+ 
+   return (
+     <div className="relative min-h-0 flex-1 overflow-hidden bg-background">
+-      <FastFinancialChart
+-        ref={chartRef}
+-        series={series}
+-        timeframe={timeframe}
+-        chartType={chartType}
+-        priceScaleMode={priceScaleMode}
+-        priceScale={priceScale}
+-        activeTool={activeTool}
+-        drawingStyleDefaults={drawingStyleDefaults}
+-        theme={theme}
+-        className="h-full w-full"
+-        compareMode={compareMode}
+-        crosshairConfig={crosshairConfig}
+-        baselineConfig={baselineConfig}
+-        watermark={watermark}
+-        timeScale={timeScale}
+-        defaultViewport={defaultViewport}
+-        snapshotThrottleMs={120}
+-        localization={localization}
+-        interaction={interaction}
+-        onDrawingsChange={onDrawingsChange ?? noop}
+-        onReady={onChartReady}
+-        onViewportChange={onViewportChange}
+-        onActiveToolChange={onActiveToolChange}
+-        onRequestTextInput={onRequestTextInput}
+-        onContextMenu={handleContextMenu}
+-        renderHud={(hud) => <ChartHud hud={hud} />}
+-        renderTopBar={(topbar) => (
+-          <ChartIndicatorsBar
+-            topbar={topbar}
+-            onRemoveIndicator={onRemoveIndicator}
+-          />
+-        )}
+-      />
++      <ChartGraphicsBoundary
++        key={graphicsAttempt}
++        fallback={
++          <>
++            <CompatibilityChart
++              chartRef={chartRef}
++              series={series}
++              timeframe={timeframe}
++              onReady={onChartReady}
++              onDrawingsChange={onDrawingsChange}
++              onViewportChange={onViewportChange}
++            />
++            <button
++              type="button"
++              className="absolute right-2 top-1 z-20 text-xs text-muted-foreground"
++              onClick={() => setGraphicsAttempt((value) => value + 1)}
++            >
++              Retry graphics
++            </button>
++          </>
++        }
++      >
++        <FastFinancialChart
++          ref={chartRef}
++          series={series}
++          timeframe={timeframe}
++          chartType={chartType}
++          priceScaleMode={priceScaleMode}
++          priceScale={priceScale}
++          activeTool={activeTool}
++          drawingStyleDefaults={drawingStyleDefaults}
++          theme={theme}
++          className="h-full w-full"
++          compareMode={compareMode}
++          crosshairConfig={crosshairConfig}
++          baselineConfig={baselineConfig}
++          watermark={watermark}
++          timeScale={timeScale}
++          defaultViewport={defaultViewport}
++          snapshotThrottleMs={120}
++          localization={localization}
++          interaction={interaction}
++          onDrawingsChange={onDrawingsChange ?? noop}
++          onReady={onChartReady}
++          onViewportChange={onViewportChange}
++          onActiveToolChange={onActiveToolChange}
++          onRequestTextInput={onRequestTextInput}
++          onContextMenu={handleContextMenu}
++          renderHud={(hud) => <ChartHud hud={hud} />}
++          renderTopBar={(topbar) => (
++            <ChartIndicatorsBar
++              topbar={topbar}
++              onRemoveIndicator={onRemoveIndicator}
++            />
++          )}
++        />
++      </ChartGraphicsBoundary>
+     </div>
+   )
+ })
 diff --git a/apps/terminal/src/components/terminal/trade-connect-gate.tsx b/apps/terminal/src/components/terminal/trade-connect-gate.tsx
 index 5940dd1..123c8cf 100644
 --- a/apps/terminal/src/components/terminal/trade-connect-gate.tsx
@@ -13474,6 +13837,44 @@ index 39aaa14..3f0d7f5 100644
      if (!isDomainSyncEnabled('trades')) {
        return Promise.reject(
          new SyncDisabledError(
+diff --git a/apps/terminal/src/lib/assistant-core/__tests__/client-tools-snapshot.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/client-tools-snapshot.test.ts
+index bb69782..9cadf1a 100644
+--- a/apps/terminal/src/lib/assistant-core/__tests__/client-tools-snapshot.test.ts
++++ b/apps/terminal/src/lib/assistant-core/__tests__/client-tools-snapshot.test.ts
+@@ -33,11 +33,12 @@ function fakeChart(opts: {
+   indicators: Array<IndicatorRow>
+   results: Array<{ id: string; values: Array<ValuePoint> }>
+   timeframe?: string
++  drawings?: Array<Record<string, unknown>>
+ }): FastFinancialChartRef {
+   const lite = {
+     timeframe: opts.timeframe ?? '1h',
+     indicators: opts.indicators,
+-    drawings: [],
++    drawings: opts.drawings ?? [],
+     viewport: { startIndex: 0, endIndex: 10 },
+   }
+   return {
+@@ -62,6 +63,19 @@ function fakeChart(opts: {
+ }
+ 
+ describe('buildChartSnapshot indicators', () => {
++  it('preserves drawing geometry so a rendered level or band can be verified', () => {
++    const snap = buildChartSnapshot(fakeChart({
++      indicators: [], results: [],
++      drawings: [
++        { id: 'level', type: 'hline', price: 100, visible: true, seriesId: 'DASH-USDC-USDC' },
++        { id: 'band', type: 'rectangle', points: [{ ts: T0, price: 95 }, { ts: T0 + HOUR, price: 105 }], visible: true },
++      ],
++    }))
++    expect(snap?.drawings).toEqual([
++      { id: 'level', type: 'hline', price: 100, visible: true, seriesId: 'DASH-USDC-USDC' },
++      { id: 'band', type: 'rectangle', points: [{ ts: T0, price: 95 }, { ts: T0 + HOUR, price: 105 }], visible: true },
++    ])
++  })
+   it('includes the last computed point and a recent window of values', () => {
+     const values = [
+       { ts: T0, value: 40 },
 diff --git a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
 index b93724f..7196259 100644
 --- a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
@@ -13551,10 +13952,50 @@ index b93724f..7196259 100644
 +  expect(result.totals).toBeUndefined()
 +})
 diff --git a/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
-index e51eeb9..b6fe0ff 100644
+index e51eeb9..94a0f23 100644
 --- a/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
 +++ b/apps/terminal/src/lib/assistant-core/__tests__/tools.test.ts
-@@ -180,6 +180,10 @@ describe('per-step tool gating', () => {
+@@ -122,6 +122,39 @@ describe('the unified tool set', () => {
+     expect(names).toContain('add_pane')
+   })
+ 
++  test.each([true, false])(
++    'preserves specialized chart action execution and approval: %s',
++    async (needsApproval) => {
++      const registry = new AssistantSurfaceRegistry()
++      let called = 0
++      registry.register({
++        id: 'specialized',
++        getActions: () => [
++          {
++            name: 'add_indicator',
++            description: 'Surface-specific action',
++            inputSchema: z.object({ type: z.string() }),
++            needsApproval,
++            execute: () => {
++              called++
++              return 'surface-executed'
++            },
++          },
++        ],
++      })
++      const action = buildAssistantToolSet(stubDeps({ registry })).add_indicator
++      if (needsApproval) expect(action.execute).toBeUndefined()
++      else
++        expect(
++          await action.execute?.(
++            { type: 'EMA' },
++            { toolCallId: 'special', messages: [] },
++          ),
++        ).toBe('surface-executed')
++      expect(called).toBe(needsApproval ? 0 : 1)
++    },
++  )
++
+   test('every tool has a chip label', () => {
+     const names = Object.keys(buildAssistantToolSet(stubDeps()))
+     const missing = names.filter((name) => !(name in ASSISTANT_ALL_TOOL_LABELS))
+@@ -180,6 +213,10 @@ describe('per-step tool gating', () => {
      // The reads are not gated: a chart tool the model cannot fire is one
      // thing, a market question it cannot answer is another.
      expect(active).toContain('get_market_snapshot')
@@ -13566,7 +14007,7 @@ index e51eeb9..b6fe0ff 100644
  
    test('offers them again once a chart is there', () => {
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-brain.ts b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
-index ce0d317..e330250 100644
+index ce0d317..d46be26 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-brain.ts
 @@ -12,6 +12,8 @@
@@ -13578,7 +14019,7 @@ index ce0d317..e330250 100644
  export type AssistantPersona = 'mentor' | 'balanced' | 'technical'
  
  export type AssistantPromptContext = {
-@@ -46,6 +48,8 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
+@@ -46,11 +48,14 @@ const PERSONA_INSTRUCTIONS: Record<AssistantPersona, string> = {
  }
  
  const CAPABILITIES = [
@@ -13587,7 +14028,13 @@ index ce0d317..e330250 100644
    'Markets: pull candles, tickers, order books, the live trade tape, signals, multi-timeframe reads and comparisons for ANY instrument on ANY connected venue. You are never limited to what is on screen. Search instruments you do not know the id of, and open any of them with open_instrument.',
    'Prediction markets: read a whole event with get_prediction_event (every outcome, its probability, bid, ask and 24h move, plus what the whole field costs) and find one with search_prediction_events. A prediction price lives on the event, so these are the only tools that can see one: candles and order books address a single outcome. Never say you cannot see the prices on a prediction board without calling get_prediction_event first.',
    'Perps and equities: funding, open interest and liquidation clusters for perpetuals; the trading session, calendars, fundamentals and insider filings for stocks.',
-@@ -60,6 +64,12 @@ const CAPABILITIES = [
+   'Research: web search, news, top coins, fear & greed, asset overviews, and deep_research for a full sourced report.',
+   'Charts: add and configure indicators, draw levels, trendlines, fibs and annotations, change chart type and scale, compare symbols, run replay, and read back what is currently on the chart.',
++  'Before drawing or clearing a chart, read get_chart_state and match its target market, pair and timeframe to the user\'s intended chart. A route/header can differ from an explicitly pinned pane. Use switch_pair/switch_market/set_timeframe when needed, then verify the returned chart target before writing. Pass that exact non-null target as chartTarget to chart action tools. A requested command is not proof it rendered: only report applied drawings from verified readback with matching price/points and chart identity. Missing chart state or null drawings means unavailable, not an empty chart. Stop when the chart is unavailable or still switching; never draw off-scale levels on a different instrument, clear unrelated drawings, or claim success from an acknowledgment alone.',
+   'Account: portfolio, balances, open orders, connected wallets and venues, risk guardrails, trade journal and watchlists. You can see WHICH accounts are connected, never their keys: credentials are encrypted and unreadable to you.',
+   'Trading: prepare spot, perpetual and prediction-market orders for the user to confirm, and cancel resting ones.',
+   'Indicators and strategies: read, write and validate Python scripts, run backtests, and deploy a strategy as a bot.',
+@@ -60,6 +65,12 @@ const CAPABILITIES = [
  ]
  
  const WORKING_RULES = [
@@ -13600,7 +14047,7 @@ index ce0d317..e330250 100644
    'Act, do not narrate. When a request implies a tool, call it. Only ask when the request is genuinely ambiguous or a choice is the user’s to make, and then use ask_user so they get buttons, not a paragraph.',
    'Ground every claim in tool data. Never invent a price, level, balance, signal or fill.',
    'You can see the whole terminal, so use it: if the answer lives on a page the user is not on, read it with a tool rather than asking them to go and look.',
-@@ -73,10 +83,29 @@ const WORKING_RULES = [
+@@ -73,10 +84,29 @@ const WORKING_RULES = [
  ]
  
  const SAFETY_RULES = [
@@ -13633,7 +14080,7 @@ index ce0d317..e330250 100644
    'Alert flows and workflows you build land as uncommitted drafts for the user to review and commit. Simple price alerts go live on creation, so say so when you create one.',
    'You never see API keys, wallet private keys or vault contents. If a task needs a credential the user has not connected, say what is missing and point at Accounts.',
    'Never give financial advice and never guarantee an outcome. Analysis and mechanics, not recommendations to buy or sell.',
-@@ -94,7 +123,7 @@ export function buildAssistantSystemPrompt(
+@@ -94,7 +124,7 @@ export function buildAssistantSystemPrompt(
    const today = new Date().toISOString().slice(0, 10)
  
    const sections: Array<string> = [
@@ -13642,7 +14089,7 @@ index ce0d317..e330250 100644
      'You are not a sidebar chatbot. You sit above the whole terminal, you can see what the user is doing on any screen, and you can drive every part of it on their behalf.',
      `Today's date: ${today} (UTC).`,
      '',
-@@ -116,6 +145,8 @@ export function buildAssistantSystemPrompt(
+@@ -116,6 +146,8 @@ export function buildAssistantSystemPrompt(
      'How to work:',
      ...WORKING_RULES.map((line) => `- ${line}`),
      '',
@@ -13792,6 +14239,164 @@ index 26e075b..9c3ed54 100644
    }
  
    reconnectToStream: ChatTransport<UIMessage>['reconnectToStream'] = async () =>
+diff --git a/apps/terminal/src/lib/assistant-core/chart-service.ts b/apps/terminal/src/lib/assistant-core/chart-service.ts
+index 0873bcc..45cde94 100644
+--- a/apps/terminal/src/lib/assistant-core/chart-service.ts
++++ b/apps/terminal/src/lib/assistant-core/chart-service.ts
+@@ -13,6 +13,7 @@
+ // whole surface.
+ 
+ import type { RefObject } from 'react'
++import type { MarketRef } from '@pairlens/shared/market-ref'
+ import type {
+   FastFinancialChartRef,
+   IndicatorInstanceInput,
+@@ -37,6 +38,8 @@ export type ChartServiceHandle = {
+   market: string
+   pair: string
+   timeframe: string
++  /** Explicit assistant switching updates the active pane binding, including pins. */
++  setInstrument?: (ref: MarketRef) => boolean
+ 
+   /** The pane's full action surface: drawings, view config, compare, replay. */
+   chartActions: ChartActionsValue
+diff --git a/apps/terminal/src/lib/assistant-core/client-tools.ts b/apps/terminal/src/lib/assistant-core/client-tools.ts
+index 2cf9c7e..415623c 100644
+--- a/apps/terminal/src/lib/assistant-core/client-tools.ts
++++ b/apps/terminal/src/lib/assistant-core/client-tools.ts
+@@ -13,6 +13,7 @@
+ import { putScreenshot } from './screenshot-store'
+ import type { useNavigate } from '@tanstack/react-router'
+ import type {
++  ChartCommandResult,
+   ChartSnapshot,
+   FastFinancialChartRef,
+   IndicatorInstanceInput,
+@@ -192,7 +193,7 @@ export function executeClientTool(
+   toolName: string,
+   input: Record<string, unknown> | undefined,
+   ctx: ClientToolContext,
+-): void {
++): ChartCommandResult | undefined {
+   const handle = ctx.chart
+   const actions = handle?.chartActions
+   const chart = handle?.chartRef.current ?? null
+@@ -258,6 +259,7 @@ export function executeClientTool(
+         named,
+       )
+       if (!resolved) return
++      handle?.setInstrument?.(resolved)
+       void ctx.navigate(chartLinkProps(resolved))
+       return
+     }
+@@ -310,11 +312,10 @@ export function executeClientTool(
+     // ── Drawings ──
+     const drawingMapper = drawingToolMap[toolName]
+     if (drawingMapper) {
+-      chart.executeCommand({
++      return chart.executeCommand({
+         type: 'addDrawing',
+         payload: drawingMapper(p, chart),
+       } as Parameters<FastFinancialChartRef['executeCommand']>[0])
+-      return
+     }
+ 
+     // ── Simple pass-through commands ──
+@@ -323,26 +324,34 @@ export function executeClientTool(
+     // renderer instead; it cannot ride in the tool result, which is what
+     // the model reads.
+     if (toolName === 'take_screenshot') {
+-      const shot = chart?.executeCommand({
++      const shot = chart.executeCommand({
+         type: 'takeScreenshot',
+         payload: p,
+-      } as Parameters<FastFinancialChartRef['executeCommand']>[0]) as
+-        | { ok?: boolean; result?: { dataUrl?: string } }
+-        | undefined
+-      const dataUrl = shot?.result?.dataUrl
++      } as Parameters<FastFinancialChartRef['executeCommand']>[0])
++      const dataUrl =
++        shot.result &&
++        typeof shot.result === 'object' &&
++        'dataUrl' in shot.result &&
++        typeof shot.result.dataUrl === 'string'
++          ? shot.result.dataUrl
++          : undefined
+       if (dataUrl && ctx.toolCallId) putScreenshot(ctx.toolCallId, dataUrl)
+-      return
++      return shot
+     }
+ 
+     const command = SIMPLE_CHART_COMMANDS[toolName]
+     if (command) {
+-      chart.executeCommand({
++      return chart.executeCommand({
+         type: command,
+         payload: p,
+       } as Parameters<FastFinancialChartRef['executeCommand']>[0])
+     }
+-  } catch {
+-    // Client tool execution is best-effort — never break the chat loop.
++  } catch (error) {
++    // Legacy callers may ignore the receipt; the unified assistant verifies it.
++    return {
++      ok: false,
++      error: error instanceof Error ? error.message : 'Chart command failed',
++    }
+   }
+ }
+ 
+@@ -359,6 +368,19 @@ function toIndicatorPoint(point: IndicatorValuePoint): CopilotIndicatorPoint {
+   return point as CopilotIndicatorPoint
+ }
+ 
++function drawingPoint(value: unknown): { ts: number; price: number } | null {
++  return value !== null &&
++    typeof value === 'object' &&
++    'ts' in value &&
++    typeof value.ts === 'number' &&
++    Number.isFinite(value.ts) &&
++    'price' in value &&
++    typeof value.price === 'number' &&
++    Number.isFinite(value.price)
++    ? { ts: value.ts, price: value.price }
++    : null
++}
++
+ /** Extract a compact chart snapshot for the copilot's chart-query tools. */
+ export function buildChartSnapshot(
+   chart: FastFinancialChartRef | null,
+@@ -388,9 +410,30 @@ export function buildChartSnapshot(
+     const drawings = s.drawings.map((d) => ({
+       id: d.id,
+       type: String(d.type),
++      ...('price' in d && typeof d.price === 'number'
++        ? { price: d.price }
++        : {}),
++      ...('ts' in d && typeof d.ts === 'number' ? { ts: d.ts } : {}),
++      ...('points' in d && Array.isArray(d.points)
++        ? {
++            points: d.points.flatMap((value: unknown) => {
++              const point = drawingPoint(value)
++              return point ? [point] : []
++            }),
++          }
++        : {}),
++      ...('point' in d && drawingPoint(d.point)
++        ? { point: drawingPoint(d.point) ?? undefined }
++        : {}),
++      ...('content' in d && typeof d.content === 'string'
++        ? { text: d.content }
++        : {}),
++      ...(typeof d.visible === 'boolean' ? { visible: d.visible } : {}),
++      ...(typeof d.seriesId === 'string' ? { seriesId: d.seriesId } : {}),
+     }))
+     const viewport = s.viewport
+     return {
++      pair: chart.seriesOrder?.()[0],
+       timeframe: s.timeframe,
+       chartType: s.chartType,
+       priceScaleMode: s.priceScaleMode,
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
 index 74cf26a..3624411 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
@@ -13925,6 +14530,25 @@ index bf4d768..2c08c5b 100644
 +  'Scripts are real Python, run locally in a Pyodide worker, exporting `meta = indicator(...)` or `strategy(...)` plus a `compute(ctx)`. Before writing or editing one, call get_sdk_reference for the topic you need (declarations, signals, context, library, examples, bots). Do not write a script from memory of another platform: the declarations are specific to QuantTrade and a wrong one fails at import.',
    'create_script and update_script validate and re-run the preview for you, and hand back the traceback when it fails. Fix your own tracebacks rather than handing a broken draft to the user.',
  ].join('\n')
+diff --git a/apps/terminal/src/lib/assistant-core/tool-deps.ts b/apps/terminal/src/lib/assistant-core/tool-deps.ts
+index bf63f8f..ffeab65 100644
+--- a/apps/terminal/src/lib/assistant-core/tool-deps.ts
++++ b/apps/terminal/src/lib/assistant-core/tool-deps.ts
+@@ -69,7 +69,13 @@ export function toCopilotDeps(deps: AssistantDeps): CopilotToolDeps {
+     getContextInfo: () => deps.getFocus(),
+     getMarketData: () => deps.getMarketData(),
+     pluginManager: deps.pluginManager,
+-    getChartSnapshot: () => deps.getChart()?.getSnapshot?.() ?? null,
++    getChartSnapshot: () => {
++      const chart = deps.getChart()
++      const snapshot = chart?.getSnapshot?.()
++      return chart && snapshot
++        ? { ...snapshot, market: chart.market, pair: snapshot.pair ?? chart.pair, timeframe: snapshot.timeframe ?? chart.timeframe }
++        : null
++    },
+   }
+ }
+ 
 diff --git a/apps/terminal/src/lib/assistant-core/tool-labels.ts b/apps/terminal/src/lib/assistant-core/tool-labels.ts
 index 58b3a84..c07f256 100644
 --- a/apps/terminal/src/lib/assistant-core/tool-labels.ts
@@ -13946,13 +14570,14 @@ index 58b3a84..c07f256 100644
    ...ASSISTANT_TOOL_LABELS,
    ...AUTOMATION_TOOL_LABELS,
 diff --git a/apps/terminal/src/lib/assistant-core/tools.ts b/apps/terminal/src/lib/assistant-core/tools.ts
-index 28659bf..82815cc 100644
+index 28659bf..3c62ebd 100644
 --- a/apps/terminal/src/lib/assistant-core/tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/tools.ts
-@@ -18,11 +18,14 @@ import { buildDataTools } from './data-tools'
+@@ -18,11 +18,15 @@ import { buildDataTools } from './data-tools'
  import { buildNftTools } from './nft-tools'
  import { buildPredictionTools } from './prediction-tools'
  import { buildSurfaceTools } from './surface-tools'
++import { bindAssistantChartActions } from './chart-action-execution'
 +import { buildScannerTools } from './scanner-tools'
 +import { buildTradingAgentTools } from './trading-agent-tools'
  import { toAutomationDeps, toCopilotDeps, toScriptDeps } from './tool-deps'
@@ -13964,17 +14589,21 @@ index 28659bf..82815cc 100644
  import { buildContextTools } from '@/lib/copilot/context-tools'
  import { buildPortfolioTools } from '@/lib/copilot/portfolio-tools'
  import { buildChartTools } from '@/lib/copilot/chart-tools'
-@@ -68,7 +71,10 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
+@@ -68,10 +72,13 @@ export function buildAssistantToolSet(deps: AssistantDeps): ToolSet {
      buildNotificationTools(automationDeps)
  
    return {
 +    ...buildScannerTools(),
-+    ...buildTradingAgentTools({navigate:deps.navigate}),
++    ...buildTradingAgentTools({ navigate: deps.navigate }),
      ...buildMarketTools(copilotDeps),
 +    ...buildProviderTools(copilotDeps),
      ...buildContextTools(copilotDeps),
      ...buildPortfolioTools(copilotDeps),
-     ...buildChartTools(copilotDeps),
+-    ...buildChartTools(copilotDeps),
++    ...bindAssistantChartActions(buildChartTools(copilotDeps), deps),
+     ...buildWorkspaceTools(copilotDeps),
+     ...buildTradingTools(copilotDeps),
+     ...buildTimeTools(copilotDeps),
 diff --git a/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts b/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts
 index 5c5f187..6b746c1 100644
 --- a/apps/terminal/src/lib/assistant/__tests__/automation-tools.test.ts
@@ -14148,8 +14777,57 @@ index 5a3bae1..a37411c 100644
  
      expect(result.status).toBe('awaiting_confirmation')
      expect((result.order as Record<string, unknown>).pair).toBe('BTC-USDT')
+diff --git a/apps/terminal/src/lib/copilot/chart-tools.ts b/apps/terminal/src/lib/copilot/chart-tools.ts
+index a8c73ab..6d7e4c4 100644
+--- a/apps/terminal/src/lib/copilot/chart-tools.ts
++++ b/apps/terminal/src/lib/copilot/chart-tools.ts
+@@ -58,7 +58,12 @@ export const CHART_ACTION_TOOL_NAMES = [
+   'exit_replay',
+ ] as const
+ 
+-export function buildChartTools(deps: CopilotToolDeps) {
++export function buildChartTools(deps: Pick<CopilotToolDeps, 'getChartSnapshot'>) {
++  const target = (snap: NonNullable<ReturnType<CopilotToolDeps['getChartSnapshot']>>) => ({
++    market: snap.market ?? null,
++    pair: snap.pair ?? null,
++    timeframe: snap.timeframe ?? null,
++  })
+   return {
+     // ---- Indicators ----
+     add_indicator: tool({
+@@ -290,6 +295,8 @@ export function buildChartTools(deps: CopilotToolDeps) {
+         if (!snap)
+           return { available: false, message: 'Chart state unavailable.' }
+         return {
++          available: true,
++          target: target(snap),
+           timeframe: snap.timeframe,
+           chartType: snap.chartType,
+           priceScaleMode: snap.priceScaleMode,
+@@ -308,7 +315,9 @@ export function buildChartTools(deps: CopilotToolDeps) {
+       inputSchema: z.object({}),
+       execute: async () => {
+         const snap = deps.getChartSnapshot()
+-        return { indicators: snap?.indicators ?? [] }
++        return snap
++          ? { available: true, target: target(snap), indicators: snap.indicators ?? null }
++          : { available: false, indicators: null, message: 'Chart state unavailable; indicator state is unknown.' }
+       },
+     }),
+     get_chart_drawings: tool({
+@@ -316,7 +325,9 @@ export function buildChartTools(deps: CopilotToolDeps) {
+       inputSchema: z.object({}),
+       execute: async () => {
+         const snap = deps.getChartSnapshot()
+-        return { drawings: snap?.drawings ?? [] }
++        return snap
++          ? { available: true, target: target(snap), drawings: snap.drawings ?? null }
++          : { available: false, drawings: null, message: 'Chart state unavailable; drawings are unknown, not empty.' }
+       },
+     }),
+   }
 diff --git a/apps/terminal/src/lib/copilot/context-tools.ts b/apps/terminal/src/lib/copilot/context-tools.ts
-index b543053..7c5d975 100644
+index b543053..8a79b44 100644
 --- a/apps/terminal/src/lib/copilot/context-tools.ts
 +++ b/apps/terminal/src/lib/copilot/context-tools.ts
 @@ -2,7 +2,12 @@
@@ -14166,7 +14844,7 @@ index b543053..7c5d975 100644
  import type { CopilotToolDeps } from './tool-deps'
  
  // ---------------------------------------------------------------------------
-@@ -19,6 +24,37 @@ function assetClassFor(market?: string): 'crypto' | 'stocks' {
+@@ -19,6 +24,46 @@ function assetClassFor(market?: string): 'crypto' | 'stocks' {
    return market === 'alpaca' ? 'stocks' : 'crypto'
  }
  
@@ -14182,6 +14860,14 @@ index b543053..7c5d975 100644
 +    .max(30)
 +    .optional(),
 +  normalizedTickers: z.array(z.string().max(100)).max(100).optional(),
++  matchingStatus: z
++    .enum(['not-requested', 'supported', 'partial', 'unsupported'])
++    .optional(),
++  unsupportedTickers: z.array(z.string().max(100)).max(100).optional(),
++  archiveSearched: z.boolean().optional(),
++  articleBodiesSearched: z.boolean().optional(),
++  requestedFrom: z.string().nullable().optional(),
++  requestedTo: z.string().nullable().optional(),
 +  totalMatchedArticles: z.number().int().nonnegative().optional(),
 +  cachedArticleCount: z.number().int().nonnegative().optional(),
 +  truncated: z.boolean().optional(),
@@ -14190,6 +14876,7 @@ index b543053..7c5d975 100644
 +})
 +const newsProjectNames: Record<string, string> = {
 +  TIA: 'Celestia',
++  DASH: 'Dash cryptocurrency',
 +  BTC: 'Bitcoin',
 +  ETH: 'Ethereum',
 +  SOL: 'Solana',
@@ -14204,7 +14891,7 @@ index b543053..7c5d975 100644
  /** Defensive parse of an ai:web-search plugin response (untrusted third parties). */
  function parseSearchResults(raw: unknown): Array<{
    url: string
-@@ -64,15 +100,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -64,15 +109,39 @@ export function buildContextTools(deps: CopilotToolDeps) {
        }),
        execute: async ({ limit }) => {
          try {
@@ -14250,7 +14937,7 @@ index b543053..7c5d975 100644
            }
          }
        },
-@@ -80,7 +140,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -80,7 +149,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
  
      get_news: tool({
        description:
@@ -14259,7 +14946,7 @@ index b543053..7c5d975 100644
        inputSchema: z.object({
          symbol: z
            .string()
-@@ -92,15 +152,45 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -92,15 +161,55 @@ export function buildContextTools(deps: CopilotToolDeps) {
        }),
        execute: async ({ symbol, limit }) => {
          try {
@@ -14274,10 +14961,17 @@ index b543053..7c5d975 100644
 +            (res as typeof res & { coverage?: unknown }).coverage,
 +          )
 +          const articles = (res.articles ?? []).slice(0, limit ?? 15)
++          const stockRequest = /^STOCKS?:/i.test(sym ?? '')
 +          const ticker = baseAsset(
-+            (sym ?? '').replace(/^CRYPTO:/i, '').replaceAll('/', '-'),
++            (sym ?? '')
++              .replace(/^(?:CRYPTO|STOCKS?):/i, '')
++              .replaceAll('/', '-'),
 +          )
-+          const project = newsProjectNames[ticker] ?? sym ?? 'crypto markets'
++          const project =
++            stockRequest && ticker === 'DASH'
++              ? 'DoorDash'
++              : (newsProjectNames[ticker] ?? sym ?? 'crypto markets')
++          const dashCrypto = ticker === 'DASH' && !stockRequest
            return {
 +            status: articles.length ? 'available' : 'no-matches',
              symbol: sym ?? null,
@@ -14290,25 +14984,28 @@ index b543053..7c5d975 100644
 +                ? (rawCoverage.data.scope ?? 'provider-headline-feed')
 +                : 'provider-headline-feed',
 +              exhaustive: false,
++              requestedLookback: 'recent-feed-headlines-only',
 +              warning:
-+                'Only returned feed headlines were searched. Zero matches do not establish the absence of news or a catalyst. Use article publication times, not fetch time, to assess freshness; headlines alone do not prove the cause of a price move.',
++                'Only returned recent feed headlines were searched; this call does not query an archive. The oldest/newest returned provider timestamps describe retained feed coverage, not a complete requested research period. Unsupported ticker matching is a coverage gap, not no news. Zero matches do not establish the absence of news or a catalyst. Use article publication times, not fetch time, to assess freshness; headlines alone do not prove the cause of a price move.',
 +            },
 +            ...(articles.length
 +              ? {}
 +              : {
 +                  nextResearch: {
 +                    tool: 'web_search',
-+                    query: `${project}${project !== ticker && ticker ? ` (${ticker})` : ''} latest news official announcements`,
++                    query: dashCrypto
++                      ? 'Dash cryptocurrency (DASH) official product release announcements DashPay Dash Platform site:dash.org'
++                      : `${project}${project !== ticker && ticker ? ` (${ticker})` : ''} latest news official announcements`,
 +                    maxFollowups: 1,
 +                    instruction:
-+                      'If catalyst research was requested, perform one focused search and verify source, exact asset and publication time. If unavailable or inconclusive, report the catalyst as unknown, not newsless. Do not delay an already-specified trade for repeated news searches.',
++                      'If catalyst research was requested or missing product context could materially change an entry thesis, perform one focused official-source search and verify source, exact asset and publication time. Separate publication time from announced release/activation time; distinguish testnet, mainnet, planned and shipped status. Older shipped-product news is background unless a fresh source establishes current relevance; do not infer the cause of a price move from its existence. If unavailable or inconclusive, report the catalyst as unknown, not newsless. Do not delay an already-specified trade for repeated news searches.',
 +                  },
 +                }),
 +            articles: articles.map((a) => ({
                title: a.title,
                url: a.url,
                source: a.source,
-@@ -116,10 +206,13 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -116,10 +225,13 @@ export function buildContextTools(deps: CopilotToolDeps) {
            // plainly, or the model reports "no news" for an outage.
            const providerDown = /API error: 5\d\d/.test(message)
            return {
@@ -14323,7 +15020,7 @@ index b543053..7c5d975 100644
            }
          }
        },
-@@ -131,17 +224,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -131,17 +243,22 @@ export function buildContextTools(deps: CopilotToolDeps) {
        inputSchema: z.object({}),
        execute: async () => {
          try {
@@ -14351,7 +15048,7 @@ index b543053..7c5d975 100644
            }
          }
        },
-@@ -161,14 +259,31 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -161,14 +278,31 @@ export function buildContextTools(deps: CopilotToolDeps) {
              sym,
              assetClassFor(info.market),
            )
@@ -14388,7 +15085,7 @@ index b543053..7c5d975 100644
            }
          }
        },
-@@ -176,7 +291,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -176,7 +310,7 @@ export function buildContextTools(deps: CopilotToolDeps) {
  
      get_trade_journal: tool({
        description:
@@ -14397,7 +15094,7 @@ index b543053..7c5d975 100644
        inputSchema: z.object({
          pair: z
            .string()
-@@ -192,17 +307,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
+@@ -192,17 +326,24 @@ export function buildContextTools(deps: CopilotToolDeps) {
            })
            const buys = entries.filter((e) => e.side === 'buy').length
            return {
@@ -15108,6 +15805,38 @@ index e7631ae..16f5a32 100644
          }
        },
      }),
+diff --git a/apps/terminal/src/lib/copilot/tool-deps.ts b/apps/terminal/src/lib/copilot/tool-deps.ts
+index 2e72975..7d0671d 100644
+--- a/apps/terminal/src/lib/copilot/tool-deps.ts
++++ b/apps/terminal/src/lib/copilot/tool-deps.ts
+@@ -255,6 +255,8 @@ export type CopilotIndicatorPoint = {
+ }
+ 
+ export type CopilotChartSnapshot = {
++  market?: string
++  pair?: string
+   timeframe?: string
+   chartType?: string
+   priceScaleMode?: string
+@@ -267,7 +269,17 @@ export type CopilotChartSnapshot = {
+     /** Most recent computed points, newest last, capped so a long series stays compact. */
+     values?: Array<CopilotIndicatorPoint>
+   }>
+-  drawings?: Array<{ id: string; type: string }>
++  drawings?: Array<{
++    id: string
++    type: string
++    price?: number
++    ts?: number
++    points?: Array<{ ts: number; price: number }>
++    point?: { ts: number; price: number }
++    text?: string
++    visible?: boolean
++    seriesId?: string
++  }>
+   visibleRange?: { startIndex: number; endIndex: number }
+   barCount?: number
+   compareSymbols?: Array<string>
 diff --git a/apps/terminal/src/lib/copilot/tool-labels.ts b/apps/terminal/src/lib/copilot/tool-labels.ts
 index fc621a5..028444c 100644
 --- a/apps/terminal/src/lib/copilot/tool-labels.ts
@@ -33871,26 +34600,38 @@ index 2bbd35f..9ccb718 100644
                                    className={railSection('workflows')}
                                  >
 diff --git a/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx b/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx
-index 4f10b95..a5194fa 100644
+index 4f10b95..88daa39 100644
 --- a/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx
 +++ b/apps/terminal/src/routes/_terminal/$cls/$market/$id.tsx
-@@ -61,6 +61,7 @@ import { WorkspaceProvider } from '@/lib/layout/workspace-context'
+@@ -34,6 +34,7 @@ import {
+ import type { MarketRef } from '@pairlens/shared/market-ref'
+ 
+ import type { MarketOption } from '@/hooks/use-available-markets'
++import type { ChartServiceHandle } from '@/lib/assistant-core/chart-service'
+ import { track } from '@/lib/analytics-events'
+ import { PAGE_FRAME } from '@/components/chrome/page-chrome'
+ import { TerminalTopBar } from '@/components/terminal/terminal-top-bar'
+@@ -61,7 +62,10 @@ import { WorkspaceProvider } from '@/lib/layout/workspace-context'
  import { pairWorkspaceFor } from '@/lib/layout/workspaces/pair-workspace'
  import { useWatchlistsStore } from '@/stores/watchlists-store'
  import { venueTargetFor } from '@/lib/venue-switch'
 +import { useVenueInstrumentTargets } from '@/hooks/use-venue-instrument-targets'
  import { chartLinkProps } from '@/lib/market-ref/link'
++import { CHART_SERVICE_NAME } from '@/lib/assistant-core/chart-service'
++import { useServiceRegistry } from '@/lib/service-registry-context'
  
  /**
-@@ -349,6 +350,7 @@ function ChartTerminalContent({
+  * `?o=` — which answer of a prediction event the book, the tape and the ticket
+@@ -349,6 +353,8 @@ function ChartTerminalContent({
    defaultMarket: string
  }) {
    const navigate = useNavigate()
 +  const venueTargets = useVenueInstrumentTargets(marketRef, markets)
++  const services = useServiceRegistry()
  
    // Changing venue is a navigation, not a setting. That is what puts the tape
    // in shared links and makes back restore the venue AND its drawings, which
-@@ -362,7 +364,10 @@ function ChartTerminalContent({
+@@ -362,7 +368,10 @@ function ChartTerminalContent({
    // swapping the tape under a class that no longer describes it.
    const handleMarketChange = useCallback(
      (next: string) => {
@@ -33901,12 +34642,17 @@ index 4f10b95..a5194fa 100644
          ref: marketRef,
          market: next,
          venueClasses:
-@@ -379,7 +384,7 @@ function ChartTerminalContent({
+@@ -377,9 +386,12 @@ function ChartTerminalContent({
+           source: 'picker',
+         })
        }
++      services
++        .get<ChartServiceHandle>(CHART_SERVICE_NAME)
++        ?.setInstrument?.(target.ref)
        void navigate({ ...chartLinkProps(target.ref), replace: true })
      },
 -    [navigate, markets, marketRef],
-+    [navigate, markets, marketRef, venueTargets],
++    [navigate, markets, marketRef, venueTargets, services],
    )
  
    return (

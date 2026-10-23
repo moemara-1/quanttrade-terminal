@@ -390,3 +390,14 @@ Hosted release verification passed: all eight private Hummingbot extension route
 - [x] Repair standalone asset fundamentals overview and verify source/freshness behavior.
 
 Verification: 415 backend tests; 83 focused frontend tests; frontend/backend types, lint and production build pass. Hosted release 20261023-1 passes session, transport and exact Zcash profile checks. Combined frontend runner has pre-existing global browser-stub/module-loading issues; focused suites pass. No orders or bots started.
+
+## Chart target, switching and drawing verification
+- [x] Reproduce chart context mismatch and unavailable readback.
+- [x] Fix assistant chart targeting and truthful drawing/state reads with regressions.
+- [x] Fix chart switching/crash logic with regressions.
+- [x] Verify, deploy safely, commit and push.
+
+- [x] Provide a working chart renderer when WebGL2 is unavailable.
+- [x] Repair DASH news identity matching and bounded catalyst research; verify coverage semantics.
+
+Verified chart/news release 20261023-2: 418 backend and 54 focused frontend tests pass; frontend/backend TypeScript, focused lint and 11-task production build pass. Hosted ETH/LIT pair switching and DASH identity/coverage checks pass. Inference worker retained; no orders or bots executed. Compatibility mode preserves advanced drawings but renders candles and basic geometry only.
