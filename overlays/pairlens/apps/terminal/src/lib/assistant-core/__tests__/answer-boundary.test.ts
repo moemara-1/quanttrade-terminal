@@ -911,3 +911,42 @@ test('research boundary synthesizes the assessment rather than stopping at a gen
   )
   expect(JSON.stringify(chunks)).not.toContain('This audit is incomplete')
 })
+
+test('completed navigation and highlighting do not suppress research synthesis', async () => {
+  let attempts = 0
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'start-step' })
+      for (const toolName of ['switch_pair', 'highlight_ui', 'get_news']) {
+        controller.enqueue({
+          type: 'tool-input-available',
+          toolCallId: toolName,
+          toolName,
+          input: {},
+        })
+        controller.enqueue({
+          type: 'tool-output-available',
+          toolCallId: toolName,
+          output: { status: 'available' },
+        })
+      }
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'finish', finishReason: 'stop' })
+      controller.close()
+    },
+  })
+  const chunks = await Array.fromAsync(
+    stream.pipeThrough(
+      ensureAssistantBoundaryAnswer(
+        () => false,
+        undefined,
+        async () => {
+          attempts++
+          return 'ZORA assessment.'
+        },
+      ),
+    ),
+  )
+  expect(attempts).toBe(1)
+  expect(JSON.stringify(chunks)).toContain('ZORA assessment.')
+})

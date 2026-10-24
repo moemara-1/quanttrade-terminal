@@ -14234,17 +14234,18 @@ index ce0d317..d46be26 100644
      '- Lead with the answer, then the evidence. Do not narrate which tools you called.',
      '- Anchor to concrete numbers from tool data (price, % change, key levels, ATR), not vague characterizations.',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..41201c8 100644
+index 26e075b..8a3b2b1 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -11,9 +11,26 @@
+@@ -11,9 +11,27 @@
  // gating is re-read at every step: the user can navigate mid-run, and
  // the assistant should notice.
  
 -import { convertToModelMessages, stepCountIs, streamText } from 'ai'
-+import { generateText, stepCountIs, streamText } from 'ai'
++import { stepCountIs, streamText } from 'ai'
  
  import { buildAssistantSystemPrompt } from './assistant-brain'
++import { synthesizeFinalAssessment } from './final-assessment'
 +import { encodeAssistantError } from './assistant-error'
 +import {
 +  ANSWER_BOUNDARY_GUIDE,
@@ -14265,7 +14266,7 @@ index 26e075b..41201c8 100644
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -30,12 +47,8 @@ import {
+@@ -30,12 +48,8 @@ import {
  } from './tools'
  import type { AssistantPersona } from './assistant-brain'
  import type { AssistantDeps } from './tool-deps'
@@ -14280,7 +14281,7 @@ index 26e075b..41201c8 100644
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -89,32 +102,81 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -89,32 +103,81 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
            : String(model),
      })
  
@@ -14381,7 +14382,7 @@ index 26e075b..41201c8 100644
        onStepFinish: (step) => {
          for (const call of step.toolCalls) {
            track('assistant_tool_used', { tool: call.toolName })
-@@ -123,10 +185,41 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -123,10 +186,33 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
        abortSignal: options.abortSignal,
      })
  
@@ -14400,26 +14401,18 @@ index 26e075b..41201c8 100644
 +          async () => {
 +            if (options.abortSignal?.aborted) return ''
 +            const response = await result.response
-+            const recovery = await generateText({
-+              model: model as LanguageModel,
-+              messages: boundAssistantModelHistory([
++            return synthesizeFinalAssessment(
++              model as LanguageModel,
++              [
 +                {
 +                  role: 'system',
-+                  content: `${systemPrompt}\n\nThe research response ended without final prose. Write the requested final assessment now using only the collected results. Lead with a concise answer to the actual question, then the supporting evidence and material uncertainty. Do not repeat the research process or replace the answer with a generic failure message. Do not call tools, repeat research, prepare trades, invent missing data or claim a source proves causation. Clearly label uncertainty.`,
++                  content: `${systemPrompt}\n\nThe research response ended without final prose. Write the final assessment using collected evidence. Lead with the answer, label missing evidence, and do not call tools, repeat research, prepare trades or invent facts.`,
 +                },
 +                ...(await assistantModelHistory(options.messages)),
 +                ...response.messages,
-+              ]),
-+              maxOutputTokens: 4096,
-+              maxRetries: 0,
-+              abortSignal: options.abortSignal
-+                ? AbortSignal.any([
-+                    options.abortSignal,
-+                    AbortSignal.timeout(30000),
-+                  ])
-+                : AbortSignal.timeout(30000),
-+            })
-+            return recovery.text
++              ],
++              options.abortSignal,
++            )
 +          },
 +          options.abortSignal,
 +        ),

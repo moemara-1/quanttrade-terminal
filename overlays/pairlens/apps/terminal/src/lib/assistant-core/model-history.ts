@@ -25,10 +25,7 @@ export function boundAssistantModelHistory(
         return {
           ...message,
           content: message.content.map((part) => {
-            if (
-              part.type !== 'tool-result' ||
-              size(part.output) <= resultLimit
-            )
+            if (part.type !== 'tool-result' || size(part.output) <= resultLimit)
               return part
             omitted = true
             return {
@@ -87,6 +84,18 @@ export function boundAssistantModelHistory(
   const notice: ModelMessage = { role: 'system', content: OMISSION_NOTICE }
   const collect = (selected: Set<number>) =>
     groups.flatMap((group, index) => (selected.has(index) ? group : []))
+  // Preserve short recent user intent before bulky historical tool batches.
+  // A retry must still carry the question it refers to, without inventing
+  // omitted trade parameters or increasing the total request budget.
+  const recentUsers = groups
+    .flatMap((group, index) => (group[0]?.role === 'user' ? [index] : []))
+    .slice(-3)
+  for (const index of recentUsers) {
+    if (required.has(index) || size(groups[index]) > 4096) continue
+    const candidate = new Set([...required, index])
+    if (size([notice, ...collect(candidate)]) <= ASSISTANT_HISTORY_LIMIT)
+      required.add(index)
+  }
   if (size([notice, ...collect(required)]) > ASSISTANT_HISTORY_LIMIT) {
     // Parallel reads share the remaining budget; a per-result cap alone is insufficient.
     // Reprocess the original immutable history so tool calls and results stay paired.
@@ -103,7 +112,8 @@ export function boundAssistantModelHistory(
   for (let index = groups.length - 1; index >= 0; index--) {
     if (selected.has(index)) continue
     const candidate = new Set([...selected, index])
-    if (size([notice, ...collect(candidate)]) > ASSISTANT_HISTORY_LIMIT) break
+    if (size([notice, ...collect(candidate)]) > ASSISTANT_HISTORY_LIMIT)
+      continue
     selected.add(index)
   }
   omitted ||= selected.size !== groups.length

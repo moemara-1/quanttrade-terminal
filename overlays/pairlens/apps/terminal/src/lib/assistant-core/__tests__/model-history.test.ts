@@ -355,7 +355,6 @@ test('real SDK prepareStep caps accumulated tool results together with the syste
 test('default research instructions and a bounded brief fit the existing history limit', async () => {
   const { buildAssistantSystemPrompt } = await import('../assistant-brain')
   const { WORKFLOW_GUIDE, NOTIFICATION_GUIDE } = await import('../guides')
-  const { boundAssistantModelHistory, ASSISTANT_HISTORY_LIMIT } = await import('../model-history')
   const system = buildAssistantSystemPrompt({guides:[WORKFLOW_GUIDE,NOTIFICATION_GUIDE],screen:'screen context '.repeat(100)})
   const messages = [
     {role:'system' as const,content:system},
@@ -384,4 +383,35 @@ test('compacts a mandatory parallel tool batch against the remaining system budg
   expect(JSON.stringify(result)).toContain('unknown')
   expect(JSON.stringify(result)).toContain('read-2')
   expect(JSON.stringify(history)).toBe(original)
+})
+
+test('large earlier tool batch cannot erase the question behind a retry', () => {
+  const calls = Array.from({ length: 6 }, (_, i) => ({
+    type: 'tool-call' as const,
+    toolCallId: `read-${i}`,
+    toolName: 'get_news',
+    input: { symbol: 'ZORA' },
+  }))
+  const history: Array<ModelMessage> = [
+    { role: 'user', content: 'Thoughts about ZORA?' },
+    { role: 'assistant', content: calls },
+    {
+      role: 'tool',
+      content: calls.map((call) => ({
+        type: 'tool-result' as const,
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: { type: 'text' as const, value: 'x'.repeat(15000) },
+      })),
+    },
+    { role: 'user', content: 'trey again' },
+  ]
+  const before = JSON.stringify(history)
+  const bounded = boundAssistantModelHistory(history)
+  expect(JSON.stringify(bounded)).toContain('Thoughts about ZORA?')
+  expect(JSON.stringify(bounded)).toContain('trey again')
+  expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(
+    ASSISTANT_HISTORY_LIMIT,
+  )
+  expect(JSON.stringify(history)).toBe(before)
 })

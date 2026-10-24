@@ -217,6 +217,13 @@ export function ensureAssistantBoundaryAnswer(
   let terminalError = false
   let sourceReturned = false
   const toolNames = new Map<string, string>()
+  const completedTools = new Set<string>()
+  const presentationTools = new Set([
+    'switch_pair',
+    'switch_market',
+    'set_timeframe',
+    'highlight_ui',
+  ])
   const returned = new Set<string>()
   const unavailable = new Set<string>()
   const fallbackText =
@@ -250,6 +257,7 @@ export function ensureAssistantBoundaryAnswer(
         chunk.type === 'tool-output-available' ||
         chunk.type === 'tool-output-error'
       ) {
+        completedTools.add(chunk.toolCallId)
         const name = toolNames.get(chunk.toolCallId)
         if (name && isRead(name)) {
           const output =
@@ -284,7 +292,11 @@ export function ensureAssistantBoundaryAnswer(
         !terminalError &&
         !text &&
         (sourceReturned || toolNames.size > 0) &&
-        [...toolNames.values()].every(isRead)
+        [...toolNames.entries()].every(
+          ([id, name]) =>
+            isRead(name) ||
+            (presentationTools.has(name) && completedTools.has(id)),
+        )
       if (
         ((chunk.type === 'finish' && isFinalizing()) ||
           missingResearchAnswer) &&

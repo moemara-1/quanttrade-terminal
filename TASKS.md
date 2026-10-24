@@ -425,3 +425,14 @@ Full connector audit: 2,103 plugin tests pass/43 skip; 45 terminal tests pass; p
 - [x] Verify and deploy, then commit/push.
 
 Verified source-only recovery: 44 assistant/model-history/loop regressions plus 4 NanoGPT provider fixtures pass. Frontend and plugin types, focused lint and 11-task build pass. Deployed20261024-3 frontend-only; hosted session/transport/news/bundlechecks pass. One bounded text-only synthesis handles normal and budget-limited research without repeating actions. No live provider/test trade requests.
+
+## Mixed research completion and retry context
+- [x] Reproduce navigation-containing blank research completion and lost prior user question.
+- [x] Repair finalization eligibility and preserve recent intent within context budget.
+- [x] Run regression/type/lint/build checks and deploy.
+- [x] Commit/push after full repository access was restored.
+
+
+Confirmed additional root cause: previous final assessment used non-streaming generateText against stream-only server-backed NanoGPT. Real connector regression reproduces rejection and now passes with streamText. DeepSeek thinking history repaired for final no-tools step when history contains tool calls. New integration fixture uses actual SDK/plugin and synthetic HTTP, with no paid/live trade requests.
+
+Verified: 47 focused SDK/NanoGPT/history/finalization regressions, frontend and plugin types, lint and Vite production build + SPA shell pass. Deployed20261024-4 frontend-only; hosted sessions, transport and news checks pass; services unchanged. Streaming-only connector regression proves previous generateText recovery was rejected locally. No live provider or trade requests used for QA.

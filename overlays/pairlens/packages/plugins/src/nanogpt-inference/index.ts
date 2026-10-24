@@ -198,7 +198,7 @@ export function createNanogptInferencePlugin(
       fetch: Object.assign(
         async (url: RequestInfo | URL, init?: RequestInit) => {
           // DeepSeek thinking requires this field on every assistant turn
-          // when tools are present. The generic SDK omits empty reasoning,
+          // including the final text-only step after tools. The SDK omits empty reasoning,
           // including text-only history produced before a provider switch.
           // Preserve supplied reasoning exactly; an absent value stays empty.
           if (typeof init?.body === 'string') {
@@ -206,9 +206,16 @@ export function createNanogptInferencePlugin(
             if (
               /^deepseek\//i.test(String(body.model)) &&
               /:thinking(?:$|:)/i.test(String(body.model)) &&
-              Array.isArray(body.tools) &&
-              body.tools.length > 0 &&
-              Array.isArray(body.messages)
+              Array.isArray(body.messages) &&
+              ((Array.isArray(body.tools) && body.tools.length > 0) ||
+                body.messages.some(
+                  (message: unknown) =>
+                    message !== null &&
+                    typeof message === 'object' &&
+                    'tool_calls' in message &&
+                    Array.isArray(message.tool_calls) &&
+                    message.tool_calls.length > 0,
+                ))
             ) {
               body.messages = body.messages.map((message: unknown) => {
                 if (typeof message !== 'object' || message === null)
