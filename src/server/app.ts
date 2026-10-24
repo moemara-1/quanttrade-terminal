@@ -90,7 +90,14 @@ export function createApp(services: Services) {
   const publicData:RequestHandler=(_req,res,next)=>{
     if(Date.now()-dataWindow>=60_000){dataWindow=Date.now();dataBudget=0;}
     if(dataBudget>=240||dataInFlight>=16){res.set('Retry-After','60').status(429).json({error:'Data rate limit reached'});return;}
-    dataBudget++;dataInFlight++;res.once('finish',()=>{dataInFlight--;});next();
+    dataBudget++;dataInFlight++;
+    let released=false;
+    const release=()=>{
+      if(released)return;
+      released=true;dataInFlight--;
+      res.off('finish',release);res.off('close',release);
+    };
+    res.once('finish',release);res.once('close',release);next();
   };
   const feeds=[['news',()=>services.news?.get.bind(services.news),'news_unavailable'],
     ['earnings-calendar',()=>services.calendars?.earnings.bind(services.calendars),'earnings_calendar_unavailable'],

@@ -401,3 +401,10 @@ Verification: 415 backend tests; 83 focused frontend tests; frontend/backend typ
 - [x] Repair DASH news identity matching and bounded catalyst research; verify coverage semantics.
 
 Verified chart/news release 20261023-2: 418 backend and 54 focused frontend tests pass; frontend/backend TypeScript, focused lint and 11-task production build pass. Hosted ETH/LIT pair switching and DASH identity/coverage checks pass. Inference worker retained; no orders or bots executed. Compatibility mode preserves advanced drawings but renders candles and basic geometry only.
+
+## Connector audit and assistant audit finalization
+- [x] Reproduce broad audit with no final answer and identify execution boundary.
+- [x] Audit connectors/feed reads with explicit coverage and bounded probes.
+- [x] Fix verified causes with regression tests, then verify and ship.
+
+Verification: release 20261024-1; 421 backend and 93 focused frontend tests pass, frontend/backend types, lint and 11-task build pass. Hosted sessions, transport authorization, news coverage and final bundle verified. Public read audit documented in docs/audits/2026-10-24-connectors.md; external HTTP403/config/platform limitations remain explicit. No financial actions or live provider requests. Inference worker unchanged.

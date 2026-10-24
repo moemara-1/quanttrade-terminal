@@ -13876,14 +13876,149 @@ index bb69782..9cadf1a 100644
      const values = [
        { ts: T0, value: 40 },
 diff --git a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
-index b93724f..7196259 100644
+index b93724f..58c6ceb 100644
 --- a/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
 +++ b/apps/terminal/src/lib/assistant-core/__tests__/data-tools-standalone.test.ts
-@@ -72,13 +72,25 @@ describe('a build with no App Server', () => {
+@@ -6,12 +6,10 @@
+  * Its own file because `hasAppServer` is a module constant read from the build
+  * env: one value per test process, and this is the other value.
+  *
+- * Two things are pinned. The hosted reads answer `standalone` rather than the
+- * `not_configured` the api layer would raise, because "this build has no server"
+- * and "the server has no provider key" are different sentences and only one of
+- * them is about the user's deployment. And the connector-backed reads keep
+- * working: funding, pool state and bridge quotes never touched the App Server,
+- * so a standalone desktop build must not lose them.
++ * Same-origin QuantTrade calendars remain reachable without the optional
++ * App Server. Company fundamentals and insider filings still require that
++ * service. Connector-backed funding, pool state and bridge quotes keep working
++ * independently, and failed calendar reads never become empty schedules.
+  */
+ import { describe, expect, mock, test } from 'bun:test'
+ 
+@@ -21,7 +19,7 @@ import type { ToolResult } from './data-tools-fakes'
+ const realApi = await import('@/lib/api')
+ const realAuth = await import('@/lib/auth-client')
+ 
+-/** Any hosted call is a bug here: the guard runs before the request. */
++/** Unsupported optional-cloud calls must still be blocked before requesting. */
+ function unreachable(): never {
+   throw new Error('the App Server must not be called on a standalone build')
+ }
+@@ -31,14 +29,52 @@ void mock.module('@/lib/auth-client', () => ({
+   hasAppServer: false,
+ }))
+ 
++const calendarCalls: Array<string> = []
++let calendarFailure = false
++const calendarReply = (name: string, entry: Record<string, unknown>) => {
++  calendarCalls.push(name)
++  if (calendarFailure) throw new Error('Calendar unavailable')
++  return Promise.resolve({
++    entries: [entry],
++    fetchedAt: '2026-10-24T12:00:00Z',
++    start: '2026-10-24',
++    end: '2026-10-30',
++  })
++}
++
+ void mock.module('@/lib/api', () => ({
+   ...realApi,
+   api: {
+     ...realApi.api,
+-    getEconomicCalendar: unreachable,
+-    getEarningsCalendar: unreachable,
++    getEconomicCalendar: () =>
++      calendarReply('get_economic_calendar', {
++        title: 'Agency release',
++        source: 'BLS',
++        country: 'US',
++        importance: 'high',
++        date: '2026-10-26',
++        releaseMs: null,
++      }),
++    getEarningsCalendar: () =>
++      calendarReply('get_earnings_calendar', {
++        symbol: 'FIX',
++        name: 'Fixture company',
++        reportDate: '2026-10-26',
++        fiscalDateEnding: null,
++        epsEstimate: null,
++        currency: null,
++      }),
+     getCompanyOverview: unreachable,
+-    getIpoCalendar: unreachable,
++    getIpoCalendar: () =>
++      calendarReply('get_ipo_calendar', {
++        symbol: 'FIX',
++        name: 'Fixture listing',
++        date: '2026-10-26',
++        exchange: null,
++        priceRangeLow: null,
++        priceRangeHigh: null,
++        currency: null,
++      }),
+     getInsiderTransactions: unreachable,
+     getNewListings: unreachable,
+   },
+@@ -48,10 +84,7 @@ const { buildDataTools } = await import('../data-tools')
+ 
+ describe('a build with no App Server', () => {
+   const hosted: Array<[string, Record<string, unknown>]> = [
+-    ['get_economic_calendar', {}],
+-    ['get_earnings_calendar', {}],
+     ['get_company_fundamentals', { symbol: 'NVDA' }],
+-    ['get_ipo_calendar', {}],
+     ['get_insider_activity', { symbol: 'NVDA' }],
+   ]
+ 
+@@ -72,13 +105,67 @@ describe('a build with no App Server', () => {
      },
    )
  
 -  test('liquidations refuse before any plugin is addressed', async () => {
++  test.each([
++    'get_economic_calendar',
++    'get_earnings_calendar',
++    'get_ipo_calendar',
++  ])(
++    '%s reads the configured same-origin calendar without an App Server',
++    async (name) => {
++      calendarCalls.length = 0
++      const { deps } = stubDeps()
++      const result = (await buildDataTools(deps)[name].execute!(
++        {} as never,
++        TOOL_OPTIONS,
++      )) as ToolResult
++      expect(calendarCalls).toEqual([name])
++      expect(result.unavailable).toBeUndefined()
++      expect(result.entries).toHaveLength(1)
++      expect(result.fetchedAt).toBe('2026-10-24T12:00:00Z')
++    },
++  )
++
++  test.each([
++    'get_economic_calendar',
++    'get_earnings_calendar',
++    'get_ipo_calendar',
++  ])(
++    '%s preserves failed reads as unavailable instead of a successful empty calendar',
++    async (name) => {
++      calendarFailure = true
++      try {
++        const { deps } = stubDeps()
++        const result = (await buildDataTools(deps)[name].execute!(
++          {} as never,
++          TOOL_OPTIONS,
++        )) as ToolResult
++        expect(result.unavailable).toBe('upstream_error')
++        expect(result.entries).toBeUndefined()
++      } finally {
++        calendarFailure = false
++      }
++    },
++  )
++
 +  test('liquidations use the named installed collector in standalone mode', async () => {
      const collector = fakePlugin({
        id: 'pairlens-intelligence',
@@ -13907,7 +14042,7 @@ index b93724f..7196259 100644
      })
      const { deps } = stubDeps({ plugins: [collector.instance] })
      const tools = buildDataTools(deps)
-@@ -87,9 +99,12 @@ describe('a build with no App Server', () => {
+@@ -87,9 +174,12 @@ describe('a build with no App Server', () => {
        TOOL_OPTIONS,
      )) as ToolResult
  
@@ -13922,7 +14057,7 @@ index b93724f..7196259 100644
    })
  
    test('new listings still serve the on-chain half, and say why the other is missing', async () => {
-@@ -209,3 +224,28 @@ describe('a build with no App Server', () => {
+@@ -209,3 +299,28 @@ describe('a build with no App Server', () => {
      expect(result.unavailable).toBeUndefined()
    })
  })
@@ -14099,10 +14234,10 @@ index ce0d317..d46be26 100644
      '- Lead with the answer, then the evidence. Do not narrate which tools you called.',
      '- Anchor to concrete numbers from tool data (price, % change, key levels, ATR), not vague characterizations.',
 diff --git a/apps/terminal/src/lib/assistant-core/assistant-transport.ts b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-index 26e075b..9c3ed54 100644
+index 26e075b..f2eb1ef 100644
 --- a/apps/terminal/src/lib/assistant-core/assistant-transport.ts
 +++ b/apps/terminal/src/lib/assistant-core/assistant-transport.ts
-@@ -11,9 +11,25 @@
+@@ -11,9 +11,26 @@
  // gating is re-read at every step: the user can navigate mid-run, and
  // the assistant should notice.
  
@@ -14114,6 +14249,7 @@ index 26e075b..9c3ed54 100644
 +import {
 +  ANSWER_BOUNDARY_GUIDE,
 +  assistantAnswerBoundary,
++  createAssistantToolAdmission,
 +  ensureAssistantBoundaryAnswer,
 +  guardAssistantTools,
 +} from './answer-boundary'
@@ -14129,25 +14265,47 @@ index 26e075b..9c3ed54 100644
  import {
    NOTIFICATION_GUIDE,
    SCRIPT_GUIDE_POINTER,
-@@ -34,8 +50,8 @@ import type {
-   ChatTransport,
-   LanguageModel,
-   UIMessage,
+@@ -30,12 +47,8 @@ import {
+ } from './tools'
+ import type { AssistantPersona } from './assistant-brain'
+ import type { AssistantDeps } from './tool-deps'
+-import type {
+-  ChatTransport,
+-  LanguageModel,
+-  UIMessage,
 -  UIMessageChunk,
- } from 'ai'
+-} from 'ai'
++import type { ChatTransport, LanguageModel, UIMessage } from 'ai'
 +import { getTradeSubmissions } from '@/lib/copilot/trade-submissions'
  import { SDK_GUIDE_CORE } from '@/lib/assistant/sdk-guide'
  import { track } from '@/lib/analytics-events'
  
-@@ -89,32 +105,62 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -89,32 +102,81 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
            : String(model),
      })
  
 -    const tools = buildAssistantToolSet(deps)
 +    let finalizing = false
++    let researchExhausted = false
++    const researchStarted = Date.now()
++    const admission = createAssistantToolAdmission(
++      () => finalizing || researchExhausted,
++      () => {
++        researchExhausted = true
++      },
++    )
 +    const tools = guardAssistantTools(
 +      buildAssistantToolSet(deps),
-+      () => finalizing,
++      () => finalizing || researchExhausted,
++      {
++        admission,
++        onCallLimit: () => {
++          researchExhausted = true
++        },
++        onReadTimeout: () => {
++          researchExhausted = true
++        },
++      },
 +    )
      const toolNames = Object.keys(tools)
 +    const toolStepBudget = deps.getWorkbench() ? MAX_STEPS - 1 : 10
@@ -14191,8 +14349,10 @@ index 26e075b..9c3ed54 100644
 -      }),
 -      stopWhen: stepCountIs(MAX_STEPS),
 +      prepareStep: ({ messages: stepMessages, steps }) => {
-+        const boundary = assistantAnswerBoundary(steps, toolStepBudget)
-+        finalizing ||= boundary !== undefined
++        const boundary = assistantAnswerBoundary(steps, toolStepBudget, {
++          elapsedMs: Date.now() - researchStarted,
++        })
++        finalizing ||= researchExhausted || boundary !== undefined
 +        return {
 +          // The SDK supplies system separately, outside prepareStep.messages.
 +          // Include it in the same budget, then prevent duplicate injection.
@@ -14200,14 +14360,14 @@ index 26e075b..9c3ed54 100644
 +          messages: boundAssistantModelHistory([
 +            {
 +              role: 'system',
-+              content: boundary
++              content: finalizing
 +                ? `${systemPrompt}\n\n${ANSWER_BOUNDARY_GUIDE}`
 +                : systemPrompt,
 +            },
 +            ...stepMessages,
 +          ]),
-+          ...(boundary ? { toolChoice: 'none' as const } : {}),
-+          activeTools: boundary
++          ...(finalizing ? { toolChoice: 'none' as const } : {}),
++          activeTools: finalizing
 +            ? []
 +            : activeToolsFor(this.opts.getDeps(), toolNames, CHART_TOOLS),
 +        }
@@ -14221,7 +14381,7 @@ index 26e075b..9c3ed54 100644
        onStepFinish: (step) => {
          for (const call of step.toolCalls) {
            track('assistant_tool_used', { tool: call.toolName })
-@@ -123,10 +169,13 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
+@@ -123,10 +185,11 @@ export class AssistantTransport implements ChatTransport<UIMessage> {
        abortSignal: options.abortSignal,
      })
  
@@ -14233,9 +14393,7 @@ index 26e075b..9c3ed54 100644
 +      .toUIMessageStream({
 +        onError: (error) => encodeAssistantError(error, provider.manifest.id),
 +      })
-+      .pipeThrough(
-+        ensureAssistantBoundaryAnswer(() => finalizing),
-+      )
++      .pipeThrough(ensureAssistantBoundaryAnswer(() => finalizing, admission))
    }
  
    reconnectToStream: ChatTransport<UIMessage>['reconnectToStream'] = async () =>
@@ -14398,7 +14556,7 @@ index 2cf9c7e..415623c 100644
        chartType: s.chartType,
        priceScaleMode: s.priceScaleMode,
 diff --git a/apps/terminal/src/lib/assistant-core/data-tools.ts b/apps/terminal/src/lib/assistant-core/data-tools.ts
-index 74cf26a..3624411 100644
+index 74cf26a..886e9f1 100644
 --- a/apps/terminal/src/lib/assistant-core/data-tools.ts
 +++ b/apps/terminal/src/lib/assistant-core/data-tools.ts
 @@ -61,6 +61,7 @@ import { mergeNewListings } from '@/lib/new-listings'
@@ -14409,7 +14567,31 @@ index 74cf26a..3624411 100644
    liquidationTotals,
  } from '@/lib/futures/liquidation-clusters'
  import {
-@@ -465,7 +466,7 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -238,7 +239,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+           .describe('Forward window in days. Defaults to a fortnight.'),
+       }),
+       execute: async ({ days }) => {
+-        if (!hasAppServer) return STANDALONE
+         try {
+           const response = await api.getEconomicCalendar(days)
+           const window = capped(response.entries)
+@@ -291,7 +291,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+           ),
+       }),
+       execute: async ({ days, symbols }) => {
+-        if (!hasAppServer) return STANDALONE
+         try {
+           const response = await api.getEarningsCalendar({ days, symbols })
+           const window = capped(response.entries)
+@@ -363,7 +362,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+           ),
+       }),
+       execute: async ({ days }) => {
+-        if (!hasAppServer) return STANDALONE
+         try {
+           const response = await api.getIpoCalendar({ days })
+           const window = capped(response.entries)
+@@ -465,7 +463,7 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
            .max(8)
            .optional()
            .describe(
@@ -14418,7 +14600,7 @@ index 74cf26a..3624411 100644
            ),
          limit: z.number().int().min(1).max(MAX_ROWS).optional(),
        }),
-@@ -610,8 +611,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -610,8 +608,6 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
              trackedVenues: tracked,
            }
          }
@@ -14427,7 +14609,7 @@ index 74cf26a..3624411 100644
  
          // Resolved by name, never through the manager: its fallback chain
          // would hand this to a plugin that does not collect the venue and
-@@ -656,11 +655,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -656,11 +652,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
              venue: market,
              pair: pairKey,
              unavailable: answer.reason,
@@ -14445,7 +14627,7 @@ index 74cf26a..3624411 100644
              trackedVenues: tracked,
            }
          }
-@@ -691,6 +693,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -691,6 +690,14 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
            // 'sampled' means the venue stream drops prints during cascades, so
            // the magnitudes undercount exactly when they matter. Say so.
            completeness: response.completeness,
@@ -14460,7 +14642,7 @@ index 74cf26a..3624411 100644
            totals: {
              longNotionalUsd: totals.long,
              shortNotionalUsd: totals.short,
-@@ -698,7 +708,8 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -698,7 +705,8 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
              events: totals.count,
            },
            total: clusters.length,
@@ -14470,7 +14652,7 @@ index 74cf26a..3624411 100644
            clusters: kept.map((cluster) => ({
              price: cluster.price,
              longNotionalUsd: cluster.longNotional,
-@@ -707,6 +718,12 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -707,6 +715,12 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
              events: cluster.count,
              dominantSide: dominantSide(cluster),
            })),
@@ -14483,7 +14665,7 @@ index 74cf26a..3624411 100644
            note: "'long' means longs were liquidated, which is forced selling. The two sides are never summed.",
          }
        },
-@@ -1158,6 +1175,8 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
+@@ -1158,6 +1172,8 @@ export function buildDataTools(deps: AssistantDeps): ToolSet {
   * label are added in one edit. `ASSISTANT_ALL_TOOL_LABELS` spreads it.
   */
  export const DATA_TOOL_LABELS = {
