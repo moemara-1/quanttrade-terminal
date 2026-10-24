@@ -6,7 +6,14 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 const request = {
-  capability: 'ai:inference',
+  capability: 'ai:inference' as const,
+  context: {
+    pair: 'BTC-USDT',
+    market: 'binance',
+    timeframe: '1h',
+    mode: 'paper' as const,
+    country: 'DE',
+  },
   params: { messages: [{ role: 'user', content: 'Prepare a draft' }] },
 }
 test('blank keys cannot activate NanoGPT', async () => {
@@ -23,9 +30,7 @@ test('requests use the NanoGPT API host, configured model and key', async () => 
   })
   globalThis.fetch = Object.assign(
     async (url: string | URL | Request, init?: RequestInit) => {
-      expect(String(url)).toBe(
-        'https://nano-gpt.com/api/v1/chat/completions',
-      )
+      expect(String(url)).toBe('https://nano-gpt.com/api/v1/chat/completions')
       expect(new Headers(init?.headers).get('Authorization')).toBe(
         'Bearer test-key',
       )

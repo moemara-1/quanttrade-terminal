@@ -35503,7 +35503,7 @@ index bc8ee65..a746a6a 100644
      },
      [appServerUrl],
 diff --git a/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts b/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
-index c943331..a744df7 100644
+index c943331..f80dcc9 100644
 --- a/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
 +++ b/packages/plugins/src/__tests__/pairlens-intelligence-standalone.test.ts
 @@ -8,9 +8,8 @@ import {
@@ -35518,7 +35518,7 @@ index c943331..a744df7 100644
  
  const context: PluginContext = {
    pair: 'BTC-USDT',
-@@ -145,3 +144,97 @@ describe('pairlens-intelligence with a configured App Server', () => {
+@@ -145,3 +144,99 @@ describe('pairlens-intelligence with a configured App Server', () => {
      ])
    })
  })
@@ -35569,10 +35569,11 @@ index c943331..a744df7 100644
 +      trackedSince: 100,
 +      fetchedAt: '2026-10-09T00:00:00Z',
 +    }
-+    globalThis.fetch = (() =>
-+      Promise.resolve(
-+        new Response(JSON.stringify(answer), { status: 503 }),
-+      )) as typeof fetch
++    globalThis.fetch = Object.assign(
++      () =>
++        Promise.resolve(new Response(JSON.stringify(answer), { status: 503 })),
++      { preconnect: realFetch.preconnect },
++    )
 +    const plugin = await standalonePlugin()
 +    expect(
 +      await plugin.execute({
@@ -35603,10 +35604,11 @@ index c943331..a744df7 100644
 +    reason: 'not_tracked',
 +    fetchedAt: '2026-10-09T00:00:00Z',
 +  }
-+  globalThis.fetch = (() =>
-+    Promise.resolve(
-+      new Response(JSON.stringify(answer), { status: 404 }),
-+    )) as typeof fetch
++  globalThis.fetch = Object.assign(
++    () =>
++      Promise.resolve(new Response(JSON.stringify(answer), { status: 404 })),
++    { preconnect: realFetch.preconnect },
++  )
 +  const plugin = await standalonePlugin()
 +  expect(
 +    await plugin.execute({
@@ -35629,6 +35631,21 @@ index 3489aec..a28bdb9 100644
    metadata: { family: 'core' },
    capabilities: [
      {
+diff --git a/packages/plugins/src/ccxt-futures-connector/__tests__/listings-graph.test.ts b/packages/plugins/src/ccxt-futures-connector/__tests__/listings-graph.test.ts
+index 80f48b9..296dbbd 100644
+--- a/packages/plugins/src/ccxt-futures-connector/__tests__/listings-graph.test.ts
++++ b/packages/plugins/src/ccxt-futures-connector/__tests__/listings-graph.test.ts
+@@ -74,7 +74,9 @@ function closureOf(entry: string): Array<string> {
+       if (resolved) queue.push(resolved)
+     }
+   }
+-  return [...seen].map((file) => relative(SRC, file).replace(/\.ts$/, ''))
++  return [...seen].map((file) =>
++    relative(SRC, file).replaceAll('\\', '/').replace(/\.ts$/, ''),
++  )
+ }
+ 
+ describe('listings module graph', () => {
 diff --git a/packages/plugins/src/index.ts b/packages/plugins/src/index.ts
 index 0db30c8..39d39d3 100644
 --- a/packages/plugins/src/index.ts

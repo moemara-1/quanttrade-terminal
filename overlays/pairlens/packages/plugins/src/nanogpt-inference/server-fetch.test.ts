@@ -21,9 +21,14 @@ test('cached clients can resume through the legacy URL without forwarding creden
       ? Response.json({ id }, { status: 201 })
       : new Response('OK')
   })
-  const response = await fetchNanogptOnServer('https://api.nano-gpt.com/api/v1/chat/completions', init)
+  const response = await fetchNanogptOnServer(
+    'https://api.nano-gpt.com/api/v1/chat/completions',
+    init,
+  )
   expect(await response.text()).toBe('OK')
-  expect(paths.every((path) => path.startsWith('/_quanttrade/api/ai/nanogpt/jobs'))).toBe(true)
+  expect(
+    paths.every((path) => path.startsWith('/_quanttrade/api/ai/nanogpt/jobs')),
+  ).toBe(true)
 })
 
 test('recovers proxy failures with identical creation body and same response offset', async () => {
@@ -62,7 +67,9 @@ test('recovers a brief bridge restart beyond the original three attempts without
   install(async (_path, options) => {
     if (options?.method !== 'POST') return new Response('OK')
     bodies.push(options.body)
-    return bodies.length <= 4 ? new Response(null, { status: 503 }) : Response.json({ id }, { status: 201 })
+    return bodies.length <= 4
+      ? new Response(null, { status: 503 })
+      : Response.json({ id }, { status: 201 })
   })
   expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('OK')
   expect(bodies).toHaveLength(5)
@@ -73,9 +80,14 @@ test('healthy pending acknowledgments reset the transient response failure budge
   let gets = 0
   let posts = 0
   install(async (_path, options) => {
-    if (options?.method === 'POST') { posts++; return Response.json({ id }, { status: 201 }) }
+    if (options?.method === 'POST') {
+      posts++
+      return Response.json({ id }, { status: 201 })
+    }
     gets++
-    return gets <= 18 ? new Response(null, { status: gets % 2 ? 503 : 202 }) : new Response('OK')
+    return gets <= 18
+      ? new Response(null, { status: gets % 2 ? 503 : 202 })
+      : new Response('OK')
   })
   expect(await (await fetchNanogptOnServer(url, init)).text()).toBe('OK')
   expect(posts).toBe(1)
@@ -117,7 +129,8 @@ test('aborting proxy backoff prevents any retry', async () => {
   const controller = new AbortController()
   let reads = 0
   install(async (_path, options) => {
-    if (options?.method === 'POST') return Response.json({ id }, { status: 201 })
+    if (options?.method === 'POST')
+      return Response.json({ id }, { status: 201 })
     if (options?.method === 'DELETE') return new Response(null, { status: 204 })
     reads++
     setTimeout(() => controller.abort(), 5)
@@ -162,8 +175,8 @@ test('proxy recovery after delivered bytes retains the exact consumed offset', a
 
 test('does not retry terminal relay failures or provider HTTP errors', async () => {
   for (const headers of [
-    { 'x-quanttrade-ai-failure': 'upstream-stream' },
-    { 'x-quanttrade-ai-upstream': '1' },
+    new Headers({ 'x-quanttrade-ai-failure': 'upstream-stream' }),
+    new Headers({ 'x-quanttrade-ai-upstream': '1' }),
   ]) {
     let reads = 0
     install(async (_path, options) =>
@@ -171,7 +184,7 @@ test('does not retry terminal relay failures or provider HTTP errors', async () 
         ? Response.json({ id }, { status: 201 })
         : (reads++, new Response(null, { status: 502, headers })),
     )
-    if ('x-quanttrade-ai-failure' in headers)
+    if (headers.has('x-quanttrade-ai-failure'))
       await expect(fetchNanogptOnServer(url, init)).rejects.toMatchObject({
         failureReason: 'upstream-stream',
       })

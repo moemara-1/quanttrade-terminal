@@ -408,3 +408,13 @@ Verified chart/news release 20261023-2: 418 backend and 54 focused frontend test
 - [x] Fix verified causes with regression tests, then verify and ship.
 
 Verification: release 20261024-1; 421 backend and 93 focused frontend tests pass, frontend/backend types, lint and 11-task build pass. Hosted sessions, transport authorization, news coverage and final bundle verified. Public read audit documented in docs/audits/2026-10-24-connectors.md; external HTTP403/config/platform limitations remain explicit. No financial actions or live provider requests. Inference worker unchanged.
+
+## Full connector inventory and verification
+- [x] Inventory every connector/provider and classify platform, credentials and enabled scope.
+- [x] Verify CEX market-data routes, catalogs and streaming contracts.
+- [x] Verify DEX, prediction, NFT, search and inference connector contracts.
+- [x] Recheck news, calendars, fundamentals, Lighter/Hyperliquid and scanner runtime reads.
+- [x] Repair reproduced application defects with regressions; record external/configuration blockers.
+- [x] Run integration verification and deliver the complete connector matrix.
+
+Full connector audit: 2,103 plugin tests pass/43 skip; 45 terminal tests pass; plugin types, focused lint and 11-task production build pass. Thirty public endpoint probes returned data plus hosted spot/perpetual/calendar/scanner checks. Three news sources remain HTTP403 and authenticated execution/paid providers are unverified. Deployed20261024-2 without service restarts. Detailed named matrix docs/audits/2026-10-24-full-connector-matrix.md. No trading or credential changes.
