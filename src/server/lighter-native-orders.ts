@@ -102,7 +102,8 @@ export class LighterNativeOrders {
       this.desk.store.finishOperation(plan.requestId,'completed',result);return {status:'accepted',result};
     }catch(error){
       if(!submissionAttempted){this.desk.store.finishOperation(plan.requestId,'unknown',{error:'Native order was blocked before submission; prepare a fresh reviewed request.'});throw error;}
-      const result={error:'Native submission outcome is uncertain. Inspect exchange orders; this request will not be retried.'};
+      const safeReason=error instanceof Error && /^(Native order rejected: (nonce|expiry|margin|leverage|precision|trigger|minimum-size|price|authorization|exchange-rejection)|Native order rejected by exchange adapter \(HTTP 400\))$/.test(error.message)?error.message:null;
+      const result={error:(safeReason?safeReason+'. ':'')+'Native submission outcome is uncertain. Inspect exchange orders; this request will not be retried.'};
       try{this.desk.store.finishOperation(plan.requestId,'unknown',result);}catch{result.error+=' Durable status could not be updated; the original request remains claimed and must not be replayed.';}
       return {status:'unknown',result};
     }

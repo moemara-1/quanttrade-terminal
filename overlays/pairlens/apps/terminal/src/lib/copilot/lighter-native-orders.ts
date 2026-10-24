@@ -513,6 +513,24 @@ export class LighterNativeOrderApproval {
         this.record('blocked')
         return this.status
       }
+      const nativeFailure = z
+        .object({
+          status: z.literal('unknown'),
+          result: z.object({
+            error: z
+              .string()
+              .regex(
+                /^Native order rejected(?:: (?:nonce|expiry|margin|leverage|precision|trigger|minimum-size|price|authorization|exchange-rejection)| by exchange adapter \(HTTP 400\))\. Native submission outcome is uncertain\. Inspect exchange orders; this request will not be retried\.$/,
+              ),
+          }),
+        })
+        .safeParse(body)
+      if (nativeFailure.success) {
+        this.status = 'unknown'
+        this.error = nativeFailure.data.result.error
+        this.record('unverified')
+        return this.status
+      }
       const envelope = z
         .object({ status: z.literal('accepted'), result: evidenceSchema })
         .safeParse(body)

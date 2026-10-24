@@ -141,3 +141,11 @@ test('arena passive account errors reveal fixed actionable scope diagnostics wit
  const privateBody=new HummingbotOperations(config,async()=>Response.json({detail:'secret-fixture-account-key'},{status:503}));
  await assert.rejects(privateBody.perform('arena-account-state',{}),error=>error instanceof Error&&error.message==='Live bot account snapshot is unavailable (HTTP 503); no balance or position is assumed');
 });
+
+test('native rejection preserves only recognized safe bridge diagnostics',async()=>{
+ const config={url:'http://127.0.0.1:8000',username:'offline',password:'offline',accountName:'desk'};
+ for(const [detail,expected] of [['Native order rejected: expiry','Native order rejected: expiry'],['PRIVATE_SECRET','Native order rejected by exchange adapter (HTTP 400)']]){
+  const client=new HummingbotOperations(config,async()=>Response.json({detail},{status:400}));
+  await assert.rejects(client.perform('native-orders',{}),error=>error instanceof Error&&error.message===expected);
+ }
+});

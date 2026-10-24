@@ -143,3 +143,11 @@ class NativeOrderTests(unittest.IsolatedAsyncioTestCase):
                 await module.lighter_native_orders(c, self.dto([leg]), SimpleNamespace, now_ms=1000000)
             c._signer_client.create_order.assert_not_called()
 
+
+class NativeDiagnosticsTests(unittest.TestCase):
+    def test_lighter_rejection_classification_does_not_leak_raw_messages(self):
+        for raw, category in [('invalid order expiry', 'expiry'), ('invalid nonce PRIVATE_SECRET', 'nonce'), ('not enough balance', 'margin'), ('invalid signature', 'authorization'), ('below minimum', 'minimum-size'), ('PRIVATE_SECRET', 'exchange-rejection')]:
+            with self.assertRaises(module.ActionRejected) as caught:
+                module.lighter_ack((None, None, raw), native=True)
+            self.assertEqual(str(caught.exception), 'Native order rejected: ' + category)
+            self.assertEqual(module.native_rejection_message(caught.exception), str(caught.exception))

@@ -70,3 +70,12 @@ test('post-submit journal failure remains uncertain and never reports a pre-subm
 test('uncapped native review preserves margin validation and reservations without limiting gross turnover',async()=>{
  const s=setup();try{const desk=new TradingDesk(s.store,s.markets,{configured:true,place:async()=>{throw Error('Unexpected generic order');},cancel:async()=>{}},{mode:'live',accountName:'desk',maxOrderNotional:null,dailyNotionalLimit:null,maxPriceDeviationBps:100,proposalTtlSeconds:180,pairlensUrl:'http://localhost'},()=>s.now);const day=new Date(s.now).toISOString().slice(0,10);s.store.reserveOperation('prior-turnover','live',day,'6000',null);let calls=0,available='3000';const service=new LighterNativeOrders(desk,{perform:async()=>{calls++;return {status:'accepted',grouping:'single',connector_name:'lighter_perpetual',trading_pair:'GRAM-USDC',client_order_ids:['99'],tx_hash:'test-only'};}},s.markets,()=>s.now,async()=>[{currency:'USDC',available}]);const plan={...s.plan,leverage:1,marginMode:'cross',legs:[{...s.plan.legs[0],amount:'600'}]};const reviewed=await service.preview(plan);assert.equal(reviewed.estimatedNotional,'1212');assert.equal(calls,0);available='100';await assert.rejects(service.execute(plan),/available margin/);assert.equal(calls,0);available='3000';assert.equal((await service.execute(plan)).status,'accepted');await service.execute(plan);assert.equal(calls,1);assert.equal(s.store.used('live',day),'7212');}finally{s.store.close();}
 });
+
+test('native uncertain receipt retains safe adapter rejection and never retries',async()=>{
+ const s=setup();let calls=0;try{
+ const service=new LighterNativeOrders(s.desk,{perform:async()=>{calls++;throw Error('Native order rejected: expiry');}},s.markets,()=>s.now);
+ const first=await service.execute(s.plan);
+ assert.equal(first.status,'unknown');assert.match(JSON.stringify(first.result),/Native order rejected: expiry/);
+ assert.equal((await service.execute(s.plan)).status,'unknown');assert.equal(calls,1);
+ }finally{s.store.close();}
+});

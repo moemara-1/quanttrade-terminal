@@ -443,3 +443,10 @@ Verified: 47 focused SDK/NanoGPT/history/finalization regressions, frontend and 
 - [x] Build, deploy and commit verified repair.
 
 Native trigger repair: 65 frontend/SDK regressions and 44 server execution fixtures pass; frontend types, focused lint and production build pass. Deployed20261024-6; hosted auth/transport/news checks pass. No live provider or trade requests. Previous tests missed optional-trigger mismatch in the model-facing schema; required conditional schema now covered.
+
+## Native BNB submission rejection
+- [x] Reconcile BNB open orders, inactive orders, fills and position read-only.
+- [x] Preserve safe native rejection diagnostics rather than discard HTTP400 details.
+- [x] Verify and deploy diagnostic repair; do not replay the original request.
+
+Native rejection diagnostics deployed20261024-9; 61 server, 48 Python and 67 frontend tests pass, server/frontend types and lint/build pass. Hosted checks pass after authenticated adapter readiness. BNB remains flat with empty orders/history/fills. Original HTTP400 cause was discarded and remains unverified; no original request replay or new order submission.

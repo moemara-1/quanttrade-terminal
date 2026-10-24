@@ -1,0 +1,10 @@
+# BNB native submission investigation
+
+Request 426de182-5a06-42b4-b176-03cff1ebbf19 received HTTP400 from Hummingbot at 2026-10-24 13:05:13 UTC. The bridge discarded the error, the native service replaced it with a generic unknown receipt, and the frontend discarded that receipt reason again. The underlying error is not recoverable from the retained logs. MQTT broker DNS messages also appear in the container logs; they are not evidence of the native HTTP400 cause.
+
+Read-only reconciliation returned no BNB open orders, inactive orders, trades or position. Both history cursors were null and position amount was zero. These reads do not authorize replaying the original request. No order was retried or signed during investigation; the durable unknown request remains unchanged.
+
+Repair: Python classifies native rejection details into a finite safe vocabulary without returning arbitrary SDK content. The HTTP client preserves only that vocabulary (or a fixed HTTP400 fallback); the service persists it and the card displays it while retaining uncertain/no-retry behavior. All other provider details are discarded. This fixes lost diagnostics, not an established underlying exchange rejection cause. A future newly reviewed submission may still reject; never describe this diagnostic improvement as proof native execution succeeds.
+
+Verification: 61 Node native/API/execution/operation tests, 48 Python adapter tests, and 67 frontend native/advanced/final-assessment tests pass. Red fixtures reproduced all three loss boundaries. Types and focused frontend lint are checked separately. No real trade or paid-provider generation was used for testing.
+Deployed20261024-9 after build/types/lint passed. Hosted authentication, transport and news checks pass. Read-only post-deployment BNB reconciliation remains empty/flat; the original request stays unknown. Earlier activation attempts rolled back because of startup readiness checks; the final deployment uses the verified authenticated accounts/desk/credentials read. No order was retried.

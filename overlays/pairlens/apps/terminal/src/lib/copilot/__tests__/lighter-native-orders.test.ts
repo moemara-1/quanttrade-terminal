@@ -952,3 +952,27 @@ test('provider JSON schema declares triggerPrice required on conditional legs', 
   expect(branches.length).toBeGreaterThan(0)
   expect(JSON.stringify(branches)).toContain('sl-market')
 })
+
+test('safe adapter rejection is visible on uncertain card without enabling retry', async () => {
+  let posts = 0
+  const approval = new LighterNativeOrderApproval(
+    proposal,
+    () => [account],
+    async (_url, init) => {
+      if (init?.method !== 'POST') return Response.json(status)
+      posts++
+      return Response.json({
+        status: 'unknown',
+        result: {
+          error:
+            'Native order rejected: expiry. Native submission outcome is uncertain. Inspect exchange orders; this request will not be retried.',
+        },
+      })
+    },
+    () => 1000,
+  )
+  expect(await approval.approve()).toBe('unknown')
+  expect(approval.error).toContain('Native order rejected: expiry')
+  expect(await approval.approve()).toBe('unknown')
+  expect(posts).toBe(1)
+})

@@ -37,6 +37,11 @@ export class HummingbotOperations implements OperationClient {
       if(detail.success&&detail.data.detail==='Live bot exchange order coverage is incomplete')throw Error('Live bot exchange order coverage is incomplete; restore complete reads before arming');
       throw Error(`Live bot account snapshot is unavailable (HTTP ${response.status}); no balance or position is assumed`);
     }
+    if (!response.ok && action==='native-orders' && response.status===400) {
+      const body:unknown=await response.json().catch(()=>null);
+      const parsed=z.object({detail:z.string().regex(/^Native order rejected: (nonce|expiry|margin|leverage|precision|trigger|minimum-size|price|authorization|exchange-rejection)$/)}).safeParse(body);
+      throw new Error(parsed.success?parsed.data.detail:'Native order rejected by exchange adapter (HTTP 400)');
+    }
     if (!response.ok) throw new Error(action==='open-orders'?`Exchange open-order read failed (HTTP ${response.status}); current orders are unavailable, not empty`:'Exchange operation failed; inspect account state before retrying');
     return response.json();
   }

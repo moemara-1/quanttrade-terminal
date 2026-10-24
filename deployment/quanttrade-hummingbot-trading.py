@@ -271,13 +271,13 @@ async def lighter_native_orders(connector, dto, order_factory=None, now_ms=None)
             wire = wires[0]
             result = lighter_ack(await connector._signer_client.create_order(market_index=wire['MarketIndex'], client_order_index=wire['ClientOrderIndex'],
                 base_amount=wire['BaseAmount'], price=wire['Price'], is_ask=bool(wire['IsAsk']), order_type=wire['Type'], time_in_force=wire['TimeInForce'],
-                reduce_only=bool(wire['ReduceOnly']), trigger_price=wire['TriggerPrice'], order_expiry=wire['OrderExpiry']))
+                reduce_only=bool(wire['ReduceOnly']), trigger_price=wire['TriggerPrice'], order_expiry=wire['OrderExpiry']), native=True)
         else:
             if order_factory is None:
                 from lighter.signer_client import CreateOrderTxReq
                 order_factory = CreateOrderTxReq
             result = lighter_ack(await connector._signer_client.create_grouped_orders(
-                grouping_type={'oto': 1, 'oco': 2, 'otoco': 3}[dto.grouping], orders=[order_factory(**wire) for wire in wires]))
+                grouping_type={'oto': 1, 'oco': 2, 'otoco': 3}[dto.grouping], orders=[order_factory(**wire) for wire in wires]), native=True)
     return {**result, 'grouping': dto.grouping, 'client_order_ids': ids, 'connector_name': dto.connector_name, 'trading_pair': dto.trading_pair}
 
 
@@ -495,12 +495,26 @@ def hl_default(response):
     return {'status': 'accepted'}
 
 
-def lighter_ack(result):
+def native_rejection_message(detail):
+    # Never return arbitrary SDK/provider text (which can contain signed payloads).
+    value = str(detail).lower()
+    categories = [('nonce', ('nonce',)), ('expiry', ('expiry', 'expiration', 'expired')),
+        ('margin', ('margin', 'collateral', 'balance')), ('leverage', ('leverage',)),
+        ('precision', ('precision', 'decimal', 'integer bounds')), ('trigger', ('trigger', 'threshold')),
+        ('minimum-size', ('minimum', 'too small')), ('price', ('price',)),
+        ('authorization', ('api key', 'permission', 'unauthorized', 'signature'))]
+    if value in ['native order rejected: ' + name for name, _ in categories] + ['native order rejected: exchange-rejection']:
+        return 'Native order rejected: ' + value.split(': ', 1)[1]
+    category = next((name for name, words in categories if any(word in value for word in words)), 'exchange-rejection')
+    return 'Native order rejected: ' + category
+
+
+def lighter_ack(result, native=False):
     if not isinstance(result, tuple) or len(result) != 3:
         raise ActionUncertain('Exchange action acknowledgment is unrecognized; inspect account state')
     _, response, error = result
     if error is not None or response is None or getattr(response, 'code', None) != 200:
-        raise ActionRejected('Exchange rejected the action')
+        raise ActionRejected(native_rejection_message(error or getattr(response, 'message', '')) if native else 'Exchange rejected the action')
     tx_hash = getattr(response, 'tx_hash', None)
     if not isinstance(tx_hash, str) or not tx_hash:
         raise ActionUncertain('Exchange did not provide a transaction hash; inspect account state')
@@ -1158,9 +1172,9 @@ async def perform(request, dto, operation):
         connector = await request.app.state.accounts_service.get_connector_instance(dto.account_name, dto.connector_name)
         return await ledger.run(dto.request_id, dto.model_dump(), lambda: operation(connector))
     except ActionRejected as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
-    except ValueError:
-        raise HTTPException(status_code=400, detail='Action violates exchange amount or precision rules') from None
+        raise HTTPException(status_code=400, detail=native_rejection_message(exc) if isinstance(dto, NativeOrderRequest) else str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=native_rejection_message(exc) if isinstance(dto, NativeOrderRequest) else 'Action violates exchange amount or precision rules') from None
     except ActionUncertain as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
