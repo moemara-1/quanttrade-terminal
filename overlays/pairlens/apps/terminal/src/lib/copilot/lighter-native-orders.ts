@@ -13,27 +13,39 @@ const positive = decimal.refine(
   (value) => /[1-9]/.test(value),
   'Must be positive',
 )
-const legSchema = z
-  .object({
-    side: z.enum(['buy', 'sell']),
-    type: z.enum([
-      'market',
-      'limit',
-      'sl-market',
-      'sl-limit',
-      'tp-market',
-      'tp-limit',
-      'twap',
-    ]),
-    amount: decimal,
-    price: positive,
-    triggerPrice: positive.optional(),
-    reduceOnly: z.boolean(),
-    timeInForce: z.enum(['ioc', 'gtt', 'post-only']),
-    expiry: z.number().int().positive().optional(),
-    durationSeconds: z.number().int().min(300).max(2592000).optional(),
-  })
-  .strict()
+const legFields = {
+  side: z.enum(['buy', 'sell']),
+  amount: decimal.describe(
+    'Exact base quantity; attached OTO/OTOCO exits use "0".',
+  ),
+  price: positive.describe(
+    'Positive execution price bound or limit, including market exits; never "0".',
+  ),
+  reduceOnly: z.boolean(),
+  timeInForce: z.enum(['ioc', 'gtt', 'post-only']),
+  expiry: z.number().int().positive().optional(),
+  durationSeconds: z.number().int().min(300).max(2592000).optional(),
+}
+// Expose the conditional requirement to the model, not just the later validator.
+// Regular legs must omit triggerPrice; no trigger or execution bound is inferred.
+const legSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      ...legFields,
+      type: z.enum(['market', 'limit', 'twap']),
+      triggerPrice: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...legFields,
+      type: z.enum(['sl-market', 'sl-limit', 'tp-market', 'tp-limit']),
+      triggerPrice: positive.describe(
+        'Required absolute trigger price, separate from the positive execution price bound.',
+      ),
+    })
+    .strict(),
+])
 const planFields = {
   symbol: z
     .string()

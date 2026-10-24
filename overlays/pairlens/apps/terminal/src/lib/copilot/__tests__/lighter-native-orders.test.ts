@@ -1,7 +1,9 @@
+import { asSchema } from 'ai'
 import { expect, test } from 'bun:test'
 import {
   LighterNativeOrderApproval,
   lighterNativeAmountLabel,
+  lighterNativeOrderInputSchema,
   parseLighterNativeOrder,
   prepareLighterNativeOrder,
 } from '../lighter-native-orders'
@@ -872,4 +874,81 @@ test('malformed revisions, disabled execution and paper accounts never trigger c
     ).rejects.toThrow()
     expect(mutations).toBe(0)
   }
+})
+
+test('conditional trigger is required by the assistant input schema before execution', () => {
+  const missing = { ...linkedStop }
+  const { triggerPrice: omitted, ...withoutTrigger } = missing
+  expect(omitted).toBe('1.3')
+  const result = lighterNativeOrderInputSchema.safeParse({
+    ...order,
+    grouping: 'oto',
+    legs: [order.legs[0], withoutTrigger],
+  })
+  expect(result.success).toBe(false)
+  if (!result.success)
+    expect(
+      result.error.issues.some((issue) => issue.path.includes('triggerPrice')),
+    ).toBe(true)
+})
+
+test('BNB resting OTOCO preserves both protective triggers through preflight', async () => {
+  const plan = {
+    ...order,
+    symbol: 'BNB-USDC-USDC',
+    grouping: 'otoco',
+    legs: [
+      {
+        ...order.legs[0],
+        type: 'limit',
+        amount: '0.78',
+        price: '724.96',
+        timeInForce: 'gtt',
+      },
+      { ...linkedStop, price: '710', triggerPrice: '713.76' },
+      { ...linkedTakeProfit, price: '748', triggerPrice: '750.45' },
+    ],
+  }
+  let preview: unknown
+  const prepared = await prepareLighterNativeOrder(
+    plan,
+    [account],
+    async (url, init) => {
+      if (url.endsWith('/lighter-native-preview')) {
+        preview = JSON.parse(String(init?.body))
+        return previewResponse(init)
+      }
+      return Response.json(status)
+    },
+    () => 1000,
+  )
+  expect(prepared.legs.map((leg) => leg.triggerPrice)).toEqual([
+    undefined,
+    '713.76',
+    '750.45',
+  ])
+  expect(preview).toMatchObject({ symbol: 'BNB-USDC', legs: plan.legs })
+})
+test('provider JSON schema declares triggerPrice required on conditional legs', () => {
+  const schema = asSchema(lighterNativeOrderInputSchema).jsonSchema
+  const serialized = JSON.stringify(schema)
+  expect(serialized).toContain('triggerPrice')
+  const branches: Array<Record<string, unknown>> = []
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    const record = value as Record<string, unknown>
+    if (
+      Array.isArray(record.required) &&
+      record.required.includes('triggerPrice')
+    )
+      branches.push(record)
+    Object.values(record).forEach(visit)
+  }
+  visit(schema)
+  expect(branches.length).toBeGreaterThan(0)
+  expect(JSON.stringify(branches)).toContain('sl-market')
 })

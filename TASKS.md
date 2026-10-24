@@ -436,3 +436,10 @@ Verified source-only recovery: 44 assistant/model-history/loop regressions plus 
 Confirmed additional root cause: previous final assessment used non-streaming generateText against stream-only server-backed NanoGPT. Real connector regression reproduces rejection and now passes with streamText. DeepSeek thinking history repaired for final no-tools step when history contains tool calls. New integration fixture uses actual SDK/plugin and synthetic HTTP, with no paid/live trade requests.
 
 Verified: 47 focused SDK/NanoGPT/history/finalization regressions, frontend and plugin types, lint and Vite production build + SPA shell pass. Deployed20261024-4 frontend-only; hosted sessions, transport and news checks pass; services unchanged. Streaming-only connector regression proves previous generateText recovery was rejected locally. No live provider or trade requests used for QA.
+
+## Native bracket argument regression
+- [x] Trace and reproduce Lighter conditional argument rejection.
+- [x] Fix proven cause and verify native Lighter/Hyperliquid preparation regressions.
+- [x] Build, deploy and commit verified repair.
+
+Native trigger repair: 65 frontend/SDK regressions and 44 server execution fixtures pass; frontend types, focused lint and production build pass. Deployed20261024-6; hosted auth/transport/news checks pass. No live provider or trade requests. Previous tests missed optional-trigger mismatch in the model-facing schema; required conditional schema now covered.
