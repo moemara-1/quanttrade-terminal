@@ -418,3 +418,10 @@ Verification: release 20261024-1; 421 backend and 93 focused frontend tests pass
 - [x] Run integration verification and deliver the complete connector matrix.
 
 Full connector audit: 2,103 plugin tests pass/43 skip; 45 terminal tests pass; plugin types, focused lint and 11-task production build pass. Thirty public endpoint probes returned data plus hosted spot/perpetual/calendar/scanner checks. Three news sources remain HTTP403 and authenticated execution/paid providers are unverified. Deployed20261024-2 without service restarts. Detailed named matrix docs/audits/2026-10-24-full-connector-matrix.md. No trading or credential changes.
+
+## Source-only assistant completion
+- [x] Reproduce normal source-only completion below research limits.
+- [x] Recover final analysis once without tools or repeated actions; preserve approvals/errors.
+- [x] Verify and deploy, then commit/push.
+
+Verified source-only recovery: 44 assistant/model-history/loop regressions plus 4 NanoGPT provider fixtures pass. Frontend and plugin types, focused lint and 11-task build pass. Deployed20261024-3 frontend-only; hosted session/transport/news/bundlechecks pass. One bounded text-only synthesis handles normal and budget-limited research without repeating actions. No live provider/test trade requests.

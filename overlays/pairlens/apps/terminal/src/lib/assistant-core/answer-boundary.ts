@@ -207,18 +207,25 @@ export function guardAssistantTools(
 export function ensureAssistantBoundaryAnswer(
   isFinalizing: () => boolean,
   admission?: ToolAdmission,
+  recoverFinalText?: () => Promise<string>,
+  abortSignal?: AbortSignal,
 ) {
   let finalStep = false
   let text = false
   let blockedTool = false
   let fallback = false
+  let terminalError = false
+  let sourceReturned = false
   const toolNames = new Map<string, string>()
   const returned = new Set<string>()
   const unavailable = new Set<string>()
   const fallbackText =
     'This audit is incomplete: the research limit was reached and the model did not produce a final assessment. Use only verified tool results above; failed, timed-out or omitted reads are unknown, not empty. Earlier tool actions may have completed. Check order and run status before repeating a trade request.'
   return new TransformStream<UIMessageChunk, UIMessageChunk>({
-    transform(chunk, controller) {
+    async transform(chunk, controller) {
+      if (chunk.type === 'error' || chunk.type === 'abort') terminalError = true
+      if (chunk.type === 'source-url' || chunk.type === 'source-document')
+        sourceReturned = true
       if (
         (chunk.type === 'tool-input-start' ||
           chunk.type === 'tool-input-available') &&
@@ -271,26 +278,49 @@ export function ensureAssistantBoundaryAnswer(
         return
       }
       if (chunk.type === 'text-delta' && chunk.delta.trim()) text = true
+      const missingResearchAnswer =
+        chunk.type === 'finish' &&
+        !abortSignal?.aborted &&
+        !terminalError &&
+        !text &&
+        (sourceReturned || toolNames.size > 0) &&
+        [...toolNames.values()].every(isRead)
       if (
-        (chunk.type === 'finish-step' || chunk.type === 'finish') &&
-        isFinalizing() &&
+        ((chunk.type === 'finish' && isFinalizing()) ||
+          missingResearchAnswer) &&
         (!text || blockedTool) &&
         !fallback
       ) {
         fallback = true
+        let recovered = ''
+        if (missingResearchAnswer && recoverFinalText) {
+          try {
+            recovered = (await recoverFinalText()).trim()
+          } catch {
+            recovered =
+              '' /* The bounded provider attempt failed; emit the explicit fallback below. */
+          }
+        }
+        if (abortSignal?.aborted) {
+          controller.enqueue(chunk)
+          return
+        }
         const id = 'assistant-answer-boundary'
         controller.enqueue({ type: 'text-start', id })
         controller.enqueue({
           type: 'text-delta',
           id,
           delta:
-            fallbackText +
-            (returned.size
-              ? `\n\nReads with returned results (not independently validated): ${[...returned].slice(0, 16).join(', ')}.`
-              : '') +
-            (unavailable.size
-              ? `\n\nUnavailable or failed reads: ${[...unavailable].slice(0, 16).join(', ')}.`
-              : ''),
+            recovered ||
+            (isFinalizing()
+              ? fallbackText
+              : 'The model ended without a final assessment after the research calls. Sources alone are not an analysis. No conclusion was verified from this response; failed or omitted reads remain unknown.') +
+              (returned.size
+                ? `\n\nReads with returned results (not independently validated): ${[...returned].slice(0, 16).join(', ')}.`
+                : '') +
+              (unavailable.size
+                ? `\n\nUnavailable or failed reads: ${[...unavailable].slice(0, 16).join(', ')}.`
+                : ''),
         })
         controller.enqueue({ type: 'text-end', id })
       }

@@ -10,6 +10,7 @@ import {
   guardAssistantTools,
 } from '../answer-boundary'
 import { boundAssistantModelHistory } from '../model-history'
+import type { UIMessageChunk } from 'ai'
 
 const read = (input: unknown = { symbol: 'ZEC' }) => ({
   toolCalls: [{ toolName: 'get_exchange_snapshot', input }],
@@ -663,4 +664,250 @@ test('shared admission blocks excess client-forwarded inputs while preserving ad
   ).toHaveLength(48)
   expect(JSON.stringify(chunks)).not.toContain('switch_pair')
   expect(JSON.stringify(chunks)).toContain('Audit bounded')
+})
+
+test('normal research completion with sources but no final text gets one synthesis without repeating reads', async () => {
+  let syntheses = 0
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'start-step' })
+      controller.enqueue({
+        type: 'tool-input-available',
+        toolCallId: 'news',
+        toolName: 'get_news',
+        input: { symbol: 'ZORA' },
+      })
+      controller.enqueue({
+        type: 'tool-output-available',
+        toolCallId: 'news',
+        output: { status: 'available', articles: [] },
+      })
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'start-step' })
+      controller.enqueue({
+        type: 'source-url',
+        sourceId: 'source',
+        url: 'https://example.com/zora',
+      })
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'finish', finishReason: 'stop' })
+      controller.close()
+    },
+  })
+  const chunks = await Array.fromAsync(
+    stream.pipeThrough(
+      ensureAssistantBoundaryAnswer(
+        () => false,
+        undefined,
+        async () => {
+          syntheses++
+          return 'ZORA: the collected evidence is mixed; no trade was submitted.'
+        },
+      ),
+    ),
+  )
+  expect(syntheses).toBe(1)
+  expect(JSON.stringify(chunks)).toContain('collected evidence is mixed')
+  expect(
+    chunks.filter((chunk) => chunk.type === 'tool-input-available'),
+  ).toHaveLength(1)
+})
+
+test('normal blank read completion reports missing analysis if synthesis is unavailable', async () => {
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'start-step' })
+      controller.enqueue({
+        type: 'tool-input-available',
+        toolCallId: 'read',
+        toolName: 'get_news',
+        input: {},
+      })
+      controller.enqueue({
+        type: 'tool-output-available',
+        toolCallId: 'read',
+        output: { status: 'unavailable' },
+      })
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'finish', finishReason: 'stop' })
+      controller.close()
+    },
+  })
+  const chunks = await Array.fromAsync(
+    stream.pipeThrough(ensureAssistantBoundaryAnswer(() => false)),
+  )
+  expect(JSON.stringify(chunks)).toContain(
+    'model ended without a final assessment',
+  )
+})
+
+test('SDK source-only finish exposes response history before bounded synthesis', async () => {
+  const model = new MockLanguageModelV3({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: 'stream-start' as const, warnings: [] },
+          {
+            type: 'source' as const,
+            sourceType: 'url' as const,
+            id: 's',
+            url: 'https://example.com/zora',
+          },
+          {
+            type: 'finish' as const,
+            finishReason: { unified: 'stop' as const, raw: 'stop' },
+            usage: {
+              inputTokens: {
+                total: 1,
+                noCache: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 1, text: 0, reasoning: 1 },
+            },
+          },
+        ],
+      }),
+    }),
+  })
+  const result = streamText({
+    model,
+    prompt: 'Thoughts about ZORA',
+    maxRetries: 0,
+  })
+  let attempts = 0
+  const chunks = await Array.fromAsync(
+    result.toUIMessageStream({ sendSources: true }).pipeThrough(
+      ensureAssistantBoundaryAnswer(
+        () => false,
+        undefined,
+        async () => {
+          await result.response
+          attempts++
+          return 'Recovered assessment from collected evidence.'
+        },
+      ),
+    ),
+  )
+  expect(attempts).toBe(1)
+  expect(JSON.stringify(chunks)).toContain('Recovered assessment')
+})
+
+test('normal approval, error and written answer never trigger synthesis', async () => {
+  for (const scenario of ['approval', 'error', 'text']) {
+    let attempts = 0
+    const stream = new ReadableStream<UIMessageChunk>({
+      start(controller) {
+        controller.enqueue({ type: 'start-step' })
+        if (scenario === 'approval')
+          controller.enqueue({
+            type: 'tool-input-available',
+            toolCallId: 'proposal',
+            toolName: 'prepare_order',
+            input: {},
+          })
+        else if (scenario === 'error')
+          controller.enqueue({
+            type: 'error',
+            errorText: 'Provider interrupted',
+          })
+        else {
+          controller.enqueue({ type: 'text-start', id: 'answer' })
+          controller.enqueue({
+            type: 'text-delta',
+            id: 'answer',
+            delta: 'Actual answer',
+          })
+          controller.enqueue({ type: 'text-end', id: 'answer' })
+        }
+        controller.enqueue({ type: 'finish-step' })
+        controller.enqueue({ type: 'finish', finishReason: 'stop' })
+        controller.close()
+      },
+    })
+    await Array.fromAsync(
+      stream.pipeThrough(
+        ensureAssistantBoundaryAnswer(
+          () => false,
+          undefined,
+          async () => {
+            attempts++
+            return 'Unexpected'
+          },
+        ),
+      ),
+    )
+    expect(attempts).toBe(0)
+  }
+})
+
+test('cancelling final synthesis does not append a recovery answer', async () => {
+  const abort = new AbortController()
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'start-step' })
+      controller.enqueue({
+        type: 'source-url',
+        sourceId: 's',
+        url: 'https://example.com',
+      })
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'finish', finishReason: 'stop' })
+      controller.close()
+    },
+  })
+  const chunks = await Array.fromAsync(
+    stream.pipeThrough(
+      ensureAssistantBoundaryAnswer(
+        () => false,
+        undefined,
+        async () => {
+          abort.abort()
+          return ''
+        },
+        abort.signal,
+      ),
+    ),
+  )
+  expect(chunks.some((chunk) => chunk.type === 'text-delta')).toBe(false)
+})
+
+test('research boundary synthesizes the assessment rather than stopping at a generic failure', async () => {
+  let attempts = 0
+  const stream = new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'start-step' })
+      controller.enqueue({
+        type: 'tool-input-available',
+        toolCallId: 'news',
+        toolName: 'get_news',
+        input: { symbol: 'ZORA' },
+      })
+      controller.enqueue({
+        type: 'tool-output-available',
+        toolCallId: 'news',
+        output: { status: 'available' },
+      })
+      controller.enqueue({ type: 'finish-step' })
+      controller.enqueue({ type: 'finish', finishReason: 'stop' })
+      controller.close()
+    },
+  })
+  const chunks = await Array.fromAsync(
+    stream.pipeThrough(
+      ensureAssistantBoundaryAnswer(
+        () => true,
+        undefined,
+        async () => {
+          attempts++
+          return 'Assessment from the verified results, with missing evidence labeled.'
+        },
+      ),
+    ),
+  )
+  expect(attempts).toBe(1)
+  expect(JSON.stringify(chunks)).toContain(
+    'Assessment from the verified results',
+  )
+  expect(JSON.stringify(chunks)).not.toContain('This audit is incomplete')
 })

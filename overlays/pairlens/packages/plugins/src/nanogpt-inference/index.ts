@@ -233,7 +233,7 @@ export function createNanogptInferencePlugin(
           }
           return modelFetch(url, init)
         },
-        { preconnect: globalThis.fetch.preconnect },
+        globalThis.fetch,
       ),
     }).chatModel(configuredModel())
   }
